@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.5.6';
+export const APP_VERSION = '0.5.7';
 // This device's identity for sync: a stable random id and a friendly, editable name ("Chrome on Android"). No imports (db.js uses it).
 const ID_KEY = 'folio.deviceId', NAME_KEY = 'folio.deviceName';
 export function deviceId() {
