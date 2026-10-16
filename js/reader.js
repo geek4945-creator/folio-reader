@@ -8,13 +8,16 @@ import { blockZoom } from './viewport.js';
 import { attachPinch } from './pinch.js';
 import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
 import { makeLoading, withTimeout, patchBook } from './openguard.js';
+import { beforeOpen, registerOpenCheck } from './positions.js';
 
 let cur = null;   // active reading session
+registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
 
 const root = () => $('#reader');
 
 export async function openReader(id, opts = {}) {
   if (cur || pdfCurrent()) await closeReader();
+  await beforeOpen('book', id);   // v0.5.5: pull the latest position from other devices ("Continue from <device>?") before anything reads it
   const book = await S.getBook(id); const blob = await S.getFile(id);
   if (!book || !blob) { toast('Book file not found'); return; }
   if (book.format === 'pdf') return openPdf(book, blob, opts);

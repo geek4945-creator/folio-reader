@@ -10,7 +10,7 @@ const booksDb = (page) => page.evaluate(() => new Promise((res) => { const r = i
 const dbAll = (page, store) => page.evaluate((store) => new Promise((res) => { const r = indexedDB.open('folio-reader'); r.onsuccess = () => { const a = r.result.transaction(store).objectStore(store).getAll(); a.onsuccess = () => res(a.result); }; }), store);
 
 const GIS = `window.google={accounts:{id:{disableAutoSelect(){}},oauth2:{initTokenClient(cfg){return{requestAccessToken(){window.__gisCalls=(window.__gisCalls||[]);window.__gisCalls.push({prompt:cfg.prompt,hint:cfg.login_hint});setTimeout(()=>cfg.callback({access_token:'tok-'+Math.random().toString(36).slice(2),expires_in:3600,scope:cfg.scope}),20);}}},revoke(t,cb){window.__revoked=t;cb&&cb();},hasGrantedAllScopes(){return true}}}};`;
-const cloud = { file: null, writes: 0, auth: [] };
+const DF = require('./drive-fake'); const cloud = DF.attach({ writes: 0, auth: [] }, 'folio'); Object.defineProperty(cloud, 'file', { get: () => cloud.sync, set: (v) => { cloud.sync = v; } });
 async function mockGoogle(page) {
   await page.setRequestInterception(true);
   page.on('request', async (req) => {
@@ -22,13 +22,8 @@ async function mockGoogle(page) {
     if (u.includes('/oauth2/v3/userinfo')) return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ name: 'Ada Reader', email: 'ada@example.com', picture: '' }) });
     if (u.includes('spaces=drive')) { const q = decodeURIComponent(u.replace(/\+/g, ' ')); const files = q.includes("'FOLDER1' in parents") ? [{ id: 'DRV2', name: 'InFolder.epub', mimeType: 'application/epub+zip', size: '27000' }] : [{ id: 'FOLDER1', name: 'Books', mimeType: 'application/vnd.google-apps.folder' }, { id: 'DRV1', name: 'MyDriveBook.epub', mimeType: 'application/epub+zip', size: '27679' }]; return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ files }) }); }
     if (/\/drive\/v3\/files\/DRV\d\?alt=media/.test(u)) return req.respond({ status: 200, headers: cors, contentType: 'application/epub+zip', body: require('fs').readFileSync(fx(u.includes('DRV1') ? 'saga-2' : 'saga-3')) });
-    if (u.includes('/drive/v3/files?') && !u.includes('/upload/')) return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ files: cloud.file ? [{ id: 'F1', modifiedTime: 'x' }] : [] }) });
-    if (u.includes('/drive/v3/files/F1') && !u.includes('/upload/')) return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: cloud.file });
-    if (u.includes('/upload/drive/v3/files')) {
-      const body = req.postData() || ''; cloud.writes++;
-      if (req.method() === 'POST') { const mark = 'Content-Type: application/json\r\n\r\n'; const rest = body.slice(body.lastIndexOf(mark) + mark.length); cloud.file = rest.slice(0, rest.lastIndexOf('\r\n--folio')); cloud.parents = body.includes('appDataFolder'); return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: '{"id":"F1"}' }); }
-      cloud.file = body; return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: '{"id":"F1"}' });
-    }
+    if (u.includes('/upload/drive/v3/files')) if ((req.postData() || '').includes('appDataFolder')) cloud.parents = true;
+    if (await DF.handle(req, u, cloud, (o) => req.respond({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(o) }), cors)) return;
     return req.respond({ status: 404, headers: cors, body: 'nf' });
   });
 }

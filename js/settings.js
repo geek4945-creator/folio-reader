@@ -54,18 +54,53 @@ export const DEFAULTS = {
 };
 
 export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair'];
+/* ---------- cross-device sync of settings (v0.5.5): every preference is synced with its own last-write-wins stamp ---------- */
+/** Never synced: they describe this device / this moment rather than a preference. */
+export const DEVICE_ONLY = ['flowChosen', 'chip', 'audioChip', 'proxyUrl', 'proxyMode', 'fullscreen'];
+/** Groups the user can keep device-specific in Settings → Sync (e.g. different page flow or pinch speed on a phone and a tablet). */
+export const SETTING_GROUPS = [
+  { id: 'appearance', name: 'Appearance', hint: 'theme, font, text size, line spacing, margins', keys: ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'pdfInvert'] },
+  { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'pinchSens', 'holdSec'] },
+  { id: 'library', name: 'Library view & sorting', hint: 'grid / list, sort orders, group by, series sets', keys: ['view', 'sort', 'lastAutoSort', 'defaultSort', 'sorts', 'groupBy', 'groupSets', 'showFinished', 'setSort'] },
+  { id: 'audio', name: 'Audiobooks', hint: 'playback speed', keys: ['audioSpeed'] },
+  { id: 'other', name: 'Other', hint: 'public library, auto-link, auto-enrich', keys: ['publicLibrary', 'autoEnrich', 'autoPair'] },
+];
+const NESTED = ['sorts'];   // object-valued settings whose entries are stamped one by one ('sorts/shelf:abc')
+const KEYAT = 'folio.settings.keyAt', EXCL = 'folio.sync.deviceOnly';
+const readJ = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d; } catch { return d; } };
+/** Group ids the user keeps device-specific. */
+export const deviceOnlyGroups = () => readJ(EXCL, []);
+export const setDeviceOnlyGroups = (ids) => localStorage.setItem(EXCL, JSON.stringify(ids));
+const baseKeyOf = (flat) => flat.split('/')[0];
+/** Setting keys that take part in sync right now. */
+export function syncedKeys() {
+  const off = new Set([...DEVICE_ONLY, ...SETTING_GROUPS.filter((g) => deviceOnlyGroups().includes(g.id)).flatMap((g) => g.keys)]);
+  return Object.keys(DEFAULTS).filter((k) => !off.has(k));
+}
 let state = { ...DEFAULTS };
 try { Object.assign(state, JSON.parse(localStorage.getItem('folio.settings') || '{}')); } catch { /* ignore */ }
 const listeners = new Set();
 
+const jeq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+/** Per-key stamps: { key | 'sorts/<ctx>': epoch ms }. Keys that have none fall back to the legacy single stamp (folio.settings.at). */
+export const settingStamps = () => readJ(KEYAT, {});
+function stampKeys(patch, before) {
+  const at = settingStamps(), now = Date.now(); let ch = false;
+  for (const [k, v] of Object.entries(patch)) {
+    if (NESTED.includes(k)) { const a = before[k] || {}, b = v || {}; for (const sub of new Set([...Object.keys(a), ...Object.keys(b)])) if (!jeq(a[sub], b[sub])) { at[k + '/' + sub] = now; ch = true; } }
+    else if (!jeq(before[k], v)) { at[k] = now; ch = true; }
+  }
+  if (ch) localStorage.setItem(KEYAT, JSON.stringify(at));
+}
 export const settings = {
   get: (k) => state[k],
   all: () => ({ ...state }),
   updatedAt: () => +(localStorage.getItem('folio.settings.at') || 0),
   set(patch, opts = {}) {
+    if (!opts.remote) stampKeys(patch, state);
     Object.assign(state, patch);
     if ('flow' in patch && !opts.remote) state.flowChosen = true;
-    if (!opts.remote && Object.keys(patch).some((k) => SYNCED.includes(k))) localStorage.setItem('folio.settings.at', String(Date.now()));
+    if (!opts.remote && Object.keys(patch).some((k) => SYNCED.includes(k) || !DEVICE_ONLY.includes(k))) localStorage.setItem('folio.settings.at', String(Date.now()));
     try { localStorage.setItem('folio.settings', JSON.stringify(state)); } catch { /* quota */ }
     applyUI();
     listeners.forEach((fn) => fn(patch));
@@ -113,3 +148,12 @@ export function applyUI() {
   const meta = document.getElementById('meta-theme');
   if (meta) meta.content = t.bar;
 }
+
+/* One-time migration (v0.5.5): settings changed before per-key stamps existed get the old single stamp, so they still beat older values on other devices. */
+try {
+  if (localStorage.getItem(KEYAT) === null) {
+    const legacy = +(localStorage.getItem('folio.settings.at') || 0), at = {};
+    if (legacy) for (const k of Object.keys(DEFAULTS)) { if (k === 'sorts') { for (const c of Object.keys(state.sorts || {})) at['sorts/' + c] = legacy; } else if (!jeq(state[k], DEFAULTS[k])) at[k] = legacy; }
+    localStorage.setItem(KEYAT, JSON.stringify(at));
+  }
+} catch { /* ignore */ }

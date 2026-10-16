@@ -27,8 +27,9 @@ const GB = {
   'ogg tone': [GBV('GB8', 'Ogg Tone', ['Ogg Artist'], { date: '2012-03-04', desc: 'A tone, recorded in ogg.' })],
 };
 
+const DF = require('./drive-fake');
 function makeState() {
-  return { log: { ol: [], gb: [], proxy: [], img: [], cse: [], olTimes: [], drive: [] }, gb429: 0, gbAlways429: false, olFail: false, cloud: { sync: null, covers: new Map(), writes: 0, seq: 0, uploads: 0, deletes: [], lastBody: null, auth: [] }, pageUrl: null };
+  return { log: { ol: [], gb: [], proxy: [], img: [], cse: [], olTimes: [], drive: [] }, gb429: 0, gbAlways429: false, olFail: false, cloud: DF.attach({ covers: new Map(), writes: 0, seq: 0, uploads: 0, deletes: [], lastBody: null, auth: [] }, 'folio'), pageUrl: null };
 }
 const png1 = (b) => b;
 /** Install interception on a page. `S` is the shared state (so two devices can share one cloud). */
@@ -82,20 +83,15 @@ async function install(page, S) {
     if (/\/drive\/v3\/files\/IMG1\?alt=media/.test(u)) return img('cover-a.jpg');
     const cm = /\/drive\/v3\/files\/(C\d+)\?alt=media/.exec(u); if (cm) { const f = [...C.covers.values()].find((x) => x.id === cm[1]); return f ? req.respond({ status: 200, headers: CORS, contentType: 'image/jpeg', body: f.buf }) : req.respond({ status: 404, headers: CORS, body: 'nf' }); }
     if (/\/drive\/v3\/files\/C\d+$/.test(u.split('?')[0]) && req.method() === 'DELETE') { const id = u.split('?')[0].split('/').pop(); for (const [k, f] of C.covers) if (f.id === id) { C.covers.delete(k); C.deletes.push(k); } return req.respond({ status: 204, headers: CORS }); }
+    if (await DF.handle(req, u, C, json, CORS)) return;
     if (u.includes('/drive/v3/files?') && !u.includes('/upload/')) {
       const q = decodeURIComponent(u).replace(/\+/g, ' ');
       if (/name contains 'cover-'/.test(q)) return json({ files: [...C.covers.entries()].map(([name, f]) => ({ id: f.id, name, createdTime: f.createdTime })) });
-      return json({ files: C.sync ? [{ id: 'F1', modifiedTime: 'x' }] : [] });
+      return json({ files: [] });
     }
-    if (u.includes('/drive/v3/files/F1') && !u.includes('/upload/')) return req.respond({ status: 200, headers: CORS, contentType: 'application/json', body: C.sync });
-    if (u.includes('/upload/drive/v3/files')) {
-      const buf = C.lastBody || Buffer.from(req.postData() || ''); C.writes++;
-      if (req.method() === 'POST') {
-        const s = buf.toString('latin1'); const nameM = /"name":"([^"]+)"/.exec(s);
-        if (nameM && /^cover-/.test(nameM[1])) { const mark = Buffer.from('Content-Type: image/jpeg\r\n\r\n'); const i = buf.indexOf(mark) + mark.length; const e = buf.lastIndexOf(Buffer.from('\r\n--folio')); const id = 'C' + (++C.seq); C.uploads++; const f = { id, buf: buf.subarray(i, e), createdTime: new Date(C.coverAge ? Date.now() - C.coverAge : Date.now()).toISOString() }; C.covers.set(nameM[1], f); return json({ id, name: nameM[1], createdTime: f.createdTime }); }
-        const mark = 'Content-Type: application/json\r\n\r\n'; const rest = s.slice(s.lastIndexOf(mark) + mark.length); C.sync = rest.slice(0, rest.lastIndexOf('\r\n--folio')); C.parents = s.includes('appDataFolder'); return json({ id: 'F1' });
-      }
-      C.sync = buf.toString('utf8'); return json({ id: 'F1' });
+    if (u.includes('/upload/drive/v3/files') && req.method() === 'POST') {
+      const buf = C.lastBody || Buffer.from(req.postData() || ''); C.writes++; const s = buf.toString('latin1'); const nameM = /"name":"([^"]+)"/.exec(s);
+      if (nameM && /^cover-/.test(nameM[1])) { const mark = Buffer.from('Content-Type: image/jpeg\r\n\r\n'); const i = buf.indexOf(mark) + mark.length; const e = buf.lastIndexOf(Buffer.from('\r\n--folio')); const id = 'C' + (++C.seq); C.uploads++; const f = { id, buf: buf.subarray(i, e), createdTime: new Date(C.coverAge ? Date.now() - C.coverAge : Date.now()).toISOString() }; C.covers.set(nameM[1], f); return json({ id, name: nameM[1], createdTime: f.createdTime }); }
     }
     return req.respond({ status: 404, headers: CORS, body: 'nf' });
   });

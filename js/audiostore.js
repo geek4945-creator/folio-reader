@@ -13,7 +13,7 @@ const audioKey = (b) => b.syncKey || b.id;
 /** Metadata synced from another device before this audiobook was imported here. */
 function applyPendingAudio(book) {
   const k = audioKey(book);
-  try { const pa = JSON.parse(localStorage.getItem('folio.pendingAudio') || '{}'); const st = pa[k]; if (st) { for (const f of ['position', 'progress', 'status', 'shelves', 'speed', 'lastOpened', 'finishedAt', 'track', 'trackIndex']) if (st[f] !== undefined) book[f] = st[f]; delete pa[k]; localStorage.setItem('folio.pendingAudio', JSON.stringify(pa)); } } catch { /* ignore */ }   // position / status kept from a library backup
+  try { const pa = JSON.parse(localStorage.getItem('folio.pendingAudio') || '{}'); const st = pa[k]; if (st) { for (const f of ['position', 'progress', 'status', 'shelves', 'speed', 'lastOpened', 'finishedAt', 'track', 'trackIndex', 'posAt']) if (st[f] !== undefined) book[f] = st[f]; if (st.dev) { book.posDev = st.dev; book.posDevName = st.devName || ''; } delete pa[k]; localStorage.setItem('folio.pendingAudio', JSON.stringify(pa)); } } catch { /* ignore */ }   // position / status kept from a library backup
   if (applyPendingMeta(book, 'audio', k)) { const p = getPendingMeta('audio'); delete p[k]; setPendingMeta('audio', p); }
 }
 

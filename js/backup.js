@@ -10,7 +10,9 @@ import { buildSnapshot, mergeSnapshots, applySnapshot } from './google.js';
 import { getPendingMeta, setPendingMeta } from './metasync.js';
 import { isCapacitor } from './env.js';
 
-export const APP_ID = 'folio', APP_NAME = 'Folio Reader', APP_VERSION = '0.5.4';
+import { APP_VERSION } from './device.js';
+export { APP_VERSION };
+export const APP_ID = 'folio', APP_NAME = 'Folio Reader';
 export const FORMAT = 'folio-library-backup', FORMAT_VERSION = 1;
 const SECRET_RE = /token|secret|passw|apikey|api_key|authorization|bearer|credential|cookie/i;
 const NOT_EXPORTED = new Set(['proxyUrl']);   // deployment config of this device, not part of the library

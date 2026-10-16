@@ -9,8 +9,10 @@ import { openPdfDocument } from './pdf.js';
 import { fsButton } from './fullscreen.js';
 import { makeLoading, withTimeout } from './openguard.js';
 import { makeFooter, applyFooterSettings, paintFooter, footerToggles } from './pages.js';
+import { registerOpenCheck } from './positions.js';
 
 let cur = null;
+registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
 export const pdfCurrent = () => cur;
 const ZMIN = 0.5, ZMAX = 5;
 const root = () => $('#reader');

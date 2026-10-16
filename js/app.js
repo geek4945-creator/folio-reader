@@ -1,3 +1,4 @@
+import { syncDetails, statusLine } from './syncui.js';
 import { backupSettingsSection } from './backupui.js';
 import { h, $, $$, toast, sheet, confirmDlg } from './util.js';
 import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
@@ -122,12 +123,13 @@ function accountBox() {
     if (p) {
       box.append(h('div', { class: 'acct-row' }, p.picture ? h('img', { class: 'avatar', src: p.picture, alt: '', referrerpolicy: 'no-referrer' }) : h('div', { class: 'avatar ph' }, (p.name || '?')[0]),
         h('div', { class: 'grow' }, h('strong', null, p.name), h('div', { class: 'muted small' }, p.email))),
-        h('p', { class: 'muted small', id: 'sync-status' }, ({ syncing: 'Syncing…', error: 'Sync error: ' + st.message, 'needs-reauth': st.message, connected: st.lastSync ? 'Last synced ' + new Date(st.lastSync).toLocaleString() : 'Connected' })[st.state] || ''),
+        h('p', { class: 'muted small', id: 'sync-status' }, statusLine(st)),
         h('div', { class: 'row-actions wrap' },
-          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow(); toast(r && r.pending ? `Synced · ${r.pending} books’ state waiting for their files` : 'Synced'); } catch (e) { toast(e.message, 5000); } } }, 'Sync now'),
+          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow({ force: true }); toast(r && r.pending ? `Synced · ${r.pending} books’ state waiting for their files` : 'Synced'); } catch (e) { toast(e.message, 5000); } } }, 'Sync now'),
           st.state === 'needs-reauth' ? h('button', { class: 'btn', onclick: () => G.signIn().then(draw).catch((e) => toast(e.message)) }, 'Reconnect') : null,
           h('button', { class: 'btn', id: 'sign-out', onclick: async () => { G.signOut(); draw(); toast('Signed out on this device'); } }, 'Sign out'),
           h('button', { class: 'btn danger', onclick: async () => { if (await confirmDlg('Disconnect Google?', 'Revokes Folio’s access to your Google account. Synced data stays in your Drive app data until you remove it in Google account settings.', 'Disconnect', true)) { await G.disconnect(); draw(); } } }, 'Disconnect')),
+        syncDetails(draw),
         h('div', { class: 'row-actions wrap' }, h('button', { class: 'btn', id: 'enable-drive', onclick: async () => { try { await G.enableDriveBrowse(); toast('Drive access enabled'); draw(); } catch (e) { toast(e.message, 5000); } } }, G.canBrowseDrive() ? 'Drive browse access ✓ (re-grant)' : 'Allow browsing my Drive for EPUBs')),
         h('p', { class: 'muted small' }, 'Syncs settings, shelves, sets, custom order, per-book reading settings, positions and bookmarks to a private app-data folder in your Drive. Book files are not uploaded.'));
     } else {

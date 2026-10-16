@@ -5,6 +5,31 @@ const NAME = 'folio-reader';
 const VERSION = 5;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only)
 let dbp;
 const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders', 'links']);
+import { deviceId, deviceName } from './device.js';
+
+/* Fine-grained change stamps for cross-device sync. A book / audiobook has three independent kinds of change:
+ *   structAt – shelves, status, series, titles   (library file)      posAt – where you are in it + when last opened (positions file)
+ *   ovAt     – per-key stamps of the per-book reading overrides (font size, margins…)
+ * They are set here, by comparing the record with what is stored, so any code path that saves a book gets them right. Records saved with _noTouch
+ * (sync apply, imports) keep the stamps they carry. Legacy records (no stamps) fall back to updatedAt / lastOpened. */
+const STAMPED = new Set(['books', 'audiobooks']);
+const J = JSON.stringify;
+const structSig = (b) => J([b.status, [...(b.shelves || [])].sort(), b.setId || null, b.seriesIndex ?? null, b.finishedAt || 0, b.title, b.author || '']);
+const posSig = (b) => J([b.cfi || null, Math.round((b.progress || 0) * 1e4), b.pdfPage || 0, b.pdfText ? 1 : 0, b.pdfZoom || 0, Math.round(b.position || 0), b.trackIndex ?? null]);
+export const structAtOf = (b) => b.structAt ?? b.updatedAt ?? 0;
+export const posAtOf = (b) => b.posAt ?? b.lastOpened ?? 0;
+function stamp(val, old) {
+  const now = Date.now();
+  if (!old) { val.structAt = 0; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
+  val.structAt = structSig(old) === structSig(val) ? structAtOf(old) : now;
+  if (posSig(old) === posSig(val)) { val.posAt = posAtOf(old); if (old.posDev) { val.posDev = old.posDev; val.posDevName = old.posDevName; } }
+  else { val.posAt = now; val.posDev = deviceId(); val.posDevName = deviceName(); try { window.dispatchEvent(new Event('folio-position')); } catch { /* not in a window */ } }
+  if (val.overrides || old.overrides) {   // per-key stamps for the per-book reading overrides (font size, margins, theme…): independent last-writer-wins
+    const a = old.overrides || {}, b = val.overrides || {}, at = { ...(old.ovAt || {}) };
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (J(a[k]) !== J(b[k])) at[k] = now;
+    val.ovAt = at;
+  }
+}
 
 function open() {
   if (dbp) return dbp;
@@ -45,7 +70,9 @@ export const DB = {
   async all(s) { return wrap((await store(s)).getAll()); },
   // Records in synced stores get an updatedAt stamp (used for last-writer-wins sync) unless _noTouch is set.
   async put(s, val) {
+    if (val && STAMPED.has(s) && !val._noTouch) stamp(val, await wrap((await store(s)).get(val.id)));
     if (val && TRACKED.has(s)) { if (val._noTouch) delete val._noTouch; else val.updatedAt = Date.now(); }
+    else if (val && val._noTouch) delete val._noTouch;
     return wrap((await store(s, 'readwrite')).put(val));
   },
   async del(s, key) { return wrap((await store(s, 'readwrite')).delete(key)); },

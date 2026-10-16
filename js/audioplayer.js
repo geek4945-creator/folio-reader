@@ -4,12 +4,14 @@ import { h, $, toast, sheet, actionSheet, hashHue } from './util.js';
 import { settings } from './settings.js';
 import * as A from './audiostore.js';
 import { DB } from './db.js';
+import { beforeOpen, registerOpenCheck } from './positions.js';
 
 export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 export const SLEEP_OPTIONS = [[15, '15 minutes'], [30, '30 minutes'], [45, '45 minutes'], [60, '60 minutes'], ['chapter', 'End of chapter']];
 const el = (() => { const a = document.createElement('audio'); a.id = 'audio-el'; a.preload = 'auto'; a.setAttribute('playsinline', ''); a.hidden = true; a.preservesPitch = true; document.addEventListener('DOMContentLoaded', () => document.body.append(a)); if (document.body) document.body.append(a); return a; })();
 
 let cur = null;            // { book, offs, total, ch, ti (track index), url, speed }
+registerOpenCheck((kind, id) => kind === 'audio' && !!cur && cur.book.id === id);
 let loadToken = 0, lastSave = 0, lastMs = 0, sleep = null, sleepTimer = 0, coverUrl = null, closed = true;
 const bus = new EventTarget(); const emit = (t) => bus.dispatchEvent(new Event(t));
 export const onPlayer = (t, fn) => { bus.addEventListener(t, fn); return () => bus.removeEventListener(t, fn); };
@@ -53,6 +55,7 @@ async function setTrack(i, off, autoplay) {
 export async function loadBook(id, { play = false } = {}) {
   if (cur && cur.book.id === id) { closed = false; if (play) await playNow(); emit('state'); return cur; }
   await save(true);
+  await beforeOpen('audio', id);   // v0.5.5: latest listening position from other devices
   const book = await A.getAudiobook(id); if (!book) return null;
   const lay = layout(book); const speed = clampSpeed(book.speed ?? settings.get('audioSpeed') ?? 1);
   cur = { book, ...lay, ti: 0, url: null, speed }; closed = false;
