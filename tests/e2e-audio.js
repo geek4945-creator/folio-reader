@@ -79,8 +79,8 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
   const page = await newPage(browser);
   const MP3S = ['story-01.mp3', 'story-02.mp3', 'story-03.mp3'];
 
-  await step('Tab bar: 4 tabs, Audiobooks present; empty state offers import + free sources', async () => {
-    const tabs = await page.$$eval('#tabbar .tab', (e) => e.map((x) => x.dataset.tab)); assert(tabs.length === 4 && tabs.includes('audiobooks'), tabs.join());
+  await step('Tab bar: 5 tabs (incl. Reading now), Audiobooks present; empty state offers import + free sources', async () => {
+    const tabs = await page.$$eval('#tabbar .tab', (e) => e.map((x) => x.dataset.tab)); assert(tabs.length === 5 && tabs.join() === 'library,reading,audiobooks,catalogs,settings', tabs.join());
     await page.click('[data-tab=audiobooks]'); await sleep(500);
     const t = await page.$eval('#view', (e) => e.innerText); assert(/No audiobooks yet/.test(t) && await page.$('#audio-empty-import') && await page.$('#audio-empty-online'), t.slice(0, 80)); return tabs.join(',');
   });
