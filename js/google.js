@@ -197,7 +197,7 @@ export async function buildSnapshot() {
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: b.updatedAt || 0 };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: b.updatedAt || 0, ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
@@ -275,14 +275,15 @@ export async function applySnapshot(m, ctx = {}) {
   for (const x of m.shelves) await DB.put('shelves', { ...x, ...touch });
   for (const s of sets) if (!m.sets.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('sets', s.id);
   for (const s of shelves) if (!m.shelves.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('shelves', s.id);
-  if ((m.settings.updatedAt || 0) > settings.updatedAt()) { settings.set(m.settings.values, { remote: true }); localStorage.setItem('folio.settings.at', String(m.settings.updatedAt)); }
+  if (ctx.force || (m.settings.updatedAt || 0) > settings.updatedAt()) { settings.set(m.settings.values, { remote: true }); localStorage.setItem('folio.settings.at', String(m.settings.updatedAt)); }
   const keyToId = new Map(); const pending = {}; let appliedBooks = 0, deletedBooks = 0;
   for (const b of books) {
     const key = S.bookSyncKey(b); keyToId.set(key, b.id); const st = m.books[key];
     if (!st) { if ((m.tombstones || []).some((t) => t.t === 'book' && t.id === key && t.at >= Math.max(b.updatedAt || 0, b.addedAt || 0))) { await S.deleteBooks([b.id], { tomb: false, emit: false }); keyToId.delete(key); deletedBooks++; } continue; }   // deleted on another device
     const localAt = b.updatedAt || 0;
-    if ((st.updatedAt || 0) > localAt) {
+    if (ctx.force || (st.updatedAt || 0) > localAt) {
       Object.assign(b, { status: st.status, shelves: st.shelves, setId: st.setId, seriesIndex: st.seriesIndex, overrides: st.overrides, progress: st.progress, cfi: st.cfi, lastOpened: st.lastOpened, title: st.title || b.title, author: st.author || b.author, updatedAt: st.updatedAt, _noTouch: true });
+      if (st.pdfPage) Object.assign(b, { pdfPage: st.pdfPage, pdfZoom: st.pdfZoom || 1, pdfText: !!st.pdfText }); if (st.finishedAt) b.finishedAt = st.finishedAt;
       await DB.put('books', b); appliedBooks++;
     } else if (idmap.size) { b.setId = idmap.get(b.setId) || b.setId; b.shelves = (b.shelves || []).map((x) => idmap.get(x) || x); await DB.put('books', { ...b, _noTouch: true }); }
   }

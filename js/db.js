@@ -2,7 +2,7 @@
 // Stores: books (metadata + cover blob), files (epub blobs), bookmarks, sets (series),
 // shelves (custom), orders (manual order per context), sources (catalog sources).
 const NAME = 'folio-reader';
-const VERSION = 4;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced)
+const VERSION = 5;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only)
 let dbp;
 const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders', 'links']);
 
@@ -17,6 +17,7 @@ function open() {
       mk('sets', { keyPath: 'id' }); mk('shelves', { keyPath: 'id' }); mk('orders', { keyPath: 'key' }); mk('sources', { keyPath: 'id' });
       mk('audiobooks', { keyPath: 'id' }); mk('audiofiles', { keyPath: 'id' });   // audiobooks: metadata + cover; audiofiles: one blob per track ('<bookId>:<n>'), device-only (never synced)
       mk('links', { keyPath: 'id' });   // audiobook ↔ ebook links + remembered rejections (synced; see links.js)
+      mk('undo', { keyPath: 'id' });   // one record: the library state before the last backup import (Undo)
       mk('pagecache', { keyPath: 'key' });   // not synced: {key: '<bookId>|chars' | '<bookId>|k' | '<bookId>|cal|<layout>', bookId, v}
     };
     req.onsuccess = () => { const db = req.result; db.onversionchange = () => { try { db.close(); } catch { /* ignore */ } dbp = null; }; resolve(db); };   // let a newer version of the app (another tab / window) upgrade the database instead of blocking it

@@ -1,3 +1,4 @@
+import { backupSettingsSection } from './backupui.js';
 import { h, $, $$, toast, sheet, confirmDlg } from './util.js';
 import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
 import { KINDLE_TYPE_RE } from './kindle.js';
@@ -95,6 +96,7 @@ function renderSettings() {
       h('button', { class: 'btn', id: 'reset-all-sorts', onclick: async () => { if (await confirmDlg('Reset all shelves?', 'Every shelf and set will use the default sort again. Custom drag orders are kept for when you switch back to Custom order.', 'Reset', false)) { resetAllSorts(); toast('All shelves use the default sort'); renderSettings(); } } }, 'Reset all shelves to default sort')),
     enrichSettingsSection(() => openFixMissing()),
     pairSettingsSection(),
+    backupSettingsSection(() => renderSettings()),
     h('section', { class: 'pad card-sec', id: 'sec-library' }, h('h3', null, 'Library'),
       h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
       h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),
@@ -151,7 +153,7 @@ window.addEventListener('drop', async (e) => {
 });
 
 /* ---------- boot ---------- */
-initViewport(); initHold();
+initViewport(); initHold(); setTimeout(() => import('./backup.js').then((m) => m.expireUndo()).catch(() => {}), 4000);
 window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
 G.initSync();
 show(tab); initNav({ getTab: () => tab, show });

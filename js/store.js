@@ -238,6 +238,8 @@ export function applyPending(book) {
   const p = getPending(); const st = p[bookSyncKey(book)]; if (!st) return;
   Object.assign(book, { status: st.status || book.status, shelves: st.shelves || [], setId: st.setId || book.setId, seriesIndex: st.seriesIndex ?? book.seriesIndex, overrides: st.overrides || null, progress: st.progress || 0, cfi: st.cfi || null, lastOpened: st.lastOpened || 0 });
   if (st.title) book.title = st.title; if (st.author) book.author = st.author;
+  if (st.pdfPage) Object.assign(book, { pdfPage: st.pdfPage, pdfZoom: st.pdfZoom || 1, pdfText: !!st.pdfText }); if (st.finishedAt) book.finishedAt = st.finishedAt;
+  if (st.loan && (st.loan.at || 0) > (book.loanAt || 0)) Object.assign(book, { borrowed: !!st.loan.b, dueAt: st.loan.due || null, loanAt: st.loan.at, ...(st.loan.src ? { loanSource: st.loan.src } : {}) });   // Borrowed flag + due date kept for a book that wasn't here yet
   applyPendingMeta(book, 'book', bookSyncKey(book)); { const pm = getPendingMeta('book'); delete pm[bookSyncKey(book)]; setPendingMeta('book', pm); }
   const bms = (getPendingBookmarks()[bookSyncKey(book)] || []);
   bms.forEach((bm) => DB.put('bookmarks', { ...bm, bookId: book.id, _noTouch: true }));
