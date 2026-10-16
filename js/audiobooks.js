@@ -6,6 +6,9 @@ import * as A from './audiostore.js';
 import { enableDragSort } from './dragsort.js';
 import { loadBook, openPlayer, unloadIf, fmtLong, downloadWithToast, getState } from './audioplayer.js';
 import { openDriveBrowser } from './drive.js';
+import { markEdits } from './metasync.js';
+import { openCoverEditor } from './covers.js';
+import { openFixMissing } from './enrich.js';
 import { openAudioSources } from './audiosources.js';
 
 let view; const covers = new Map();
@@ -161,6 +164,7 @@ function audioMenu(ctx) {
     { label: 'Import audio files…', id: 'audio-menu-files', onClick: pickAudio },
     { label: 'Import a folder…', id: 'audio-menu-folder', onClick: () => $('#audio-folder-input').click() },
     { label: 'Import from Google Drive…', id: 'audio-menu-drive', onClick: () => openDriveBrowser({ audio: true }) },
+    ctx.books.length ? { label: '✨  Fix missing info…', id: 'audio-menu-fix-missing', onClick: () => openFixMissing({ kind: 'audio' }) } : null,
     { label: 'Manage shelves…', onClick: () => manageShelves(ctx) },
     ctx.books.length ? { label: 'Select audiobooks…', id: 'audio-menu-select', onClick: () => { local.sel = new Set(); rerender(); } } : null,
     ctx.books.length ? { label: 'Delete all audiobooks…', id: 'audio-menu-delete-all', danger: true, onClick: () => deleteAllFlow() } : null,
@@ -177,6 +181,7 @@ export function audioBookMenu(b, ctx) {
   actionSheet(b.title, [
     { label: 'Play', id: 'audio-menu-play', onClick: () => open(b.id) },
     { label: 'Edit details…', id: 'audio-menu-edit', onClick: () => editBook(b) },
+    { label: 'Change cover…', id: 'audio-menu-cover', onClick: () => openCoverEditor('audio', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', id: 'audio-menu-shelf', onClick: () => shelfSheet(b, ctx) },
     A.hasUrls(b) ? (A.isDownloaded(b) ? { label: 'Remove offline copy', id: 'audio-menu-rmdl', onClick: async () => { await A.removeDownload(b.id); toast('Offline copy removed'); rerender(); } } : { label: 'Download for offline', id: 'audio-menu-dl', onClick: async () => { await downloadWithToast(b.id); rerender(); } }) : null,
     { label: 'Delete audiobook', danger: true, id: 'audio-menu-delete', onClick: () => deleteFlow([b.id]) },
@@ -191,8 +196,9 @@ function shelfSheet(b, ctx) {
 }
 function editBook(b) {
   const title = h('input', { class: 'field', id: 'audio-edit-title', value: b.title }); const author = h('input', { class: 'field', id: 'audio-edit-author', value: b.author });
-  sheet('Edit audiobook', (close) => [h('label', null, 'Title', title), h('label', null, 'Author', author),
-    h('button', { class: 'btn primary block', id: 'audio-save', onclick: async () => { const bk = await A.getAudiobook(b.id); bk.title = title.value.trim() || bk.title; bk.author = author.value.trim(); await A.saveAudiobook(bk); close(); rerender(); } }, 'Save')]);
+  const desc = h('textarea', { class: 'field', id: 'audio-edit-description', rows: 4 }, b.description || ''); const year = h('input', { class: 'field', id: 'audio-edit-year', type: 'number', min: '0', max: '2100', value: b.year ?? '' }); const lang = h('input', { class: 'field', id: 'audio-edit-language', value: b.language || '' });
+  sheet('Edit audiobook', (close) => [h('label', null, 'Title', title), h('label', null, 'Author', author), h('label', null, 'Description', desc), h('div', { class: 'row-fields' }, h('label', null, 'Year', year), h('label', null, 'Language', lang)),
+    h('button', { class: 'btn primary block', id: 'audio-save', onclick: async () => { const bk = await A.getAudiobook(b.id); bk.title = title.value.trim() || bk.title; markEdits(bk, { author: author.value, description: desc.value, year: year.value, language: lang.value }); await A.saveAudiobook(bk); S.emitChange(); close(); rerender(); } }, 'Save')]);
 }
 
 /* ---------- import ---------- */

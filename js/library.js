@@ -6,6 +6,9 @@ import { enableDragSort } from './dragsort.js';
 import { openReader } from './reader.js';
 import { openDriveBrowser } from './drive.js';
 import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
+import { markEdits } from './metasync.js';
+import { openCoverEditor, hasCustomCover } from './covers.js';
+import { openFixMissing } from './enrich.js';
 import { installMode, installLabel, startInstall } from './install.js';
 
 let view; const covers = new Map();
@@ -333,6 +336,7 @@ function libMenu(ctx) {
     { label: 'Group series into sets', checked: settings.get('groupSets'), keepOpen: true, onClick: () => { settings.set({ groupSets: !settings.get('groupSets') }); sheetObj.close(); rerender(); } },
     { label: 'Group by: ' + (GROUP_OPTIONS.find(([v]) => v === (settings.get('groupBy') || 'status'))?.[1].replace(/ \(.*/, '')) + '…', id: 'menu-group', onClick: () => groupSheet() },
     { label: (settings.get('groupBy') || 'status') === 'status' ? 'Show Finished as a separate section' : 'Show finished books in All', id: 'menu-show-finished', checked: settings.get('showFinished'), keepOpen: true, onClick: () => { settings.set({ showFinished: !settings.get('showFinished') }); sheetObj.close(); rerender(); } },
+    ctx.books.length ? { label: '✨  Fix missing info…', id: 'menu-fix-missing', onClick: () => openFixMissing({ kind: 'book' }) } : null,
     { label: 'Where to get DRM-free books…', onClick: () => openDrmFreeHelp() },
     installMode() ? { label: (installMode() === 'ios' ? '📲  ' : '⬇️  ') + installLabel() + '…', onClick: startInstall, id: 'menu-install' } : null,
     { label: 'Manage shelves…', onClick: () => manageShelves(ctx) },
@@ -366,6 +370,7 @@ export function bookMenu(b, ctx) {
   const s = actionSheet(b.title, [
     { label: 'Open', onClick: () => openReader(b.id) },
     { label: 'Edit details & set…', onClick: () => editBook(b, ctx) },
+    { label: 'Change cover…', id: 'menu-change-cover', onClick: () => openCoverEditor('book', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', onClick: () => shelfSheet(b, ctx) },
     b.format !== 'pdf' && S.hasOverrides(b) ? { label: 'Reset this book’s reading settings', onClick: async () => { await S.resetOverrides(b.id); toast('Using global reading settings'); rerender(); } } : null,
     { label: 'Delete from library', danger: true, id: 'menu-delete-book', onClick: () => deleteBooksFlow([b.id]) },
@@ -386,12 +391,15 @@ function editBook(b, ctx) {
   const vol = h('input', { class: 'field', type: 'number', step: '0.5', min: '0', placeholder: 'Volume # (optional)', value: b.seriesIndex ?? '' });
   const newName = h('input', { class: 'field', placeholder: 'New set name', hidden: true });
   sel.addEventListener('change', () => { newName.hidden = sel.value !== '__new'; });
-  sheet('Edit book', (close) => [h('label', null, 'Title', title), h('label', null, 'Author', author), h('label', null, 'Set (series)', sel, newName), h('label', null, 'Volume', vol),
+  const desc = h('textarea', { class: 'field', id: 'edit-description', rows: 4 }, b.description || ''); const year = h('input', { class: 'field', id: 'edit-year', type: 'number', min: '0', max: '2100', placeholder: 'e.g. 1997', value: b.year ?? '' }); const lang = h('input', { class: 'field', id: 'edit-language', placeholder: 'e.g. en', value: b.language || '' });
+  sheet('Edit book', (close) => [h('label', null, 'Title', title), h('label', null, 'Author', author), h('label', null, 'Set (series)', sel, newName), h('label', null, 'Volume', vol), h('label', null, 'Description', desc), h('div', { class: 'row-fields' }, h('label', null, 'Year', year), h('label', null, 'Language', lang)),
     h('button', { class: 'btn primary block', id: 'save-book', onclick: async () => {
-      const bk = await S.getBook(b.id); bk.title = title.value.trim() || bk.title; bk.author = author.value.trim() || bk.author;
+      const bk = await S.getBook(b.id); bk.title = title.value.trim() || bk.title; markEdits(bk, { author: author.value.trim() || bk.author, description: desc.value, year: year.value, language: lang.value });
+      const prevSet = bk.setId || '', prevIdx = bk.seriesIndex ?? null;
       let setId = sel.value;
       if (setId === '__new') { const n = newName.value.trim(); setId = n ? (await S.createSet(n)).id : ''; }
       bk.setId = setId || null; bk.seriesIndex = setId && vol.value !== '' ? parseFloat(vol.value) : (setId ? bk.seriesIndex : null);
+      if ((bk.setId || '') !== prevSet || bk.seriesIndex !== prevIdx) { bk.userSet = { ...(bk.userSet || {}), series: true }; }
       await S.saveBook(bk); await S.pruneSets(); close(); rerender();
     } }, 'Save')]);
 }

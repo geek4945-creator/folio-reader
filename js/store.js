@@ -4,6 +4,7 @@ import { parseEpub, shrinkCover } from './epubmeta.js';
 import { settings, clampPt } from './settings.js';
 import { fetchSmart, openLibraryCover } from './net.js';
 import { isPdf, parsePdf } from './pdf.js';
+import { applyPendingMeta, getPendingMeta, setPendingMeta, isbnFrom } from './metasync.js';
 import { detectKindle, kindleToEpub, looksLikeKfxZip, kfxError } from './kindle.js';
 
 export const STATUSES = [
@@ -34,13 +35,9 @@ export async function addBookFromBuffer(buffer, hints = {}) {
   const dupe = books.find((b) => meta.identifier && b.identifier === meta.identifier && b.title === meta.title);
   if (dupe) throw new Error('"' + meta.title + '" is already in your library');
 
-  let cover = meta.coverBlob;
+  let cover = meta.coverBlob; let coverSource = cover ? 'file' : 'file';
   if (!cover && hints.coverUrl) {
-    try { const r = await fetchSmart(hints.coverUrl, { timeout: 15000 }); const b = await r.blob(); if (/^image\//.test(b.type)) cover = b; } catch { /* hotlink blocked */ }
-  }
-  if (!cover) {
-    const u = await openLibraryCover(meta.title, meta.author);
-    if (u) { try { const r = await fetch(u); if (r.ok) { const b = await r.blob(); if (/^image\//.test(b.type) && b.size > 1200) cover = b; } } catch { /* offline */ } }
+    try { const r = await fetchSmart(hints.coverUrl, { timeout: 15000 }); const b = await r.blob(); if (/^image\//.test(b.type)) { cover = b; coverSource = 'enrich'; } } catch { /* hotlink blocked */ }
   }
   if (cover) cover = await shrinkCover(cover);
 
@@ -51,7 +48,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
 
   const book = {
     id: uid(), title: meta.title || hints.title || 'Untitled', author: meta.author !== 'Unknown author' ? meta.author : (hints.author || meta.author),
-    language: meta.language, description: meta.description || hints.summary || '', identifier: meta.identifier,
+    language: meta.language, description: meta.description || hints.summary || '', identifier: meta.identifier, year: meta.year || null, isbn: isbnFrom(meta.identifier), coverSource,
     addedAt: Date.now(), lastOpened: 0, progress: 0, cfi: null, status: 'want', shelves: [],
     setId, seriesIndex: seriesIndex ?? null, coverBlob: cover || null, size: buffer.byteLength, format: pdfMeta ? 'pdf' : 'epub', pages: pdfMeta ? pdfMeta.pages : null,
     syncKey: meta.identifier ? 'id:' + meta.identifier : 'ti:' + (meta.title + '|' + meta.author).toLowerCase(),
@@ -66,6 +63,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
   await DB.put('books', book);
   await resolveOrderPlaceholders(book);
   emitChange();
+  if (settings.get('autoEnrich')) import('./enrich.js').then((m) => m.autoEnrichNew(book, 'book'));   // background, high-confidence only, never throws
   return book;
 }
 
@@ -239,6 +237,7 @@ export function applyPending(book) {
   const p = getPending(); const st = p[bookSyncKey(book)]; if (!st) return;
   Object.assign(book, { status: st.status || book.status, shelves: st.shelves || [], setId: st.setId || book.setId, seriesIndex: st.seriesIndex ?? book.seriesIndex, overrides: st.overrides || null, progress: st.progress || 0, cfi: st.cfi || null, lastOpened: st.lastOpened || 0 });
   if (st.title) book.title = st.title; if (st.author) book.author = st.author;
+  applyPendingMeta(book, 'book', bookSyncKey(book)); { const pm = getPendingMeta('book'); delete pm[bookSyncKey(book)]; setPendingMeta('book', pm); }
   const bms = (getPendingBookmarks()[bookSyncKey(book)] || []);
   bms.forEach((bm) => DB.put('bookmarks', { ...bm, bookId: book.id, _noTouch: true }));
   delete p[bookSyncKey(book)]; setPending(p);

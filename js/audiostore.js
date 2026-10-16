@@ -4,6 +4,17 @@ import { DB, uid } from './db.js';
 import { shrinkCover } from './epubmeta.js';
 import { readAudioMeta, probeDuration, AUDIO_EXT, DRM_EXT } from './audiotags.js';
 import { download } from './net.js';
+import { settings } from './settings.js';
+import { applyPendingMeta, getPendingMeta, setPendingMeta } from './metasync.js';
+
+const tombs = () => { try { return JSON.parse(localStorage.getItem('folio.tombs') || '[]'); } catch { return []; } };
+const setTombs = (t) => localStorage.setItem('folio.tombs', JSON.stringify(t.slice(-5000)));
+const audioKey = (b) => b.syncKey || b.id;
+/** Metadata synced from another device before this audiobook was imported here. */
+function applyPendingAudio(book) {
+  const k = audioKey(book); 
+  if (applyPendingMeta(book, 'audio', k)) { const p = getPendingMeta('audio'); delete p[k]; setPendingMeta('audio', p); }
+}
 
 const bus = new EventTarget();
 export const onAudioChange = (fn) => bus.addEventListener('change', fn);
@@ -99,11 +110,13 @@ export async function importGroup(group, opts = {}) {
   if (all.some((b) => b.syncKey === syncKey)) throw new AudioImportError('“' + title + '” is already in your audiobooks', 'dupe');
   if (cover) cover = await shrinkCover(cover);
   const book = { id: uid(), kind: 'audio', title, author, description: '', addedAt: Date.now(), lastOpened: 0, position: 0, progress: 0, status: 'want', shelves: [], speed: null,
-    source: opts.source || 'import', sourceKey: opts.sourceKey || null, syncKey, coverBlob: cover, tracks, chapters, duration, size: tracks.reduce((a, t) => a + t.size, 0) };
+    source: opts.source || 'import', sourceKey: opts.sourceKey || null, syncKey, coverBlob: cover, coverSource: 'file', tracks, chapters, duration, size: tracks.reduce((a, t) => a + t.size, 0) };
+  applyPendingAudio(book);
   for (const [i, { e, meta }] of parts.entries()) await DB.put('audiofiles', { id: trackKey(book.id, i), bookId: book.id, blob: new Blob([e.blob], { type: MIME[meta.kind] || e.blob.type || 'audio/mpeg' }) });
   tracks.forEach((t) => { t.stored = true; });
-  await DB.put('audiobooks', book); emitAudio(); return book;
+  await DB.put('audiobooks', book); emitAudio(); autoEnrichLater(book); return book;
 }
+const autoEnrichLater = (b) => { if (settings.get('autoEnrich')) import('./enrich.js').then((m) => m.autoEnrichNew(b, 'audio')); };
 
 /** Import files from a picker / drop: returns { ok:[books], drm:[names], errs:[msgs] }. */
 export async function importAudioFiles(files, mode = 'auto') {
@@ -126,9 +139,10 @@ export async function addRemoteAudiobook(info, fetchCover) {
   if (info.coverUrl && fetchCover) { try { cover = await fetchCover(info.coverUrl); if (cover) cover = await shrinkCover(cover); } catch { cover = null; } }
   const tracks = info.tracks.map((t, i) => ({ name: (t.url || '').split('/').pop() || 'track' + (i + 1), title: t.title || 'Part ' + (i + 1), size: t.size || 0, duration: t.duration || 0, type: 'audio/mpeg', url: t.url, stored: false }));
   const book = { id: uid(), kind: 'audio', title: info.title || 'Audiobook', author: info.author || '', description: info.description || '', addedAt: Date.now(), lastOpened: 0, position: 0, progress: 0, status: 'want', shelves: [], speed: null,
-    source: info.source || 'online', sourceKey: info.sourceKey || null, sourceUrl: info.pageUrl || '', license: info.license || '', syncKey: (info.title + '|' + info.author + '|' + (info.sourceKey || '')).toLowerCase(), coverBlob: cover,
+    source: info.source || 'online', sourceKey: info.sourceKey || null, sourceUrl: info.pageUrl || '', coverUrl: info.coverUrl || '', license: info.license || '', syncKey: (info.title + '|' + info.author + '|' + (info.sourceKey || '')).toLowerCase(), coverBlob: cover, coverSource: 'file',
     tracks, chapters: tracks.map((t, i) => ({ title: t.title, track: i, start: 0 })), duration: tracks.reduce((a, t) => a + t.duration, 0), size: 0 };
-  await DB.put('audiobooks', book); emitAudio(); return book;
+  applyPendingAudio(book);
+  await DB.put('audiobooks', book); emitAudio(); autoEnrichLater(book); return book;
 }
 
 /** Save every streamed track for offline play. onProgress(doneTracks, total, fraction). Resolves to the updated book. */
@@ -158,12 +172,14 @@ export async function deleteAudiobooks(ids) {
     for (let i = 0; i < b.tracks.length; i++) { const f = await DB.get('audiofiles', trackKey(id, i)); if (f) snap.files.push(f); }
   }
   for (const b of snap.books) { for (let i = 0; i < b.tracks.length; i++) await DB.del('audiofiles', trackKey(b.id, i)); await DB.del('audiobooks', b.id); }
+  { const t = tombs(); for (const b of snap.books) t.push({ t: 'audio', id: audioKey(b), at: Date.now() }); setTombs(t); }   // so enriched metadata + covers of deleted audiobooks are dropped from Drive on every device
   for (const o of await DB.all('orders')) if (o.key.startsWith('audio:') && o.ids.some((x) => snap.books.some((b) => x === 'b:' + b.id))) { o.ids = o.ids.filter((x) => !snap.books.some((b) => x === 'b:' + b.id)); await DB.put('orders', o); }
   emitAudio(); return snap;
 }
 export async function restoreAudiobooks(snap) {
   for (const f of snap.files) await DB.put('audiofiles', f);
   for (const b of snap.books) await DB.put('audiobooks', b);
+  { const keys = new Set(snap.books.map(audioKey)); setTombs(tombs().filter((t) => !(t.t === 'audio' && keys.has(t.id)))); }
   emitAudio();
 }
 export async function deleteAllAudiobooks() { const n = (await getAudiobooks()).length; await DB.clear('audiobooks'); await DB.clear('audiofiles'); emitAudio(); return n; }

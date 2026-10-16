@@ -5,5 +5,9 @@ window.FOLIO_CONFIG = {
   // Where the browser version lives (the Android app points Google sign-in here, because Google blocks sign-in inside WebViews).
   webAppUrl: 'https://geek4945-creator.github.io/folio-reader/',
   // CORS proxy (Cloudflare Worker) used for Project Gutenberg downloads etc.
+  // Optional: Google Programmable Search (Custom Search JSON API) key + engine id (image search enabled). When both are set, “Change cover → Search covers” also lists Google Images results.
+  // Leave empty to skip; the “Open Google Images in a new tab” button works without any key. (Keys in a public app are visible to users: restrict them by HTTP referrer.)
+  googleCseKey: '',
+  googleCseCx: '',
   proxyUrl: 'https://folio-proxy.geek4945.workers.dev/',
 };

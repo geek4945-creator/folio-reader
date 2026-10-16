@@ -5,6 +5,9 @@ import { DB } from './db.js';
 import * as S from './store.js';
 import { onLibraryChange } from './store.js';
 import { isCapacitor } from './env.js';
+import * as A from './audiostore.js';
+import { hashBlob } from './covers.js';
+import { localMeta, mergeMetaMaps, applyTextFields, remoteCoverWins, setPendingMeta, getPendingMeta, ensureCoverIds, lastAtOf } from './metasync.js';
 
 const SCOPES = 'openid email profile https://www.googleapis.com/auth/drive.appdata';
 const AUTH_KEY = 'folio.google';
@@ -99,9 +102,10 @@ export async function enableDriveBrowse() {
   a.token = r.access_token; a.exp = Date.now() + (r.expires_in - 30) * 1000; a.scope = scope; save(a); scheduleRenew(a.exp);
 }
 const EBOOK_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType='application/epub+zip' or mimeType='application/pdf' or mimeType='application/x-mobipocket-ebook' or mimeType='application/vnd.amazon.ebook' or name contains '.epub' or name contains '.pdf' or name contains '.mobi' or name contains '.azw')";
+const IMAGE_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType contains 'image/' or name contains '.jpg' or name contains '.jpeg' or name contains '.png' or name contains '.webp' or name contains '.gif')";
 const AUDIO_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType contains 'audio/' or name contains '.mp3' or name contains '.m4a' or name contains '.m4b' or name contains '.aac' or name contains '.ogg' or name contains '.opus' or name contains '.flac' or name contains '.wav' or name contains '.zip')";
-export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '', audio = false } = {}) {
-  const EPUB_Q = audio ? AUDIO_Q : EBOOK_Q;
+export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '', audio = false, images = false } = {}) {
+  const EPUB_Q = images ? IMAGE_Q : audio ? AUDIO_Q : EBOOK_Q;
   const q = search ? `trashed=false and name contains '${search.replace(/['\\]/g, ' ')}' and ${EPUB_Q}` : `trashed=false and '${folderId}' in parents and ${EPUB_Q}`;
   const u = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, orderBy: 'folder,name', pageSize: '50', fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)', spaces: 'drive', ...(pageToken ? { pageToken } : {}) });
   const r = await drive(u); return r.json();
@@ -146,8 +150,10 @@ async function writeRemote(id, data) {
 }
 
 /* ---------- snapshot / merge / apply ---------- */
+const putQuiet = (store) => (it) => DB.put(store, { ...it, _noTouch: true });
 export async function buildSnapshot() {
-  const [books, sets, shelves, orders, bms] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks')]);
+  const [books, sets, shelves, orders, bms, audio] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks()]);
+  await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
   for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: b.updatedAt || 0 };   // untouched imports are 0 so another device's edits win
@@ -155,7 +161,9 @@ export async function buildSnapshot() {
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
   const s = settings.all(); const sv = {}; for (const k of SYNCED) sv[k] = s[k];
-  return { v: 1, savedAt: Date.now(), settings: { values: sv, updatedAt: settings.updatedAt() },
+  const meta = {}; for (const b of books) { const e = localMeta(b); if (e) meta[keyOf.get(b.id)] = e; }
+  const audioMeta = {}; for (const a of audio) { const e = localMeta(a); if (e) audioMeta[a.syncKey || a.id] = e; }
+  return { meta, audioMeta, v: 1, savedAt: Date.now(), settings: { values: sv, updatedAt: settings.updatedAt() },
     shelves: shelves.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
     sets: sets.map((x) => ({ id: x.id, name: x.name, auto: !!x.auto, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
     orders: orders.map((o) => ({ key: o.key, ids: o.ids.map(mapOrderId), updatedAt: o.updatedAt || 0 })),
@@ -200,12 +208,15 @@ export function mergeSnapshots(local, remote) {
   out.orders = out.orders.map((o) => ({ ...o, ids: o.ids.filter((x) => !(x.startsWith('b:') && deadBooks.has(x.slice(2)))) }));
   const live = new Set([...out.shelves.map((x) => x.id), ...out.sets.map((x) => x.id)]);
   for (const st of Object.values(out.books)) { st.shelves = (st.shelves || []).filter((id) => live.has(id)); if (st.setId && !live.has(st.setId)) st.setId = null; }
+  const deadMeta = (type) => (k, at) => dead(type, k, at);
+  out.meta = mergeMetaMaps(L.meta, R.meta, (k, at) => deadBooks.has(k) || dead('book', k, at));
+  out.audioMeta = mergeMetaMaps(L.audioMeta, R.audioMeta, deadMeta('audio'));
   out.idmap = [...idmap.entries()];
   return out;
 }
 
 /** Write the merged snapshot into IndexedDB / localStorage. Returns counts. */
-export async function applySnapshot(m) {
+export async function applySnapshot(m, ctx = {}) {
   const [books, sets, shelves, orders, bms] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks')]);
   const idmap = new Map(m.idmap || []);
   const touch = { _noTouch: true };
@@ -228,6 +239,7 @@ export async function applySnapshot(m) {
   }
   for (const [k, st] of Object.entries(m.books)) if (!keyToId.has(k)) pending[k] = st;
   S.setPending(pending);
+  const metaRes = await applyMeta(m, keyToId, ctx);
   // bookmarks
   const have = new Map(bms.map((x) => [x.id, x]));
   const pendBm = {};
@@ -248,8 +260,53 @@ export async function applySnapshot(m) {
   }
   for (const o of orders) if (!liveKeys.has(o.key) && (o.key.startsWith('set:') || o.key.startsWith('shelf:')) && !m.sets.concat(m.shelves).some((x) => o.key.endsWith(':' + x.id))) await DB.del('orders', o.key);
   localStorage.setItem('folio.tombs', JSON.stringify(m.tombstones || []));
-  return { appliedBooks, deletedBooks, pending: Object.keys(pending).length };
+  return { appliedBooks, deletedBooks, pending: Object.keys(pending).length, ...metaRes };
 }
+
+/** Enriched / hand-edited metadata + covers for books and audiobooks. ctx.getCover(id) → Blob | null (Drive download). */
+async function applyMeta(m, keyToId, ctx) {
+  let metaApplied = 0, coversApplied = 0;
+  const { resizeCover, revertCover } = await import('./covers.js');
+  for (const kind of ['book', 'audio']) {
+    const map = (kind === 'book' ? m.meta : m.audioMeta) || {}; const items = kind === 'book' ? await S.getBooks() : await A.getAudiobooks(); const store = kind === 'book' ? 'books' : 'audiobooks';
+    const byKey = new Map(items.map((it) => [kind === 'book' ? S.bookSyncKey(it) : (it.syncKey || it.id), it])); const pend = {};
+    for (const [k, e] of Object.entries(map)) {
+      const it = byKey.get(k); if (!it) { pend[k] = e; continue; }
+      let ch = applyTextFields(it, e);
+      if (e.cover && remoteCoverWins(it, e.cover)) {
+        const c = e.cover; it.metaAt = it.metaAt || {}; it.userSet = it.userSet || {};
+        if (c.id) { const blob = ctx.getCover ? await ctx.getCover(c.id) : null; if (blob) { it.coverBlob = blob; it.coverId = c.id; it.coverSource = c.u ? 'user' : 'enrich'; it.metaAt.cover = c.at; if (c.u) it.userSet.cover = true; else delete it.userSet.cover; it.revertedAt = Math.max(it.revertedAt || 0, c.rv || 0); ch = true; coversApplied++; } }
+        else { await revertCover(kind, it.id, { at: c.at, quiet: true }); const fresh = await (kind === 'book' ? S.getBook(it.id) : A.getAudiobook(it.id)); if (fresh) { Object.assign(it, fresh); it.revertedAt = Math.max(it.revertedAt || 0, c.rv || 0, c.at || 0); ch = true; coversApplied++; } }
+      }
+      if (ch) { await DB.put(store, { ...it, _noTouch: true }); metaApplied++; }
+    }
+    setPendingMeta(kind, pend);
+  }
+  return { metaApplied, coversApplied };
+}
+
+/* ---------- covers in appDataFolder: cover-<sha1>.jpg ---------- */
+async function listCoverFiles() {
+  const out = new Map(); let tok = '';
+  do {
+    const q = encodeURIComponent("name contains 'cover-' and trashed=false");
+    const r = await drive(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=nextPageToken,files(id,name,createdTime)&pageSize=200${tok ? '&pageToken=' + tok : ''}`);
+    const d = await r.json(); for (const f of d.files || []) out.set(f.name, f); tok = d.nextPageToken || '';
+  } while (tok);
+  return out;
+}
+async function uploadCover(id, blob) {
+  const b = 'folio' + Math.random().toString(36).slice(2);
+  const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: `cover-${id}.jpg`, parents: ['appDataFolder'], mimeType: 'image/jpeg' })}\r\n--${b}\r\nContent-Type: image/jpeg\r\n\r\n`, blob, `\r\n--${b}--`]);
+  const r = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body });
+  return r.json();
+}
+async function localCoverBlobs() {
+  const out = new Map(); for (const it of [...await S.getBooks(), ...await A.getAudiobooks()]) if (it.coverId && it.coverBlob && (it.coverSource === 'enrich' || it.coverSource === 'user')) out.set(it.coverId, it.coverBlob);
+  return out;
+}
+const coverIdsIn = (snap) => new Set([...Object.values(snap.meta || {}), ...Object.values(snap.audioMeta || {})].map((e) => e.cover?.id).filter(Boolean));
+export const COVER_GC_AGE = 3600e3;
 
 /* ---------- sync driver ---------- */
 let syncing = false, dirtyTimer, hookInstalled = false, inflight = null, internalEmit = false;
@@ -266,10 +323,22 @@ async function doSync(quiet) {
     const { id, data } = await readRemote();
     const local = await buildSnapshot();
     const merged = mergeSnapshots(local, data);
-    const res = await applySnapshot(merged);
+    let covers = null; try { covers = await listCoverFiles(); } catch { /* covers are best-effort: metadata still syncs */ }
+    const getCover = async (cid) => { const f = covers?.get(`cover-${cid}.jpg`); if (!f) return null; try { return await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).blob(); } catch { return null; } };
+    const res = await applySnapshot(merged, { getCover });
     const finalSnap = await buildSnapshot();   // re-read so ids/timestamps are consistent
     const toPush = mergeSnapshots(finalSnap, merged);
+    if (covers) {
+      const blobs = await localCoverBlobs(); let up = 0;
+      for (const cid of coverIdsIn(toPush)) { const name = `cover-${cid}.jpg`; if (covers.has(name) || !blobs.has(cid)) continue; try { covers.set(name, await uploadCover(cid, blobs.get(cid))); up++; } catch { /* retried next sync */ } }
+      res.coversUploaded = up;
+    }
     await writeRemote(id, toPush);
+    if (covers) {   // garbage-collect covers nothing references any more (never ones younger than an hour: another device may be mid-sync)
+      const keep = coverIdsIn(toPush); let gc = 0;
+      for (const [name, f] of covers) { const m = /^cover-([0-9a-f]+)\.jpg$/.exec(name); if (!m || keep.has(m[1])) continue; if (Date.now() - Date.parse(f.createdTime || 0) < COVER_GC_AGE) continue; try { await drive(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE' }); gc++; } catch { /* ignore */ } }
+      res.coversDeleted = gc;
+    }
     status.lastSync = Date.now(); localStorage.setItem('folio.lastSync', String(status.lastSync));
     setStatus('connected', 'Synced');
     internalEmit = true; try { S.emitChange(); } finally { internalEmit = false; }   // refresh UI without re-triggering sync

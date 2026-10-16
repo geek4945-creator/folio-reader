@@ -14,6 +14,7 @@ import { initInstall, installMode, installLabel, startInstall } from './install.
 import { initFullscreen, fsButton } from './fullscreen.js';
 import { isInstalledApp } from './env.js';
 import { normalizeUrl } from './net.js';
+import { enrichSettingsSection, openFixMissing } from './enrich.js';
 import { footerToggles } from './pages.js';
 
 applyUI();
@@ -79,6 +80,7 @@ function renderSettings() {
           h('select', { class: 'field', id: 'default-sort-field', onchange: (e) => { setDefaultSort({ field: e.target.value }); renderSettings(); } }, SORT_FIELDS.filter(([k]) => k !== 'custom').map(([v, n]) => h('option', { value: v, selected: v === s.defaultSort.field }, n))),
           h('button', { class: 'btn', id: 'default-sort-dir', 'data-dir': s.defaultSort.dir, onclick: () => { setDefaultSort({ dir: s.defaultSort.dir === 'asc' ? 'desc' : 'asc' }); renderSettings(); } }, (s.defaultSort.dir === 'asc' ? '↑ ' : '↓ ') + dirWord(s.defaultSort.field, s.defaultSort.dir)))),
       h('button', { class: 'btn', id: 'reset-all-sorts', onclick: async () => { if (await confirmDlg('Reset all shelves?', 'Every shelf and set will use the default sort again. Custom drag orders are kept for when you switch back to Custom order.', 'Reset', false)) { resetAllSorts(); toast('All shelves use the default sort'); renderSettings(); } } }, 'Reset all shelves to default sort')),
+    enrichSettingsSection(() => openFixMissing()),
     h('section', { class: 'pad card-sec', id: 'sec-library' }, h('h3', null, 'Library'),
       h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
       h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),

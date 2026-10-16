@@ -26,7 +26,7 @@ export async function parseEpub(buffer) {
     author: dc('creator').map(txt).filter(Boolean).join(', ') || 'Unknown author',
     language: txt(dc('language')[0]),
     description: txt(dc('description')[0]).replace(/<[^>]+>/g, '').slice(0, 2000),
-    identifier: txt(dc('identifier')[0]),
+    identifier: txt(dc('identifier')[0]), year: parseInt(/\d{4}/.exec(txt(dc('date')[0]))?.[0], 10) || null,
     series: '', seriesIndex: null, coverBlob: null,
   };
 

@@ -7,7 +7,7 @@ import * as A from './audiostore.js';
 const fmtSize = (n) => (n ? (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB') : '');
 
 export async function openDriveBrowser(opts = {}) {
-  const audio = !!opts.audio;
+  const audio = !!opts.audio, images = !!opts.images;
   if (!G.isSignedIn()) { toast('Sign in with Google first: Settings → Account & sync', 4500); return; }
   if (!G.canBrowseDrive()) {
     try { await G.enableDriveBrowse(); } catch (e) { toast(e.message, 5000); return; }
@@ -16,15 +16,15 @@ export async function openDriveBrowser(opts = {}) {
   let search = ''; let tok = ''; let busy = false;
   const list = h('div', { class: 'list', id: 'drive-list' }); const crumbs = h('div', { class: 'muted small', id: 'drive-crumbs' });
   const more = h('button', { class: 'btn block', hidden: true }, 'Load more');
-  const q = h('input', { type: 'search', class: 'field search', id: 'drive-search', placeholder: audio ? 'Search Drive for audiobooks' : 'Search Drive for EPUBs' });
-  const w = sheet(audio ? 'Google Drive: audiobooks' : 'Google Drive', () => [h('form', { onsubmit: (e) => { e.preventDefault(); search = q.value.trim(); load(true); } }, q), crumbs, list, more], { tall: true });
+  const q = h('input', { type: 'search', class: 'field search', id: 'drive-search', placeholder: images ? 'Search Drive for pictures' : audio ? 'Search Drive for audiobooks' : 'Search Drive for EPUBs' });
+  const w = sheet(images ? 'Google Drive: pictures' : audio ? 'Google Drive: audiobooks' : 'Google Drive', () => [h('form', { onsubmit: (e) => { e.preventDefault(); search = q.value.trim(); load(true); } }, q), crumbs, list, more], { tall: true });
 
   async function load(reset) {
     if (busy) return; busy = true;
     if (reset) { list.replaceChildren(h('div', { class: 'spinner-row' }, h('div', { class: 'spinner' }), 'Loading…')); tok = ''; }
     crumbs.textContent = search ? `Search: “${search}”` : path.map((p) => p.name).join(' › ');
     try {
-      const d = await G.listDriveFiles({ folderId: path[path.length - 1].id, search, pageToken: tok, audio });
+      const d = await G.listDriveFiles({ folderId: path[path.length - 1].id, search, pageToken: tok, audio, images });
       if (reset) list.replaceChildren();
       if (!search && path.length > 1 && reset) list.append(row('‹ Back', '', () => { path.pop(); load(true); }));
       if (audio && reset && !search) { const audios = d.files.filter((f) => f.mimeType !== 'application/vnd.google-apps.folder' && !/\.zip$/i.test(f.name)); if (audios.length > 1) list.append(folderBtn(audios)); }
@@ -32,7 +32,7 @@ export async function openDriveBrowser(opts = {}) {
         if (f.mimeType === 'application/vnd.google-apps.folder') list.append(row('📁 ' + f.name, '›', () => { search = ''; q.value = ''; path.push({ id: f.id, name: f.name }); load(true); }, 'folder'));
         else list.append(importRow(f));
       }
-      if (reset && !d.files.length) list.append(h('p', { class: 'muted pad' }, '' + (audio ? 'No folders or audio files (MP3, M4B, M4A, AAC, OGG, zip) here.' : 'No folders or book files (EPUB, PDF, MOBI, AZW3) here.') + ''));
+      if (reset && !d.files.length) list.append(h('p', { class: 'muted pad' }, '' + (images ? 'No folders or pictures (JPEG, PNG, WebP) here.' : audio ? 'No folders or audio files (MP3, M4B, M4A, AAC, OGG, zip) here.' : 'No folders or book files (EPUB, PDF, MOBI, AZW3) here.') + ''));
       tok = d.nextPageToken || ''; more.hidden = !tok;
     } catch (e) { list.replaceChildren(h('p', { class: 'err pad' }, e.message)); }
     busy = false;
@@ -49,6 +49,11 @@ export async function openDriveBrowser(opts = {}) {
     return btn;
   }
   function importRow(f) {
+    if (images) {
+      const use = h('button', { class: 'btn primary small dl', onclick: async (e) => { e.stopPropagation(); use.disabled = true; use.textContent = 'Downloading…';
+        try { const blob = await G.downloadDriveFile(f.id); await opts.onPick(blob.type ? blob : new Blob([blob], { type: f.mimeType || 'image/jpeg' })); use.disabled = false; use.textContent = 'Use'; } catch (err) { use.disabled = false; use.textContent = 'Use'; toast(err.message, 5000); } } }, 'Use');
+      return h('div', { class: 'list-item file', 'data-id': f.id }, h('span', { class: 'grow' }, f.name, h('div', { class: 'muted small' }, fmtSize(+f.size))), use);
+    }
     const btn = h('button', { class: 'btn primary small dl', onclick: async (e) => {
       e.stopPropagation(); btn.disabled = true; btn.textContent = 'Downloading…';
       try { const blob = await G.downloadDriveFile(f.id); btn.textContent = 'Importing…'; if (audio) { const res = await A.importAudioFiles([new File([blob], f.name, { type: blob.type })]); if (res.drm.length) throw Object.assign(new Error(A.COPY_PROTECTED_MSG), { code: 'drm' }); if (res.errs.length) throw new Error(res.errs[0]); btn.textContent = '✓ Added'; toast('Imported “' + f.name + '”'); return; } await addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id, filename: f.name }); btn.textContent = '✓ Added'; toast('Imported “' + f.name + '”'); }
