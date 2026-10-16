@@ -40,6 +40,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   const selLen = (page) => page.evaluate(() => window.__reader.rendition.getContents().map((k) => k.window.getSelection().toString().length).reduce((a, b) => a + b, 0));
   const click = (page, sel) => page.evaluate((s) => document.querySelector(s).click(), sel);
   const toStart = async (page) => { await page.evaluate(() => window.__reader.rendition.display(window.__reader.epub.spine.get(0).href)); await sleep(700); };
+  const wordXY = (page, word) => page.evaluate((word) => { for (const c of window.__reader.rendition.getContents()) { const doc = c.document; const w = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const i = n.data.indexOf(word); if (i < 0) continue; const r = doc.createRange(); r.setStart(n, i); r.setEnd(n, i + word.length); const b = r.getBoundingClientRect(); const f = c.window.frameElement.getBoundingClientRect(); if (b.left + f.left < 10 || b.right + f.left > 380 || b.top + f.top < 60 || b.bottom + f.top > 740) continue; return { x: b.left + b.width / 2 + f.left, y: b.top + b.height / 2 + f.top }; } } return null; }, word);
   const pageNo = (page) => page.evaluate(() => window.__reader.rendition.currentLocation().start.displayed.page);
 
   let A = await mk(await browser.createBrowserContext());
@@ -132,6 +133,26 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     await A.waitForSelector('#an-list .an-item'); await A.evaluate(() => { const it = [...document.querySelectorAll('#an-list .an-item')].find((e) => /Edited from/.test(e.textContent)); it.querySelector('.an-rm').click(); }); await sleep(500);
     assert((await recs(A)).length === 3, 'delete failed: ' + (await recs(A)).length); assert((await paintedText(A, 'purple')).length === 0, 'deleted highlight still painted');
     await A.evaluate(() => window.__folioBack());
+  });
+  await step('Word hold and highlights coexist: holding a word opens the bubble (no selection menu); “Highlight…” in the bubble turns the word into a selection with handles; a colour saves it', async () => {
+    await toStart(A); const p = await wordXY(A, 'harbour'); assert(p, 'word not visible');
+    await A.mouse.move(p.x, p.y); await A.mouse.down(); await sleep(1100); await A.mouse.up(); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await sleep(500);
+    assert(!(await A.$('#an-menu')), 'selection menu appeared next to the bubble'); await A.waitForSelector('#wl-hl'); await click(A, '#wl-hl'); await menu(A); assert(!(await A.$('#wl-bubble')), 'bubble still open');
+    assert(await handlePos(A, 'start') && await handlePos(A, 'end'), 'handles missing'); assert((await selLen(A)) === 'harbour'.length, 'selection is ' + (await selLen(A)));
+    await colorBtn(A, 'pink'); await noMenu(A); await sleep(300); const r = (await recs(A)).find((x) => x.color === 'pink'); assert(r && r.text === 'harbour', JSON.stringify(r));
+  });
+  await step('Selecting by double-tap / mouse also works with word lookup on (native selection is not suppressed outside a hold)', async () => {
+    await toStart(A); const p = await wordXY(A, 'travellers'); assert(p, 'word not visible'); await A.mouse.click(p.x, p.y, { clickCount: 2 }); await sleep(600); await menu(A); assert((await selLen(A)) >= 'travellers'.length, 'no selection'); await click(A, '#an-x'); await noMenu(A);
+  });
+  await step('Reload: highlights and notes persist and are painted again; Back closes the selection menu first', async () => {
+    const before = await recs(A); await A.reload({ waitUntil: 'networkidle0' }); await open(A); await rendered(A); await toStart(A);
+    const after = await recs(A); assert(after.length === before.length && before.length >= 4, before.length + ' vs ' + after.length); assert((await paintedText(A, 'yellow')).length >= 1 && (await paintedText(A, 'pink')).includes('harbour'), 'not painted after reload');
+    await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await A.evaluate(() => window.__folioBack()); await sleep(250); assert(await A.$('#r-toc'), 'reader closed by the first Back'); assert(!(await A.$('#an-menu')), 'menu still open'); assert((await selLen(A)) === 0, 'selection kept');
+  });
+  await step('Copy all / Export produce Markdown with chapter heading, quoted excerpt and note', async () => {
+    const md = await A.evaluate(async () => { const An = await import('./js/annots.js'); const S = await import('./js/store.js'); const b = (await S.getBooks())[0]; return An.toMarkdown(await An.forBook(b), b); });
+    assert(/^# Notes Book/.test(md) && /## Chapter One/.test(md) && /> Paragraph 1\.1 begins here/.test(md), md.slice(0, 200));
+    assert(await A.$('#r-toc'), 'no reader toolbar: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#reader').className + ' | ' + document.querySelector('#reader').children.length)); await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-export'); assert(!(await A.$eval('#an-export', (e) => e.disabled)) && !(await A.$eval('#an-copy-all', (e) => e.disabled)), 'buttons disabled'); await A.evaluate(() => window.__folioBack());
   });
   await step('No page errors', async () => { assert(!errs.length, errs.slice(0, 3).join(' | ')); });
   const bad = results.filter((r) => !r[0]); console.log(`\n${results.length - bad.length}/${results.length} passed`); await browser.close(); process.exit(bad.length ? 1 : 0);

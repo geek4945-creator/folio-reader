@@ -1,7 +1,7 @@
 // Highlights & notes UI (v0.5.8): selection menu (colours / Note / Define / Copy), draggable selection handles that extend a selection over any range
 // (phrase, paragraphs, across page boundaries in paginated mode, auto-scroll in scroll mode), painting with the CSS Custom Highlight API (epub.js annotations
 // as a fallback), tap-a-highlight editor, and the "Highlights & Notes" list for the Contents sheet.
-import { h, toast, sheet } from './util.js';
+import { h, toast, sheet, pushLayer } from './util.js';
 import * as A from './annots.js';
 import { highlightSupported, lastWordHold, wordBubbleOpen } from './wordbubble.js';
 
@@ -54,7 +54,7 @@ function caretAt(doc, x, y) {
 
 /* ------------------------------------------------------------------ selection menu + handles */
 export function closeSelectionUI(clear) {
-  if (!ui) return; const u = ui; ui = null; clearInterval(u.edge);
+  if (!ui) return; const u = ui; ui = null; clearInterval(u.edge); try { u.unlayer(); } catch { /* ignore */ }
   u.menu.remove(); u.hs.remove(); u.he.remove();
   if (clear) { try { u.contents.window.getSelection().removeAllRanges(); } catch { /* ignore */ } }
 }
@@ -75,7 +75,7 @@ function showUi(host, contents, range, opts = {}) {
     menu.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the selection alive
     const mkHandle = (which) => { const el = h('div', { class: 'an-handle ' + which, id: 'an-h-' + which, role: 'slider', 'aria-label': which === 'start' ? 'Selection start' : 'Selection end' }); el.addEventListener('pointerdown', (e) => beginDrag(e, which)); return el; };
     ui = { host, contents, range, text, menu, hs: mkHandle('start'), he: mkHandle('end'), drag: null, edge: 0 };
-    root.append(menu, ui.hs, ui.he);
+    root.append(menu, ui.hs, ui.he); ui.unlayer = pushLayer(() => closeSelectionUI(true));   // Back closes the menu first
   }
   ui.host = host; ui.contents = contents; ui.range = range; ui.text = text; if (opts.focus !== false) place();
 }

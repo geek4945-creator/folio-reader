@@ -135,7 +135,7 @@ export function attachWordHold(target, host) {
     if (!e.isPrimary) { cancel(); return; }   // second finger: a pinch, not a hold
     cancel(); if (!settings.get('wordLookup')) return;
     if (e.target.closest && e.target.closest('a[href], button, input, textarea, select, img, svg, video, audio')) return;
-    st = { x: e.clientX, y: e.clientY, id: e.pointerId, timer: setTimeout(fire, wordHoldSeconds() * 1000) };
+    st = { x: e.clientX, y: e.clientY, id: e.pointerId, type: e.pointerType, t0: Date.now(), timer: setTimeout(fire, wordHoldSeconds() * 1000) };
   };
   const move = (e) => { if (st && e.pointerId === st.id && Math.hypot(e.clientX - st.x, e.clientY - st.y) > MOVE_PX) cancel(); };
   const up = (e) => { if (st && e.pointerId === st.id) cancel(); };
@@ -144,7 +144,8 @@ export function attachWordHold(target, host) {
   target.addEventListener('touchmove', cancel, { passive: true, capture: true }); target.addEventListener('scroll', cancel, true);
   doc.addEventListener('visibilitychange', cancel);
   // while a hold is pending (and just after it fired) no native text selection / callout may start; the release must not turn the page or toggle the toolbars
-  const quiet = (e) => { if (st || Date.now() < armedUntil) e.preventDefault(); };
+  // (v0.5.8: only a touch press that has lasted long enough to be a native long-press selection is suppressed; mouse drags and double-taps select normally, so highlights can start anywhere)
+  const quiet = (e) => { if (Date.now() < armedUntil || (st && e.type === 'contextmenu') || (st && st.type === 'touch' && Date.now() - st.t0 > 280)) e.preventDefault(); };
   for (const t of ['selectstart', 'contextmenu']) target.addEventListener(t, quiet, true);
   doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bubble) { e.preventDefault(); closeBubble(); } }, true);
   target.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; } }, true);
