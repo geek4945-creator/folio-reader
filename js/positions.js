@@ -22,7 +22,7 @@ const cid = (kind, key) => kind + ':' + key;
 export function samePos(kind, it, st) {
   if (kind === 'audio') return Math.abs((it.position || 0) - (st.position || 0)) < 5;
   if ((it.pdfPage || 0) || (st.pdfPage || 0)) return (it.pdfPage || 0) === (st.pdfPage || 0);
-  return (it.cfi || null) === (st.cfi || null) || Math.abs((it.progress || 0) - (st.progress || 0)) < 0.002;
+  return (!!it.cfi && it.cfi === st.cfi) || Math.abs((it.progress || 0) - (st.progress || 0)) < 0.002;
 }
 export const pctOf = (st) => Math.round((st.progress || 0) * 100);
 /** Always ask before jumping to another device's position (Settings → Sync). Default: only when both devices moved. */
