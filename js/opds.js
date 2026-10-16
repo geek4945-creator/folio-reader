@@ -22,15 +22,19 @@ export function isKindleType(type, url = '') {
 }
 export function isPdfType(type, url = '') { return /application\/pdf/i.test(type || '') || /\.pdf(\?|$)/i.test(url); }
 /** Best downloadable book: EPUB first, then a Kindle file (MOBI/AZW3, converted on import), then PDF. */
+/** A download bigger than this (bytes) is "huge" for a phone: scanned-page EPUBs (Internet Archive) can be 150 MB and exhaust a WebView's memory, so a smaller format wins when there is one. */
+export const BIG_BOOK = 60 * 1024 * 1024;
 function pickEpub(downloads) {
-  let eps = downloads.filter((d) => isEpubType(d.type, d.url));
-  if (!eps.length) eps = downloads.filter((d) => isKindleType(d.type, d.url)).sort((a, b) => (/azw3|kf8|mobi8/i.test(b.type + b.url) ? 1 : 0) - (/azw3|kf8|mobi8/i.test(a.type + a.url) ? 1 : 0));
-  if (!eps.length) eps = downloads.filter((d) => isPdfType(d.type, d.url));
-  if (!eps.length) return null;
-  // Prefer epub3 / with images, then the first.
-  eps.sort((a, b) => score(b) - score(a));
-  return eps[0];
-  function score(d) { return (/epub3/.test(d.url) ? 3 : 0) + (/images/.test(d.url) && !/noimages/.test(d.url) ? 2 : 0) + (/\.epub$/.test(d.url) ? 1 : 0); }
+  const score = (d) => (/epub3/.test(d.url) ? 3 : 0) + (/images/.test(d.url) && !/noimages/.test(d.url) ? 2 : 0) + (/\.epub$/.test(d.url) ? 1 : 0);
+  const groups = [
+    downloads.filter((d) => isEpubType(d.type, d.url)),
+    downloads.filter((d) => isKindleType(d.type, d.url)).sort((a, b) => (/azw3|kf8|mobi8/i.test(b.type + b.url) ? 1 : 0) - (/azw3|kf8|mobi8/i.test(a.type + a.url) ? 1 : 0)),
+    downloads.filter((d) => isPdfType(d.type, d.url)),
+  ];
+  const all = groups.flat(); if (!all.length) return null;
+  // Format preference EPUB > Kindle > PDF, but skip anything huge while a reasonably sized file exists.
+  for (const g of groups) { const ok = g.filter((d) => !(d.size > BIG_BOOK)); if (ok.length) return ok.sort((a, b) => score(b) - score(a))[0]; }
+  return all.slice().sort((a, b) => (a.size || 0) - (b.size || 0))[0];   // everything is huge: the smallest
 }
 export { pickEpub };
 

@@ -229,10 +229,17 @@ node tests/e2e-pairing.js       # automatic pairing: scoring, ≥85 % auto-link,
 node tests/e2e-findplace.js     # Find my place: link, chapter / percent estimate, nudges, both directions, phrase search
 node tests/e2e-borrowed.js      # Borrowed: OPDS flag + due date, manual, filter, counts, banner, remove expired, DRM, sync
 node tests/e2e-cover2.js        # Change cover v0.5.0: multi-source search, size filter / sort, load more, browser links, paste, share target
+node tests/e2e-openstall.js      # v0.5.1 "stuck on Opening…": odd EPUBs (no / missing nav, dangling spine), watchdog error panel (Retry / Retry from the start / Back / Copy details), Back + Escape on the loading screen
+node tests/e2e-iaformat.js       # v0.5.1 Internet Archive: smaller usable format wins over a 155 MB scanned EPUB, huge-only asks first, encrypted files never offered, 5xx retried
+FILES=a.epub,b.pdf URL=https://… node tests/live-open.js   # opens real files on a live site and reports stalls
 sh tests/fixtures/make-audio.sh # regenerates tests/fixtures/audio/* with ffmpeg (tiny synthetic tones)
 ```
 
 Edit `executablePath` in the tests if Chrome isn't at `/usr/bin/google-chrome`. The live catalog steps need internet.
+
+## If a book won't open
+
+Opening a book is guarded by a 15-second watchdog: instead of an endless “Opening…”, you get a message naming the stage that stalled with **Retry**, **Retry from the start** (ignores the saved place), **Back to library** and **Copy details to report**. The loading screen always has ‹ Back (and Escape). Known causes handled in v0.5.1: EPUBs with a missing nav / NCX file or spine items that are not in the manifest, and huge scanned-page EPUBs from the Internet Archive (155 MB, every page an image). For those the catalog now downloads the item's original PDF (a few MB) instead, asks before downloading a huge-only file, never offers encrypted (ACS / LCP) files, and retries 5xx / dropped downloads.
 
 ## Known gaps
 

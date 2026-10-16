@@ -5,6 +5,7 @@ import { settings, THEMES } from './settings.js';
 import * as S from './store.js';
 import { openPdfDocument } from './pdf.js';
 import { fsButton } from './fullscreen.js';
+import { makeLoading, withTimeout } from './openguard.js';
 import { makeFooter, applyFooterSettings, paintFooter, footerToggles } from './pages.js';
 
 let cur = null;
@@ -12,7 +13,7 @@ export const pdfCurrent = () => cur;
 const ZMIN = 0.5, ZMAX = 5;
 const root = () => $('#reader');
 
-export async function openPdf(book, blob) {
+export async function openPdf(book, blob, opts = {}) {
   const el = root(); el.hidden = false; document.body.classList.add('reading'); el.classList.add('pdf-mode');
   const viewer = h('div', { id: 'viewer', class: 'pdf-viewer' });
   const slider = h('input', { type: 'range', min: 1, max: 1, value: 1, id: 'r-slider', 'aria-label': 'Page', disabled: true });
@@ -30,18 +31,19 @@ export async function openPdf(book, blob) {
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
-  const loading = h('div', { class: 'r-loading' }, h('div', { class: 'spinner' }), 'Opening…');
-  el.replaceChildren(top, viewer, bottom, makeFooter(), loading); applyFooterSettings(); paintFooter({});
+  const loading = makeLoading({ book: { ...book, format: 'pdf' }, onBack: () => closePdf(), onRetry: async () => { await closePdf(); const { openReader } = await import('./reader.js'); openReader(book.id); } });
+  el.replaceChildren(top, viewer, bottom, makeFooter(), loading.el); applyFooterSettings(); paintFooter({});
   cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
   const c = cur;
   try {
-    c.pdf = await openPdfDocument(await blob.arrayBuffer());
+    loading.stage('Reading the file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (cur !== c) return;
+    loading.stage('Loading the PDF…'); c.pdf = await withTimeout(openPdfDocument(buf), 25000, 'loading the PDF'); if (cur !== c) return;
     c.n = c.pdf.numPages; slider.max = c.n; slider.disabled = false; pageNum.max = c.n; pageNum.disabled = false; total.textContent = ' of ' + c.n;
-    const p1 = await c.pdf.getPage(1); c.ar = p1.getViewport({ scale: 1 }); 
+    loading.stage('Drawing the first page…'); const p1 = await withTimeout(c.pdf.getPage(1), 15000, 'reading the first page'); c.ar = p1.getViewport({ scale: 1 }); 
     c.page = Math.min(c.n, Math.max(1, book.pdfPage || 1));
-    loading.remove(); c.ready = true; draw(true); S.saveBook(await touchOpened(book));
+    if (cur !== c) return; loading.done(); c.ready = true; draw(true); S.saveBook(await touchOpened(book));
     c.pdf.getOutline().then(async (o) => { c.outline = o; tocBtn.hidden = !(o && o.length); await resolveSections(c); syncUI(); }).catch(() => {});
-  } catch (e) { console.error(e); toast(e.message || 'Could not open this PDF', 6000); await closePdf(); return; }
+  } catch (e) { if (cur !== c) return; console.error(e); loading.fail(e); return; }
   slider.addEventListener('input', () => { pageNum.value = slider.value; });
   slider.addEventListener('change', () => goTo(+slider.value));
   pageNum.addEventListener('change', () => goTo(+pageNum.value));
@@ -230,7 +232,7 @@ export async function closePdf() {
   const c = cur; if (!c) return;
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
-  cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await c.pdf?.destroy(); } catch { /* ignore */ }
+  cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }
   const el = root(); el.hidden = true; el.replaceChildren(); el.classList.remove('chrome-hidden', 'pdf-mode'); document.body.classList.remove('reading');
   $('#overlay').replaceChildren(); $('#overlay').hidden = true; window.__pdf = null;
   const { refreshLibrary } = await import('./library.js'); refreshLibrary();

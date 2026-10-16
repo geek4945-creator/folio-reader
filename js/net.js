@@ -83,15 +83,28 @@ async function check(r, viaProxy = false) {
 
 /** Download with progress callback(0..1). Returns Blob. */
 export async function download(url, onProgress) {
+  let last;
+  for (let attempt = 0; attempt < 3; attempt++) {   // archive.org / the proxy answer 5xx now and then; a dropped stream is retried too
+    try { return await downloadOnce(url, onProgress); } catch (e) {
+      last = e;
+      const transient = [500, 502, 503, 504, 522, 524].includes(e.http) || e.truncated || e.name === 'TypeError';
+      if (!transient || attempt === 2) break;
+      await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+    }
+  }
+  throw last;
+}
+async function downloadOnce(url, onProgress) {
   const r = await fetchSmart(url, { timeout: 120000 });
   const total = +r.headers.get('content-length') || 0;
-  if (!r.body || !total || !onProgress) return r.blob();
+  if (!r.body || !total || !onProgress) { const b = await r.blob(); if (total && b.size < total) throw Object.assign(new Error('The download was cut short; try again.'), { truncated: true }); return b; }
   const reader = r.body.getReader(); const chunks = []; let got = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value); got += value.length; onProgress(Math.min(1, got / total));
   }
+  if (got < total) throw Object.assign(new Error('The download was cut short; try again.'), { truncated: true });
   return new Blob(chunks, { type: r.headers.get('content-type') || 'application/epub+zip' });
 }
 

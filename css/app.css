@@ -118,7 +118,10 @@ input[type=range] { width:100%; accent-color:var(--accent); margin:.3rem 0; }
 .r-titlewrap { display:flex; align-items:center; gap:.4rem; min-width:0; justify-content:center; } .r-title { font-weight:600; font-size:.95rem; }
 .ovr-dot { background:#f4b400; color:#222; font-size:.6rem; font-weight:700; padding:0 .3rem; border-radius:.3rem; flex:none; } .ovr-dot[hidden] { display:none; }
 .r-label { text-align:center; font-size:.75rem; color:var(--muted); } #r-bm.on { color:#f4b400; }
-.r-loading { position:absolute; inset:0; display:flex; gap:.6rem; align-items:center; justify-content:center; background:var(--bg); z-index:4; color:var(--muted); }
+.r-loading { position:absolute; left:0; right:0; bottom:0; top:calc(3rem + var(--sat)); display:flex; gap:.6rem; align-items:center; justify-content:center; background:var(--bg); z-index:2; color:var(--muted); padding:1rem; overflow-y:auto; }   /* below the top bar, so ‹ Back stays tappable while opening */
+.r-load-box { display:flex; flex-direction:column; align-items:center; gap:.7rem; max-width:26rem; text-align:center; } .r-load-text { font-weight:600; color:var(--fg); }
+.r-error { align-items:stretch; text-align:left; color:var(--fg); } .r-err-title { font-weight:700; font-size:1.05rem; } .r-err-actions { display:flex; flex-direction:column; gap:.5rem; } .r-err-actions .btn { width:100%; }
+.r-details { white-space:pre-wrap; word-break:break-word; font-size:.7rem; text-align:left; max-height:14rem; overflow:auto; user-select:text; -webkit-user-select:text; background:var(--card); padding:.5rem; border-radius:6px; }
 @media (min-width:700px) { .tiles.grid { grid-template-columns:repeat(auto-fill,minmax(9rem,1fr)); } #view { max-width:60rem; margin:0 auto; width:100%; } }
 
 [hidden] { display:none !important; }

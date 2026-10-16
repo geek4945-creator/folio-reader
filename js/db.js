@@ -19,8 +19,9 @@ function open() {
       mk('links', { keyPath: 'id' });   // audiobook ↔ ebook links + remembered rejections (synced; see links.js)
       mk('pagecache', { keyPath: 'key' });   // not synced: {key: '<bookId>|chars' | '<bookId>|k' | '<bookId>|cal|<layout>', bookId, v}
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => { const db = req.result; db.onversionchange = () => { try { db.close(); } catch { /* ignore */ } dbp = null; }; resolve(db); };   // let a newer version of the app (another tab / window) upgrade the database instead of blocking it
+    req.onerror = () => { dbp = null; reject(req.error); };
+    req.onblocked = () => { try { window.dispatchEvent(new Event('db-blocked')); } catch { /* ignore */ } };   // an older tab still has the database open
   });
   return dbp;
 }

@@ -312,8 +312,8 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
   await O.close();
 
   /* ---------------- app shell / service worker ---------------- */
-  await step('Service worker: folio-v9 and every audiobook + metadata (covers, enrich, metasync) module is precached; all shell files exist', async () => {
-    const base = APP.replace(/index\.html.*$/, ''); const sw = await (await fetch(base + 'sw.js')).text(); assert(/VERSION = 'folio-v9'/.test(sw) && ['covers','coversearch','viewport','enrich','metasync','drivebatch','pairing','links','align','loans','findplace'].every((m) => sw.includes('js/' + m + '.js')), 'version');
+  await step('Service worker: folio-v10 and every audiobook + metadata (covers, enrich, metasync) module is precached; all shell files exist', async () => {
+    const base = APP.replace(/index\.html.*$/, ''); const sw = await (await fetch(base + 'sw.js')).text(); assert(/VERSION = 'folio-v10'/.test(sw) && ['covers','coversearch','viewport','openguard','enrich','metasync','drivebatch','pairing','links','align','loans','findplace'].every((m) => sw.includes('js/' + m + '.js')), 'version');
     const shell = JSON.parse(sw.match(/const SHELL = (\[[^;]*\]);/s)[1].replace(/'/g, '"')); for (const f of ['js/audiotags.js', 'js/audiostore.js', 'js/audioplayer.js', 'js/audiobooks.js', 'js/audiosources.js']) assert(shell.includes(f), f + ' missing from SHELL');
     for (const f of shell) { const r = await fetch(base + f.replace(/^\.\//, '')); assert(r.ok, f + ' → ' + r.status); } return shell.length + ' shell files';
   });

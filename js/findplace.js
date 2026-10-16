@@ -2,6 +2,7 @@
 // Every position produced here is an ESTIMATE (percent of audio length ≈ percent of text, or chapter-aligned when chapter titles / numbers match);
 // the UI says so and offers − / + nudges before anything is applied.
 import { h, toast, sheet } from './util.js';
+import { withTimeout, patchBook } from './openguard.js';
 import { settings } from './settings.js';
 import * as S from './store.js';
 import * as A from './audiostore.js';
@@ -33,12 +34,12 @@ const engines = new Map();
 async function engineFor(book) {
   let e = engines.get(book.id); if (e) return e;
   const blob = await S.getFile(book.id); if (!blob) throw new Error('The ebook file is missing on this device');
-  const epub = ePub(await blob.arrayBuffer()); await epub.ready;
+  const epub = patchBook(ePub(await blob.arrayBuffer())); await withTimeout(epub.opened, 15000, 'opening the ebook'); patchBook(epub);   // not `ready`: it never settles when the nav file is missing
   const fresh = await S.getBook(book.id); let ready = false;
   if (fresh.locations) { try { epub.locations.load(fresh.locations); ready = epub.locations.total > 0; } catch { /* regenerate */ } }
   if (!ready) { await epub.locations.generate(1600); const b = await S.getBook(book.id); b.locations = epub.locations.save(); b._noTouch = true; await S.saveBook(b); }
   const locs = epub.locations._locations || []; const total = Math.max(1, locs.length);
-  const nav = await epub.loaded.navigation; const flat = (items) => items.flatMap((it) => [it, ...flat(it.subitems || [])]);
+  const nav = await withTimeout(epub.loaded.navigation, 3000, 'reading the table of contents').catch(() => ({ toc: [] })); const flat = (items) => items.flatMap((it) => [it, ...flat(it.subitems || [])]);
   const spineLen = epub.spine.length || 1; const startOf = new Map();
   const fracOfSection = (sec) => { if (!sec) return null; if (startOf.has(sec.index)) return startOf.get(sec.index); const base = sec.cfiBase; let i = base ? locs.findIndex((c) => c.includes(base + '!') || c.includes(base + '/')) : -1; const f = i >= 0 ? i / total : sec.index / spineLen; startOf.set(sec.index, f); return f; };
   const chapters = []; for (const it of flat(nav.toc || [])) { let sec = null; try { sec = epub.spine.get(it.href); } catch { /* ignore */ } const f = fracOfSection(sec); if (f != null) chapters.push({ title: (it.label || '').trim(), frac: f, href: it.href }); }

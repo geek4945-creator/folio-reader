@@ -47,7 +47,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
   if (series) setId = (await ensureSet(series, true)).id;
 
   const book = {
-    id: uid(), title: meta.title || hints.title || 'Untitled', author: meta.author !== 'Unknown author' ? meta.author : (hints.author || meta.author),
+    id: uid(), title: (meta.title && !/^untitled$/i.test(meta.title.trim()) ? meta.title : (hints.title || meta.title || 'Untitled')), author: meta.author !== 'Unknown author' ? meta.author : (hints.author || meta.author),
     language: meta.language, description: meta.description || hints.summary || '', identifier: meta.identifier, year: meta.year || null, isbn: isbnFrom(meta.identifier), coverSource,
     addedAt: Date.now(), lastOpened: 0, progress: 0, cfi: null, status: 'want', shelves: [],
     setId, seriesIndex: seriesIndex ?? null, coverBlob: cover || null, size: buffer.byteLength, format: pdfMeta ? 'pdf' : 'epub', pages: pdfMeta ? pdfMeta.pages : null,

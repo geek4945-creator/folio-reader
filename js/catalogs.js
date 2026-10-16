@@ -3,7 +3,7 @@ import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, hashHue, put } fro
 import { detectKindle } from './kindle.js';
 import { openPublicLibraryGuide } from './publib.js';
 import { isPdf } from './pdf.js';
-import { loadFeed, loadHtml, resolveSearch, expandTemplate, detectSource, pickEpub, isEpubType } from './opds.js';
+import { loadFeed, loadHtml, resolveSearch, expandTemplate, detectSource, pickEpub, isEpubType, BIG_BOOK } from './opds.js';
 import { fetchSmart, download, isBlockedSite, openLibraryCover, CorsError, SiteError, normalizeUrl } from './net.js';
 import { getSources, addSource, removeSource, restoreSeeds, SEED_SOURCES, addBookFromBuffer, getBooks } from './store.js';
 import { settings } from './settings.js';
@@ -39,12 +39,21 @@ async function iaPage(q, page = 1) {
     cover: 'https://archive.org/services/img/' + x.identifier, kind: 'book', lang: one(x.language), downloads: [], needsResolve: true, series: '', seriesIndex: null })) };
   feed.loadNext = page * PAGE < d.numFound ? () => iaPage(q, page + 1) : null; return feed;
 }
+const mb = (n) => n >= 1048576 ? Math.round(n / 104857.6) / 10 + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+/** Every readable, DRM-free file of an Internet Archive item, with sizes. Derived EPUBs of scanned books embed every page image and can be 150 MB while the
+ *  item's original PDF is 2 MB, so pickEpub() chooses by size too. Encrypted (ACS/LCP) files are never offered. */
+export function iaFiles(id, files) {
+  const url = (f) => `https://archive.org/download/${id}/${f.name.split('/').map(encodeURIComponent).join('/')}`;
+  const rank = (f) => (f.source === 'original' ? 0 : 1);
+  const mk = (f, type, kind) => { const size = +f.size || 0; return { url: url(f), type, label: kind + (size ? ' (' + mb(size) + ')' : ''), size }; };
+  const clean = (f) => !/encrypted|lcp|acs/i.test(f.format || '') && !/\.(acsm|lcpl)$/i.test(f.name);
+  const epubs = files.filter((f) => clean(f) && (/^epub$/i.test(f.format || '') || /\.epub$/i.test(f.name))).sort((a, b) => rank(a) - rank(b));
+  const pdfs = files.filter((f) => clean(f) && (/\bpdf$/i.test(f.format || '') || /\.pdf$/i.test(f.name)) && !/_text\.pdf$/i.test(f.name)).sort((a, b) => rank(a) - rank(b));
+  return [...epubs.map((f) => mk(f, 'application/epub+zip', 'EPUB')), ...pdfs.map((f) => mk(f, 'application/pdf', 'PDF'))];
+}
 async function iaResolve(entry) {
   const r = await fetchSmart('https://archive.org/metadata/' + encodeURIComponent(entry.iaId), { timeout: 20000 });
-  const files = (await r.json()).files || [];
-  const f = files.find((x) => /^epub$/i.test(x.format || '') && x.source !== 'derivative') || files.find((x) => /\.epub$/i.test(x.name));
-  if (!f) return [];
-  return [{ url: `https://archive.org/download/${entry.iaId}/${f.name.split('/').map(encodeURIComponent).join('/')}`, type: 'application/epub+zip', label: 'EPUB' }];
+  return iaFiles(entry.iaId, (await r.json()).files || []);
 }
 
 /* ---------- opening a source ---------- */
@@ -204,6 +213,10 @@ async function doDownload(entry, btn) {
     if (e.needsResolve) { entry.downloads = e.downloads = await iaResolve(e); }
     const dl = pickEpub(e.downloads);
     if (!dl) throw new Error('No EPUB, MOBI/AZW3 or PDF version is offered for this title.' + (e.downloads.length ? ' (Available: ' + e.downloads.map((d) => d.label).join(', ') + ')' : ''));
+    if (dl.size > BIG_BOOK) {   // e.g. a 150 MB scanned-page EPUB: warn before filling a phone's memory
+      const alt = e.downloads.filter((d) => d !== dl);
+      if (!(await confirmDlg('This is a very large file', 'The only version offered is ' + dl.label + '. Files this big (usually scanned page images) download slowly and can fail to open on a phone.' + (alt.length ? ' Other versions: ' + alt.map((d) => d.label).join(', ') + '.' : ''), 'Download anyway'))) { btn.disabled = false; btn.textContent = label; return; }
+    }
     const blob = await download(dl.url, (p) => { btn.textContent = Math.round(p * 100) + '%'; });
     btn.textContent = 'Importing…';
     const buf = await blob.arrayBuffer();

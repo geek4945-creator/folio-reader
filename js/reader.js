@@ -6,16 +6,17 @@ import { fsButton } from './fullscreen.js';
 import { openPdf, closePdf, pdfCurrent } from './pdfreader.js';
 import { blockZoom } from './viewport.js';
 import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
+import { makeLoading, withTimeout, patchBook } from './openguard.js';
 
 let cur = null;   // active reading session
 
 const root = () => $('#reader');
 
-export async function openReader(id) {
+export async function openReader(id, opts = {}) {
   if (cur || pdfCurrent()) await closeReader();
   const book = await S.getBook(id); const blob = await S.getFile(id);
   if (!book || !blob) { toast('Book file not found'); return; }
-  if (book.format === 'pdf') return openPdf(book, blob);
+  if (book.format === 'pdf') return openPdf(book, blob, opts);
   const el = root(); el.hidden = false; document.body.classList.add('reading');
   const viewer = h('div', { id: 'viewer' });
   const title = h('div', { class: 'r-title ellipsis' }, book.title);
@@ -32,26 +33,33 @@ export async function openReader(id) {
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
-  const loading = h('div', { class: 'r-loading' }, h('div', { class: 'spinner' }), 'Opening…');
+  const loading = makeLoading({ book, onBack: () => closeReader(), onRetry: async (safe) => { await closeReader(); openReader(id, { safe }); } });   // always has a Back button; after 15 s an error panel with Retry / Back / details
   const foot = makeFooter();
-  el.replaceChildren(top, viewer, bottom, foot, loading); applyFooterSettings(); paintFooter({});
+  el.replaceChildren(top, viewer, bottom, foot, loading.el); applyFooterSettings(); paintFooter({});
 
   import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { const b = document.getElementById('r-link'); if (b && l.length) b.hidden = false; }).catch(() => {});   // the 🎧 button only appears once there is an audiobook to link
   cur = { book, viewer, slider, label, bmBtn, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
+  const mine = cur; const alive = () => cur === mine && !mine.closed;
   try {
-    cur.epub = ePub(await blob.arrayBuffer());
-    await cur.epub.ready;
-    cur.toc = (await cur.epub.loaded.navigation).toc || [];
-    if (book.locations) { try { cur.epub.locations.load(book.locations); cur.locReady = true; } catch { /* regenerate */ } }
-    await startRendition(book.cfi || undefined);
-    loading.remove(); cur.ready = true;
+    loading.stage(book.size > 60 * 1048576 ? 'Reading a large book (' + Math.round(book.size / 1048576) + ' MB), this can take a while…' : 'Reading the book file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (!alive()) return;
+    loading.stage('Opening the EPUB package…'); mine.epub = patchBook(ePub(buf));
+    // `epub.ready` and `loaded.navigation` never settle when the declared nav / NCX file is missing (the "stuck on Opening…" bug); `opened` and display() work.
+    await withTimeout(mine.epub.opened, 15000, 'opening the EPUB package'); if (!alive()) return; patchBook(mine.epub);
+    loading.stage('Reading the table of contents…'); mine.toc = await withTimeout(mine.epub.loaded.navigation.then((n) => (n && n.toc) || []), 3000, 'reading the table of contents').catch(() => []);
+    if (!mine.toc.length) mine.toc = spineToc(mine.epub);   // empty / missing nav (scanned-page EPUBs): list the sections instead
+    if (!opts.safe && book.locations) { try { mine.epub.locations.load(book.locations); mine.locReady = true; } catch { /* regenerate */ } }
+    loading.stage('Laying out the first page…');
+    try { await withTimeout(startRendition(opts.safe ? undefined : (book.cfi || undefined)), 12000, 'showing your place'); }
+    catch (e) { if (!alive()) return; if (opts.safe || !book.cfi) throw e; console.warn('saved place failed, opening from the start', e); toast('Couldn’t return to your saved place; opened from the start.', 5000); loading.stage('Opening from the start…'); await withTimeout(startRendition(undefined), 12000, 'showing the first page'); }
+    if (!alive()) return;
+    loading.done(); mine.ready = true;
     slider.disabled = false;
-    cur.pager = createPager(cur); cur.pager.init();
-    if (!cur.locReady) generateLocations();
+    mine.pager = createPager(mine); mine.pager.init();
+    if (!mine.locReady) generateLocations();
     S.saveBook(await touchOpened(book));
   } catch (e) {
-    console.error(e); toast('Could not open this book: ' + (e.message || e), 6000); await closeReader();
-    return;
+    if (!alive()) return;
+    console.error(e); loading.fail(e); return;   // stay on the loading screen, which now offers Retry / Back / details
   }
   slider.addEventListener('change', async () => {
     if (!cur.locReady) return;
@@ -61,6 +69,9 @@ export async function openReader(id) {
   window.addEventListener('keydown', keyNav); document.addEventListener('visibilitychange', onHide); window.addEventListener('resize', onResize);
   window.__reader = cur;
 }
+
+/** No usable table of contents: list the spine instead so the Contents sheet is not empty. */
+function spineToc(epub) { try { return (epub.spine.spineItems || epub.spine.items || []).slice(0, 300).map((it, i) => ({ label: 'Section ' + (i + 1), href: it.href })); } catch { return []; } }
 
 async function touchOpened(book) { const b = await S.getBook(book.id); b.lastOpened = Date.now(); return b; }
 

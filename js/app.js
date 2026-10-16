@@ -143,6 +143,7 @@ window.addEventListener('drop', async (e) => {
 
 /* ---------- boot ---------- */
 initViewport();
+window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
 G.initSync();
 show(tab);
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
