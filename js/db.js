@@ -14,14 +14,23 @@ import { deviceId, deviceName } from './device.js';
  * (sync apply, imports) keep the stamps they carry. Legacy records (no stamps) fall back to updatedAt / lastOpened. */
 const STAMPED = new Set(['books', 'audiobooks']);
 const J = JSON.stringify;
-const structSig = (b) => J([b.status, [...(b.shelves || [])].sort(), b.setId || null, b.seriesIndex ?? null, b.finishedAt || 0, b.title, b.author || '']);
+/** Structure is stamped in independent groups so e.g. an automatic "Reading" status on one device can't undo a shelf change made on another. */
+export const GROUPS = {
+  status: { fields: ['status', 'finishedAt'], sig: (b) => J([b.status, b.finishedAt || 0]) },
+  shelves: { fields: ['shelves'], sig: (b) => J([...(b.shelves || [])].sort()) },
+  series: { fields: ['setId', 'seriesIndex'], sig: (b) => J([b.setId || null, b.seriesIndex ?? null]) },
+  name: { fields: ['title', 'author'], sig: (b) => J([b.title, b.author || '']) },
+};
 const posSig = (b) => J([b.cfi || null, Math.round((b.progress || 0) * 1e4), b.pdfPage || 0, b.pdfText ? 1 : 0, b.pdfZoom || 0, Math.round(b.position || 0), b.trackIndex ?? null]);
 export const structAtOf = (b) => b.structAt ?? b.updatedAt ?? 0;
+export const gAtOf = (b, g) => b.gAt?.[g] ?? structAtOf(b);
 export const posAtOf = (b) => b.posAt ?? b.lastOpened ?? 0;
 function stamp(val, old) {
   const now = Date.now();
-  if (!old) { val.structAt = 0; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
-  val.structAt = structSig(old) === structSig(val) ? structAtOf(old) : now;
+  if (!old) { val.structAt = 0; val.gAt = {}; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
+  const g = {}; let top = 0;
+  for (const [n, d] of Object.entries(GROUPS)) { g[n] = d.sig(old) === d.sig(val) ? gAtOf(old, n) : now; top = Math.max(top, g[n]); }
+  val.gAt = g; val.structAt = top === now ? now : structAtOf(old);
   if (posSig(old) === posSig(val)) { val.posAt = posAtOf(old); if (old.posDev) { val.posDev = old.posDev; val.posDevName = old.posDevName; } }
   else { val.posAt = now; val.posDev = deviceId(); val.posDevName = deviceName(); try { window.dispatchEvent(new Event('folio-position')); } catch { /* not in a window */ } }
   if (val.overrides || old.overrides) {   // per-key stamps for the per-book reading overrides (font size, margins, theme…): independent last-writer-wins

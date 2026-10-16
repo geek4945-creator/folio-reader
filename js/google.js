@@ -1,7 +1,7 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
 import { settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups } from './settings.js';
-import { DB, structAtOf, posAtOf } from './db.js';
+import { DB, structAtOf, posAtOf, gAtOf, GROUPS } from './db.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
 import { APP_VERSION } from './device.js';
@@ -207,6 +207,8 @@ async function writeFile(name, f, data) {
 export const POS_STATE = ['progress', 'cfi', 'lastOpened', 'pdfPage', 'pdfZoom', 'pdfText', 'posAt', 'dev', 'devName'];
 export const AUDIO_POS_STATE = ['position', 'progress', 'track', 'trackIndex', 'speed', 'lastOpened', 'posAt', 'dev', 'devName'];
 const jeq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const gAtsOf = (b) => Object.fromEntries(Object.keys(GROUPS).map((g) => [g, gAtOf(b, g)]));
+const stGroupAt = (st, g) => st.gAt?.[g] ?? st.updatedAt ?? 0;
 export function buildSettingsPart() {
   const all = settings.all(), stamps = settingStamps(), flat = {}, legacy = 0;
   for (const k of syncedKeys()) {
@@ -251,12 +253,12 @@ export async function buildSnapshot() {
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
   const audioState = {};
-  for (const a of audio) audioState[a.syncKey || a.id] = { title: a.title, author: a.author || '', addedAt: a.addedAt || 0, status: a.status, shelves: a.shelves || [], finishedAt: a.finishedAt || 0, speed: a.speed ?? null, position: a.position || 0, progress: a.progress || 0, track: a.track ?? null, trackIndex: a.trackIndex ?? null, lastOpened: a.lastOpened || 0, updatedAt: structAtOf(a), posAt: posAtOf(a), dev: a.posDev || '', devName: a.posDevName || '' };
+  for (const a of audio) audioState[a.syncKey || a.id] = { title: a.title, author: a.author || '', addedAt: a.addedAt || 0, status: a.status, shelves: a.shelves || [], finishedAt: a.finishedAt || 0, speed: a.speed ?? null, position: a.position || 0, progress: a.progress || 0, track: a.track ?? null, trackIndex: a.trackIndex ?? null, lastOpened: a.lastOpened || 0, updatedAt: structAtOf(a), gAt: gAtsOf(a), posAt: posAtOf(a), dev: a.posDev || '', devName: a.posDevName || '' };
   const meta = {}; for (const b of books) { const e = localMeta(b); if (e) meta[keyOf.get(b.id)] = e; }
   const audioMeta = {}; for (const a of audio) { const e = localMeta(a); if (e) audioMeta[a.syncKey || a.id] = e; }
   const loans = {};   // Borrowed flag + due date, last-writer-wins on loanAt: 'book:<key>' / 'audio:<key>'
@@ -285,7 +287,11 @@ function canonicalize(snap, idmap) {   // unify duplicate sets/shelves with the 
  *  `posAt`, and the per-book reading overrides key by key on `ovAt` — so reading on one device never hides a shelf change made on another. */
 function mergeState(a, b, posFields) {
   if (!a || !b) { const x = structuredClone(a || b); return x; }
-  const st = structuredClone((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a); const posA = a.posAt ?? a.lastOpened ?? 0, posB = b.posAt ?? b.lastOpened ?? 0;
+  const st = structuredClone((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a);
+  st.gAt = {};   // each group of structure (status / shelves / series / name) is last-writer-wins on its own stamp
+  for (const [g, d] of Object.entries(GROUPS)) { const w = stGroupAt(b, g) > stGroupAt(a, g) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
+  st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+  const posA = a.posAt ?? a.lastOpened ?? 0, posB = b.posAt ?? b.lastOpened ?? 0;
   const pw = posB > posA ? b : a; if (pw !== ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a)) for (const f of posFields) { if (pw[f] === undefined) delete st[f]; else st[f] = structuredClone(pw[f]); }
   st.posAt = Math.max(posA, posB);
   if (a.overrides || b.overrides || a.ovAt || b.ovAt) {
@@ -356,10 +362,15 @@ export async function applySnapshot(m, ctx = {}) {
     const key = S.bookSyncKey(b); keyToId.set(key, b.id); const st = m.books[key];
     if (!st) { if ((m.tombstones || []).some((t) => t.t === 'book' && t.id === key && t.at >= Math.max(structAtOf(b), b.addedAt || 0))) { await S.deleteBooks([b.id], { tomb: false, emit: false }); keyToId.delete(key); deletedBooks++; } continue; }   // deleted on another device
     const localAt = structAtOf(b); let dirty = false;
-    if (doms.library && (ctx.force || (st.updatedAt || 0) > localAt)) {
-      Object.assign(b, { status: st.status, shelves: st.shelves, setId: st.setId, seriesIndex: st.seriesIndex, title: st.title || b.title, author: st.author || b.author, structAt: st.updatedAt, updatedAt: st.updatedAt, _noTouch: true });
-      if (st.finishedAt) b.finishedAt = st.finishedAt; else if (ctx.force) delete b.finishedAt;
-      dirty = true; appliedBooks++;
+    if (doms.library && (ctx.force || (st.updatedAt || 0) > localAt || Object.keys(GROUPS).some((g) => stGroupAt(st, g) > gAtOf(b, g)))) {
+      let did = false; b.gAt = { ...(b.gAt || {}) };
+      for (const [g, d] of Object.entries(GROUPS)) {
+        if (!(ctx.force || stGroupAt(st, g) > gAtOf(b, g))) continue; did = true;
+        for (const f of d.fields) { if (f === 'title' || f === 'author') { if (st[f]) b[f] = st[f]; } else if (st[f] === undefined) delete b[f]; else b[f] = st[f]; }
+        b.gAt[g] = stGroupAt(st, g);
+      }
+      for (const g of Object.keys(GROUPS)) b.gAt[g] ??= gAtOf(b, g);
+      if (did) { b.structAt = Math.max(structAtOf(b), st.updatedAt || 0); b.updatedAt = b.structAt; dirty = true; appliedBooks++; }
     } else if (idmap.size) { b.setId = idmap.get(b.setId) || b.setId; b.shelves = (b.shelves || []).map((x) => idmap.get(x) || x); dirty = true; }
     if (doms.library && (ctx.force || !jeq(b.overrides || null, st.overrides || null))) { b.overrides = st.overrides || null; if (st.ovAt) b.ovAt = st.ovAt; dirty = true; }
     if (doms.positions && (st.posAt !== undefined || st.progress !== undefined)) { const r = applyPosition('book', b, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }
@@ -399,7 +410,11 @@ async function applyAudioState(m, doms, ctx) {
   const audio = await A.getAudiobooks(), states = m.audioState || {}, have = new Set(); let posApplied = 0, posConflicts = 0;
   for (const a of audio) {
     const key = a.syncKey || a.id; have.add(key); const st = states[key]; if (!st) continue; let dirty = false;
-    if (doms.library && (ctx.force || (st.updatedAt || 0) > structAtOf(a))) { Object.assign(a, { status: st.status || a.status, shelves: st.shelves || [], structAt: st.updatedAt || 0 }); if (st.finishedAt) a.finishedAt = st.finishedAt; dirty = true; }
+    if (doms.library && (ctx.force || Object.keys(GROUPS).some((g) => stGroupAt(st, g) > gAtOf(a, g)))) {
+      a.gAt = { ...(a.gAt || {}) };
+      for (const g of ['status', 'shelves']) { if (!(ctx.force || stGroupAt(st, g) > gAtOf(a, g))) continue; for (const f of GROUPS[g].fields) { if (st[f] === undefined) delete a[f]; else a[f] = st[f]; } a.gAt[g] = stGroupAt(st, g); dirty = true; }
+      for (const g of Object.keys(GROUPS)) a.gAt[g] ??= gAtOf(a, g); a.structAt = Math.max(structAtOf(a), st.updatedAt || 0);
+    }
     if (doms.positions) { const r = applyPosition('audio', a, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }
     if (dirty) await DB.put('audiobooks', { ...a, _noTouch: true });
   }

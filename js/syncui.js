@@ -5,7 +5,7 @@ import { SETTING_GROUPS, deviceOnlyGroups, setDeviceOnlyGroups } from './setting
 import { deviceName, setDeviceName, guessDeviceName } from './device.js';
 import { askAlways, setAskAlways, conflictCount, ago } from './positions.js';
 
-let refreshed = false;
+let refreshed = false, optionsOpen = false;   // the panel redraws on every sync status change: remember whether it was open
 const WHAT = { positions: 'positions', library: 'library', settings: 'settings' };
 export function statusLine(st) {
   switch (st.state) {
@@ -35,7 +35,7 @@ export function syncDetails(redraw) {
   box.append(
     lastTxt ? h('p', { class: 'muted small', id: 'sync-last' }, lastTxt) : null,
     conflictCount() ? h('p', { class: 'plib-warn', id: 'sync-conflicts' }, `${conflictCount()} book${conflictCount() > 1 ? 's were' : ' was'} read on another device too — you’ll be asked which place to continue from when you open ${conflictCount() > 1 ? 'them' : 'it'}.`) : null,
-    h('details', { open: false, id: 'sync-options' }, h('summary', null, 'What to sync & devices'),
+    h('details', { open: optionsOpen, id: 'sync-options', ontoggle: (e) => { optionsOpen = e.target.open; } }, h('summary', null, 'What to sync & devices'),
       h('h4', null, 'What to sync'), ...toggles,
       h('label', { class: 'check', style: { display: 'block', margin: '8px 0' } }, h('input', { type: 'checkbox', id: 'ask-continue', checked: askAlways(), onchange: (e) => setAskAlways(e.target.checked) }), ' Always ask before jumping to another device’s position', h('div', { class: 'muted small' }, 'Off: if this device hasn’t moved, it quietly continues from where you left off elsewhere; if you read here too, you’re asked.')),
       h('h4', null, 'Keep on this device only'), h('p', { class: 'muted small' }, 'Ticked groups of settings are not shared (each device keeps its own).'), ...groups,
