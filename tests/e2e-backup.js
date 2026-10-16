@@ -31,9 +31,9 @@ const TMP = '/tmp/e2e-backup'; fs.mkdirSync(TMP, { recursive: true });
     const S = await import('./js/store.js'); const { DB } = await import('./js/db.js'); const { settings, setSort } = await import('./js/settings.js'); const books = await S.getBooks(); const by = (t) => books.find((b) => new RegExp(t, 'i').test(b.title));
     const shelf = await S.createShelf ? await S.createShelf('Faves') : null; void shelf;
     settings.set({ theme: 'sepia', fontSizePt: 18, pinchSens: 'normal', holdSec: 2.5, groupBy: 'author', margin: 33, lineHeight: 1.8, flow: 'paginated' }); setSort('shelf:all', { field: 'title', dir: 'asc' });
-    const fr = by('Frankenstein'); fr.status = 'reading'; fr.progress = 0.42; fr.cfi = 'epubcfi(/6/8!/4/2)'; fr.overrides = { fontSizePt: 22, margin: 10 }; fr.updatedAt = 1000; await DB.put('books', { ...fr, _noTouch: true });
-    const lb = by('long'); lb.status = 'finished'; lb.progress = 1; lb.borrowed = true; lb.dueAt = Date.UTC(2027, 0, 5); lb.loanAt = 5000; lb.updatedAt = 1000; await DB.put('books', { ...lb, _noTouch: true });
-    const pdf = by('Test PDF'); pdf.pdfPage = 4; pdf.pdfZoom = 1.5; pdf.pdfText = true; pdf.status = 'reading'; pdf.updatedAt = 1000; await DB.put('books', { ...pdf, _noTouch: true });
+    const fr = by('Frankenstein'); fr.status = 'reading'; fr.progress = 0.42; fr.cfi = 'epubcfi(/6/8!/4/2)'; fr.overrides = { fontSizePt: 22, margin: 10 }; fr.updatedAt = 1000; fr.posAt = 1000; await DB.put('books', { ...fr, _noTouch: true });
+    const lb = by('long'); lb.status = 'finished'; lb.progress = 1; lb.borrowed = true; lb.dueAt = Date.UTC(2027, 0, 5); lb.loanAt = 5000; lb.updatedAt = 1000; lb.posAt = 1000; await DB.put('books', { ...lb, _noTouch: true });
+    const pdf = by('Test PDF'); pdf.pdfPage = 4; pdf.pdfZoom = 1.5; pdf.pdfText = true; pdf.status = 'reading'; pdf.updatedAt = 1000; pdf.posAt = 1000; await DB.put('books', { ...pdf, _noTouch: true });
     await DB.put('shelves', { id: 'sh1', name: 'Faves', createdAt: 10, updatedAt: 10 }); const fr2 = await S.getBook(fr.id); fr2.shelves = ['sh1']; fr2.updatedAt = 1000; await DB.put('books', { ...fr2, _noTouch: true });
     await DB.put('sources', { id: 'src-mine', name: 'My feed', kind: 'opds', url: 'https://user:pw@example.org/opds', order: 99, apiKey: 'SECRET-KEY-123' });
     await DB.put('links', { id: 'lk1', bookKey: S.bookSyncKey(fr), audioKey: 'streamy|narr|10', state: 'rejected', by: 'user', createdAt: 5, updatedAt: 5 });
@@ -81,8 +81,8 @@ const TMP = '/tmp/e2e-backup'; fs.mkdirSync(TMP, { recursive: true });
   });
   await step('Merge: newest change wins per book (local newer kept, backup newer applied), user-set beats auto; nothing is removed', async () => {
     const D = await newPage(); await importBooks(D, 'frankenstein.epub', 'long-book.epub', 'saga-1.epub');
-    await ev(D, async () => { const S = await import('./js/store.js'); const { DB } = await import('./js/db.js'); const bs = await S.getBooks(); const fr = bs.find((b) => /Frankenstein/.test(b.title)); fr.progress = 0.9; fr.status = 'finished'; fr.updatedAt = Date.now() + 1e6; await DB.put('books', { ...fr, _noTouch: true });   // newer than the backup
-      const lb = bs.find((b) => /long/i.test(b.title)); lb.progress = 0.1; lb.status = 'reading'; lb.updatedAt = 5; await DB.put('books', { ...lb, _noTouch: true }); });   // older than the backup
+    await ev(D, async () => { const S = await import('./js/store.js'); const { DB } = await import('./js/db.js'); const bs = await S.getBooks(); const fr = bs.find((b) => /Frankenstein/.test(b.title)); fr.progress = 0.9; fr.status = 'finished'; fr.updatedAt = Date.now() + 1e6; fr.posAt = fr.updatedAt; await DB.put('books', { ...fr, _noTouch: true });   // newer than the backup
+      const lb = bs.find((b) => /long/i.test(b.title)); lb.progress = 0.1; lb.status = 'reading'; lb.updatedAt = 5; lb.posAt = 5; await DB.put('books', { ...lb, _noTouch: true }); });   // older than the backup
     const r = await runImport(D, metaZip, 'merge'); const s = await state(D); const f = Object.entries(s.books).find(([t]) => /Frankenstein/.test(t))[1], l = Object.entries(s.books).find(([t]) => /long/i.test(t))[1];
     assert(f.progress === 0.9 && f.status === 'finished', 'local newer must stay ' + JSON.stringify(f)); assert(l.status === 'finished' && l.progress === 1, 'backup newer must win ' + JSON.stringify(l)); assert(Object.keys(s.books).length === 3 && Object.entries(s.books).some(([t]) => /Saga/i.test(t)), 'nothing removed'); await D.close(); return r.txt;
   });
