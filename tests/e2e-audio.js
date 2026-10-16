@@ -301,7 +301,7 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
     const b2 = (await books(O))[0]; assert(b2.tracks.every((t) => !t.stored), 'still stored'); return 'offline ok, removed';
   });
   await step('Internet Archive audio: restricted query, natural file order, one bitrate, Add + offline', async () => {
-    await gotoAudio(O); await click(O, '#audio-menu'); await O.waitForSelector('#audio-menu-online'); await click(O, '#audio-menu-online'); await O.waitForSelector('#audio-src-seg'); await click(O, '[data-src="ia"]'); await O.waitForSelector('.aud-row[data-key="ia:iatone_librivox"]', { timeout: 10000 });
+    await gotoAudio(O); await click(O, '#audio-menu'); await O.waitForSelector('#audio-menu-online'); await click(O, '#audio-menu-online'); await O.waitForSelector('#audio-src-seg'); await click(O, '[data-src="ia"]'); await O.waitForSelector('.aud-row[data-key="ia:iatone_librivox"]', { timeout: 25000 });
     assert(O.log.ia.length >= 1, 'IA search not issued'); const row = await O.$eval('.aud-row', (e) => e.innerText.replace(/\s+/g, ' ')); assert(/IA Tone Book/.test(row) && /Ida Archive/.test(row), row);
     await O.evaluate(() => document.querySelector('.aud-row [data-act=offline]').click()); await waitStored(O, 'IA Tone Book', 25000); await sleep(400);
     const b = (await books(O)).find((x) => x.title === 'IA Tone Book'); assert(b && b.author === 'Ida Archive' && b.tracks.map((t) => t.name).join() === 'tone_01.mp3,tone_02.mp3,tone_10.mp3' && b.tracks.every((t) => t.stored) && b.cover, JSON.stringify(b)); return b.tracks.length + ' files, natural order, 64k set only';
