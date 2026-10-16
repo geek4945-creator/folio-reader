@@ -3,6 +3,9 @@ import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampP
 import { KINDLE_TYPE_RE } from './kindle.js';
 import { renderLibrary, importFiles, deleteAllBooksFlow } from './library.js';
 import { renderCatalogs, resetCatalogs } from './catalogs.js';
+import { renderAudiobooks, handleAudioFiles, collectDropped, dropLooksAudio } from './audiobooks.js';
+import { onAudioChange } from './audiostore.js';
+import { initPlayerUI, playerOpen } from './audioplayer.js';
 import { onLibraryChange, getBooks, pruneSets } from './store.js';
 import * as G from './google.js';
 import { closeReader, currentReader } from './reader.js';
@@ -22,12 +25,16 @@ async function show(t) {
   $$('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
   view.scrollTop = 0; view.dataset.screen = t;
   if (t === 'library') await renderLibrary(view);
+  else if (t === 'audiobooks') await renderAudiobooks(view);
   else if (t === 'catalogs') await renderCatalogs(view);
   else renderSettings();
 }
 $$('.tab').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab === 'catalogs' && tab === 'catalogs') resetCatalogs(); show(b.dataset.tab); }));
 
 $('#file-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await importFiles(files); });
+$('#audio-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await handleAudioFiles(files); });
+$('#audio-folder-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await handleAudioFiles(files, { ask: false }); });
+onAudioChange(() => { if (tab === 'audiobooks' && !$('#overlay').children.length) renderAudiobooks(view); });
 onLibraryChange(() => { if (tab === 'library' && !currentReader() && !$('#overlay').children.length) renderLibrary(view); });
 settings.onChange((p) => { if (tab === 'settings' && ('theme' in p)) renderSettings(); });
 
@@ -120,14 +127,17 @@ function accountBox() {
 /* ---------- drag & drop EPUBs onto the window (desktop / iPad) ---------- */
 window.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
-  const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.(epub|pdf|mobi|azw3?|kf8)$/i.test(f.name) || f.type === 'application/epub+zip' || f.type === 'application/pdf' || KINDLE_TYPE_RE.test(f.type));
+  const dt = e.dataTransfer; if (!dt) return;
+  const hasDir = [...(dt.items || [])].some((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()?.isDirectory);
+  if (hasDir || dropLooksAudio(dt)) { e.preventDefault(); const files = await collectDropped(dt); show('audiobooks'); await handleAudioFiles(files, { ask: !hasDir }); return; }
+  const files = [...(dt.files || [])].filter((f) => /\.(epub|pdf|mobi|azw3?|kf8)$/i.test(f.name) || f.type === 'application/epub+zip' || f.type === 'application/pdf' || KINDLE_TYPE_RE.test(f.type));
   if (!files.length) return; e.preventDefault(); await importFiles(files); show('library');
 });
 
 /* ---------- boot ---------- */
 G.initSync();
 show(tab);
-initInstall(); initFullscreen();
+initInstall(); initFullscreen(); initPlayerUI();
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));

@@ -98,8 +98,10 @@ export async function enableDriveBrowse() {
   if (!(r.scope || '').includes('drive.readonly')) throw new Error('Drive read access was not granted.');
   a.token = r.access_token; a.exp = Date.now() + (r.expires_in - 30) * 1000; a.scope = scope; save(a); scheduleRenew(a.exp);
 }
-const EPUB_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType='application/epub+zip' or mimeType='application/pdf' or mimeType='application/x-mobipocket-ebook' or mimeType='application/vnd.amazon.ebook' or name contains '.epub' or name contains '.pdf' or name contains '.mobi' or name contains '.azw')";
-export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '' } = {}) {
+const EBOOK_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType='application/epub+zip' or mimeType='application/pdf' or mimeType='application/x-mobipocket-ebook' or mimeType='application/vnd.amazon.ebook' or name contains '.epub' or name contains '.pdf' or name contains '.mobi' or name contains '.azw')";
+const AUDIO_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType contains 'audio/' or name contains '.mp3' or name contains '.m4a' or name contains '.m4b' or name contains '.aac' or name contains '.ogg' or name contains '.opus' or name contains '.flac' or name contains '.wav' or name contains '.zip')";
+export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '', audio = false } = {}) {
+  const EPUB_Q = audio ? AUDIO_Q : EBOOK_Q;
   const q = search ? `trashed=false and name contains '${search.replace(/['\\]/g, ' ')}' and ${EPUB_Q}` : `trashed=false and '${folderId}' in parents and ${EPUB_Q}`;
   const u = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, orderBy: 'folder,name', pageSize: '50', fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)', spaces: 'drive', ...(pageToken ? { pageToken } : {}) });
   const r = await drive(u); return r.json();

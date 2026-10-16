@@ -164,6 +164,7 @@ export async function createShelf(name) { const s = { id: uid(), name, createdAt
 export async function renameShelf(id, name) { const s = await DB.get('shelves', id); s.name = name; await DB.put('shelves', s); emitChange(); }
 export async function deleteShelf(id) {
   for (const b of await getBooks()) if (b.shelves?.includes(id)) { b.shelves = b.shelves.filter((x) => x !== id); await DB.put('books', b); }
+  for (const b of await DB.all('audiobooks')) if (b.shelves?.includes(id)) { b.shelves = b.shelves.filter((x) => x !== id); await DB.put('audiobooks', b); }   // shelves are shared with audiobooks
   await DB.del('shelves', id); await DB.del('orders', 'shelf:' + id); addTomb('shelf', id); emitChange();
 }
 export async function setStatus(bookId, status) { const b = await getBook(bookId); b.status = status; if (status === 'finished') b.finishedAt = Date.now(); await DB.put('books', b); emitChange(); }

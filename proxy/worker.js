@@ -2,7 +2,7 @@
 //   wrangler deploy   (see proxy/wrangler.toml)  ->  https://folio-proxy.<you>.workers.dev/?url=<encoded target>
 // Configure via Worker vars: ALLOW_HOSTS="my-calibre.example.com,other.host"  ALLOW_ORIGIN="https://you.github.io"
 const DEFAULT_ALLOW = ['gutenberg.org', 'pglaf.org', 'standardebooks.org', 'archive.org', 'openlibrary.org', 'gutendex.com'];
-const DENY = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i];
+const DENY = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i, /audiobook-?bay/i, /tokybook/i, /golden-?audiobooks?/i, /audiobooks4soul/i];
 
 export default {
   async fetch(request, env) {

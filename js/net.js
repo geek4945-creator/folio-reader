@@ -1,7 +1,7 @@
 // Fetch with optional CORS proxy fallback.  Proxy contract: GET {proxy}?url=<encoded target>
 import { settings } from './settings.js';
 
-const BLOCKED = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i, /\bbookzz\b/i, /ebin\.pub/i, /\bepdf\.pub\b/i];
+const BLOCKED = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i, /\bbookzz\b/i, /ebin\.pub/i, /\bepdf\.pub\b/i, /audiobook-?bay/i, /tokybook/i, /golden-?audiobooks?/i, /audiobooks4soul/i];
 export function isBlockedSite(url) {
   try { const u = new URL(url); return BLOCKED.some((r) => r.test(u.hostname)); } catch { return false; }
 }

@@ -8,9 +8,9 @@
 const http = require('http'); const dns = require('dns').promises; const net = require('net');
 const PORT = +process.env.PORT || 8787;
 const ORIGIN = process.env.ALLOW_ORIGIN || '*';
-const DEFAULT_ALLOW = ['gutenberg.org', 'pglaf.org', 'standardebooks.org', 'archive.org', 'openlibrary.org', 'gutendex.com'];
+const DEFAULT_ALLOW = ['gutenberg.org', 'pglaf.org', 'standardebooks.org', 'archive.org', 'openlibrary.org', 'gutendex.com', 'librivox.org'];
 const ALLOW = (process.env.ALLOW_HOSTS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean).concat(DEFAULT_ALLOW);
-const DENY = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i];
+const DENY = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol/i, /sci-?hub/i, /1lib\./i, /b-ok\./i, /singlelogin/i, /oceanofpdf/i, /pdfdrive/i, /audiobook-?bay/i, /tokybook/i, /golden-?audiobooks?/i, /audiobooks4soul/i];
 const MAX = 120 * 1024 * 1024;
 const hostAllowed = (h) => ALLOW.some((a) => h === a || h.endsWith('.' + a));
 function isPrivate(ip) {

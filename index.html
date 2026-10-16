@@ -18,16 +18,21 @@
 <body>
 <div id="app">
   <main id="view" aria-live="polite"></main>
+  <div id="miniplayer" hidden></div>
   <nav id="tabbar" aria-label="Main">
     <button data-tab="library" class="tab"><span class="ico">&#128218;</span><span>Library</span></button>
+    <button data-tab="audiobooks" class="tab"><span class="ico">&#127911;</span><span>Audiobooks</span></button>
     <button data-tab="catalogs" class="tab"><span class="ico">&#127760;</span><span>Catalogs</span></button>
     <button data-tab="settings" class="tab"><span class="ico">&#9881;&#65039;</span><span>Settings</span></button>
   </nav>
 </div>
 <div id="reader" hidden></div>
+<div id="audioplayer" hidden></div>
 <div id="overlay" hidden></div>
 <div id="toast" hidden></div>
 <input type="file" id="file-input" accept=".epub,.pdf,application/pdf,.mobi,.azw,.azw3,.kf8,application/epub+zip,application/x-mobipocket-ebook,application/vnd.amazon.ebook" multiple hidden>
+<input type="file" id="audio-input" accept="audio/*,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.flac,.wav,.zip,.aax,.aaxc,.aa,.m4p" multiple hidden>
+<input type="file" id="audio-folder-input" webkitdirectory multiple hidden>
 <script src="config.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/epub.min.js"></script>

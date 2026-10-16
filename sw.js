@@ -1,8 +1,8 @@
 // Offline shell + runtime caching of same-origin assets. Bump VERSION to refresh.
-const VERSION = 'folio-v5';
+const VERSION = 'folio-v6';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app.css', 'vendor/jszip.min.js', 'vendor/epub.min.js',
   'js/app.js', 'js/util.js', 'js/db.js', 'js/settings.js', 'js/store.js', 'js/epubmeta.js', 'js/net.js', 'js/opds.js', 'js/catalogs.js',
-  'js/library.js', 'js/reader.js', 'js/dragsort.js', 'js/google.js', 'js/drive.js', 'js/kindle.js', 'js/pdf.js', 'js/pdfreader.js', 'js/publib.js', 'js/env.js', 'js/install.js', 'js/fullscreen.js', 'js/pages.js',
+  'js/library.js', 'js/reader.js', 'js/dragsort.js', 'js/google.js', 'js/drive.js', 'js/kindle.js', 'js/pdf.js', 'js/pdfreader.js', 'js/publib.js', 'js/env.js', 'js/install.js', 'js/fullscreen.js', 'js/pages.js', 'js/audiotags.js', 'js/audiostore.js', 'js/audioplayer.js', 'js/audiobooks.js', 'js/audiosources.js',
   'vendor/foliate-mobi.js', 'vendor/pdfjs/pdf.min.js', 'vendor/pdfjs/pdf.worker.min.js', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
