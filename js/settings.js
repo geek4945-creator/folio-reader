@@ -30,6 +30,7 @@ export const DEFAULTS = {
   flowChosen: false,    // true once the user picked Pages / Scroll themselves (device-only; used so a default is never synced over someone's explicit choice)
   pdfInvert: true,      // PDF: invert page colors in dark themes
   tapZones: 'on',       // 'on' | 'off' | 'inverted'
+  pinchSens: 'slow',    // reader pinch text-size sensitivity: 'slow' | 'normal' | 'fast' (device-only)
   holdSec: 4,           // press-and-hold on a Library / Audiobooks tile opens its ⋯ menu after this many seconds (0.5–5; device-only)
   autoPair: true,       // link audiobooks with their ebooks automatically when the match is very confident (≥ 85%)
   autoEnrich: false,    // fill in missing metadata / covers on import (Open Library + Google Books, high-confidence matches only)

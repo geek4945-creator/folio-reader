@@ -18,6 +18,7 @@ import { enrichSettingsSection, openFixMissing } from './enrich.js';
 import { footerToggles } from './pages.js';
 import { initViewport } from './viewport.js';
 import { initNav, noteTab } from './nav.js';
+import { PINCH_LABELS } from './pinch.js';
 import { initHold, holdSeconds, HOLD_MIN, HOLD_MAX } from './hold.js';
 import { pairSettingsSection, pairNotify } from './findplace.js';
 import { startAutoPair } from './links.js';
@@ -68,6 +69,7 @@ function renderSettings() {
       slider('Line spacing', 'lineHeight', 1, 2.4, 0.05, (v) => v.toFixed(2)), slider('Margins', 'margin', 0, 80, 2, (v) => v + ' px'),
       h('div', { class: 'row-ctl' }, h('label', null, 'Reading layout')),
       h('div', { class: 'seg wide' }, [['paginated', 'Pages'], ['scrolled', 'Scroll']].map(([v, n]) => h('button', { class: s.flow === v ? 'on' : '', onclick: () => { settings.set({ flow: v }); renderSettings(); } }, n))),
+      h('div', { class: 'row-ctl' }, h('label', null, 'Pinch sensitivity ', h('small', { class: 'muted' }, 'pinch in the reader changes the text size')), h('div', { class: 'seg wide', id: 'pinch-seg' }, PINCH_LABELS.map(([v, n]) => h('button', { class: s.pinchSens === v ? 'on' : '', 'data-pinch': v, onclick: () => { settings.set({ pinchSens: v }); renderSettings(); } }, n)))),
       sample),
     h('section', { class: 'pad card-sec', id: 'sec-footer' }, h('h3', null, 'Reader footer'),
       h('p', { class: 'muted small' }, 'The line at the bottom of the reader. EPUB page counts follow your text size, margins and line spacing; PDFs use their real page numbers.'),
