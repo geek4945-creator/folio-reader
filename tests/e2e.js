@@ -8,6 +8,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
 
 async function newPage(browser, ctx) {
   const page = await ctx.newPage();
+  await page.evaluateOnNewDocument(() => { if (!localStorage.getItem('folio.settings')) localStorage.setItem('folio.settings', JSON.stringify({ flow: 'paginated', flowChosen: true })); });   // these tests drive page turns: seed the explicit Pages choice (the default is Scroll since v0.5.2)
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   page.errs = []; page.on('pageerror', (e) => page.errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) page.errs.push('console: ' + m.text()); });
   return page;

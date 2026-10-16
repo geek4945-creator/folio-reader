@@ -8,6 +8,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
 (async () => {
   const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
   const page = await (await browser.createBrowserContext()).newPage();
+  await page.evaluateOnNewDocument(() => { if (!localStorage.getItem('folio.settings')) localStorage.setItem('folio.settings', JSON.stringify({ flow: 'paginated', flowChosen: true })); });   // these tests drive page turns: seed the explicit Pages choice (the default is Scroll since v0.5.2)
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|Blocked script execution in 'about:srcdoc'/.test(m.text())) errs.push('console: ' + m.text()); });
   await page.evaluateOnNewDocument(() => { window.__ft = []; const rec = () => { const e = document.querySelector('#r-foot-page'); if (e && window.__ft[window.__ft.length - 1] !== e.textContent) window.__ft.push(e.textContent); }; new MutationObserver(rec).observe(document, { childList: true, subtree: true, characterData: true }); });

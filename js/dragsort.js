@@ -27,6 +27,8 @@ export function enableDragSort(container, { itemSel = '.tile', onDrop, vertical 
   // Once a long-press drag is active, stop iOS from scrolling the page.
   window.addEventListener('touchmove', (e) => { if (st && st.active) e.preventDefault(); }, { passive: false });
   container.addEventListener('contextmenu', (e) => { if (st) e.preventDefault(); });
+  // a press-and-hold menu (hold.js) fires while the finger has not moved: drop the drag pick-up instead of reordering
+  container.addEventListener('hold-fire', () => { if (st) finish(true); });
 
   const end = (e) => {
     if (!st || (e && e.pointerId !== st.id)) return;

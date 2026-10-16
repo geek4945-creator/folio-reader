@@ -1,6 +1,6 @@
 {
   "name": "folio-reader-android",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Capacitor wrapper that packages the Folio Reader PWA as an Android APK",
   "scripts": {
@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.3",
     "@capacitor/core": "^6.2.0"
   },
   "devDependencies": {

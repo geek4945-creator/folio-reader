@@ -25,7 +25,7 @@ export function applyFooterSettings() {
 /** info: { page, total, left, unit, calculating } — any field may be missing. */
 export function paintFooter(info = {}) {
   const pg = $('#r-foot-page'), lf = $('#r-foot-left'); if (!pg) return;
-  pg.textContent = info.calculating ? 'Calculating pages…' : info.page && info.total ? `Page ${info.page} of ${info.total}` : '';
+  pg.textContent = info.calculating ? 'Calculating pages…' : info.page && info.total ? `Page ${info.page} of ${info.total}` : info.percent != null ? Math.round(info.percent * 100) + '%' : '';   // percent when pages can't be worked out (e.g. mid-scroll between sections)
   const unit = info.unit || 'chapter';
   lf.textContent = info.left == null ? '' : info.left <= 0 ? `Last page of ${unit}` : `${info.left} page${info.left === 1 ? '' : 's'} left in ${unit}`;
   applyFooterSettings();
@@ -121,7 +121,8 @@ export function createPager(c) {
     if (!alive()) return; loc = loc || c.rendition.currentLocation(); if (!loc) return;
     if (P.layoutKey && key() !== P.layoutKey) { relayout().then(() => update()); return; }
     const m = measure(loc);
-    paintFooter({ page: m.page, total: m.total, left: m.left, unit: 'chapter', calculating: !P.chars });
+    const n = c.epub.spine.length || 1, d = loc.start && loc.start.displayed; const percent = loc.start ? Math.min(1, Math.max(0, ((loc.start.index || 0) + (d && d.total ? (d.page - 1) / d.total : 0)) / n)) : null;
+    paintFooter({ page: m.page, total: m.total, left: m.left, unit: 'chapter', calculating: !P.chars && !(m.page && m.total), percent });
     P.last = m; c.pageInfo = m;
   }
   async function relayout() { if (P.relaying) return P.relaying; P.relaying = (async () => { await loadLayout(); })().finally(() => { P.relaying = null; }); return P.relaying; }

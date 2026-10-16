@@ -26,9 +26,11 @@ export const DEFAULTS = {
   font: 'publisher',
   lineHeight: 1.5,
   margin: 24,           // px, left/right
-  flow: 'paginated',    // 'paginated' | 'scrolled'
+  flow: 'scrolled',     // 'paginated' | 'scrolled' (v0.5.2: continuous scroll is the default; a stored choice always wins)
+  flowChosen: false,    // true once the user picked Pages / Scroll themselves (device-only; used so a default is never synced over someone's explicit choice)
   pdfInvert: true,      // PDF: invert page colors in dark themes
   tapZones: 'on',       // 'on' | 'off' | 'inverted'
+  holdSec: 4,           // press-and-hold on a Library / Audiobooks tile opens its ⋯ menu after this many seconds (0.5–5; device-only)
   autoPair: true,       // link audiobooks with their ebooks automatically when the match is very confident (≥ 85%)
   autoEnrich: false,    // fill in missing metadata / covers on import (Open Library + Google Books, high-confidence matches only)
   view: 'grid',         // library view: grid | list
@@ -61,6 +63,7 @@ export const settings = {
   updatedAt: () => +(localStorage.getItem('folio.settings.at') || 0),
   set(patch, opts = {}) {
     Object.assign(state, patch);
+    if ('flow' in patch && !opts.remote) state.flowChosen = true;
     if (!opts.remote && Object.keys(patch).some((k) => SYNCED.includes(k))) localStorage.setItem('folio.settings.at', String(Date.now()));
     try { localStorage.setItem('folio.settings', JSON.stringify(state)); } catch { /* quota */ }
     applyUI();

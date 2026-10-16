@@ -1,4 +1,5 @@
 // Audiobooks tab: library-style grid/list with covers, shelves, sort (incl. custom drag order), multi-select, import (files, folders, zips, drop, Drive).
+import { registerBack } from './nav.js';
 import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, fmtPct, hashHue, $, put } from './util.js';
 import { settings, AUDIO_SORT_FIELDS, getSort, setSort, clearSort, dirWord } from './settings.js';
 import * as S from './store.js';
@@ -31,6 +32,7 @@ async function drawAudiobooks() {
   view.scrollTop = scroll;
 }
 const rerender = () => renderAudiobooks();
+registerBack('audiobooks', () => { if (local.sel) { local.sel = null; rerender(); return true; } return false; });   // Back leaves select mode
 
 async function renderMain(ctx) {
   const { shelves } = ctx; const allBooks = ctx.books; const books = Loans.owned(allBooks), borrowedBooks = Loans.borrowedOf(allBooks);   // library loans stay out of the owned list and its counts
@@ -96,13 +98,15 @@ function tileEl(b, ctx, mode) {
   const act = () => { if (local.sel) { toggleSel([b.id]); } else open(b.id); };
   const bar = h('div', { class: 'bar' }, h('i', { style: { width: Math.round((b.status === 'finished' ? 1 : b.progress || 0) * 100) + '%' } }));
   const cloud = A.hasUrls(b) ? h('span', { class: 'pill-pdf pill-cloud', title: A.isDownloaded(b) ? 'Saved offline' : 'Streams from the internet' }, A.isDownloaded(b) ? '⬇' : '☁') : null;
-  return h('div', { class: 'tile book audio' + (local.sel && local.sel.has(b.id) ? ' sel' : ''), dataset: { key: 'b:' + b.id, id: b.id }, tabindex: 0, role: 'button', onclick: act, onkeydown: (e) => { if (e.key === 'Enter') act(); } },
+  const el = h('div', { class: 'tile book audio' + (local.sel && local.sel.has(b.id) ? ' sel' : ''), dataset: { key: 'b:' + b.id, id: b.id }, tabindex: 0, role: 'button', onclick: act, onkeydown: (e) => { if (e.key === 'Enter') act(); } },
     h('div', { class: 'cover' },
       h('div', { class: 'cover-ph', style: { background: `linear-gradient(135deg,hsl(${hue} 45% 38%),hsl(${(hue + 40) % 360} 45% 28%))` } }, h('span', null, b.title), h('small', null, b.author)),
       u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, badge(b), b.borrowed ? Loans.dueBadge(b) : null, cloud, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null),
     h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, b.title), h('div', { class: 'a ellipsis muted' }, b.author || 'Unknown author'),
       h('div', { class: 'muted small ellipsis' }, fmtLong(b.duration) + (b.tracks.length > 1 ? ` · ${b.tracks.length} files` : '')), mode === 'list' ? bar : null),
     mode === 'list' ? more : null);
+  el.__onHold = () => audioBookMenu(b, ctx);   // press-and-hold = the ⋯ menu
+  return el;
 }
 export async function open(id) { const st = getState(); await loadBook(id, { play: true }); openPlayer(); return st; }
 

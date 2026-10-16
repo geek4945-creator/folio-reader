@@ -3,6 +3,7 @@ import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, fmtPct, hashHue, $
 import { settings, GROUP_OPTIONS, SORT_FIELDS, SET_SORT_FIELDS, getSort, setSort, clearSort, dirWord, DEFAULT_DIR } from './settings.js';
 import * as S from './store.js';
 import { enableDragSort } from './dragsort.js';
+import { registerBack } from './nav.js';
 import { openReader } from './reader.js';
 import { openDriveBrowser } from './drive.js';
 import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
@@ -127,6 +128,7 @@ function groupSections(gb, pool, ctx) {
 }
 
 /* ---------- multi-select ---------- */
+registerBack('library', () => { if (local.sel) { local.sel = null; rerender(); return true; } if (local.setId) { local.setId = null; rerender(); return true; } return false; });   // Back: leave select mode, then the set page
 function toggleSelect() { local.sel = local.sel ? null : new Set(); rerender(); }
 function toggleSel(ids) {
   const all = ids.every((id) => local.sel.has(id));
@@ -287,6 +289,7 @@ function tileEl(t, ctx, mode) {
     h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, b.title), h('div', { class: 'a ellipsis muted' }, b.author),
       mode === 'list' ? [b.setId && ctx.setMap.get(b.setId) ? h('div', { class: 'muted small ellipsis' }, ctx.setMap.get(b.setId).name + (b.seriesIndex != null ? ' · #' + b.seriesIndex : '')) : null, bar] : null),
     mode === 'list' ? more : null);
+  el.__onHold = () => bookMenu(b, ctx);   // press-and-hold = the ⋯ menu
   return el;
 }
 function setTile(t, ctx, mode) {
@@ -296,8 +299,10 @@ function setTile(t, ctx, mode) {
     h('span', { class: 'pbadge set' }, t.books.length + ' books'));
   const done = t.books.filter((b) => b.status === 'finished').length;
   const ids = t.books.map((b) => b.id);
-  return h('div', { class: 'tile set' + (local.sel && ids.every((id) => local.sel.has(id)) ? ' sel' : ''), dataset: { key: t.key, books: ids.join(',') }, tabindex: 0, role: 'button', onclick: () => { if (local.sel) toggleSel(ids); else { local.setId = t.set.id; rerender(); } } },
+  const el = h('div', { class: 'tile set' + (local.sel && ids.every((id) => local.sel.has(id)) ? ' sel' : ''), dataset: { key: t.key, books: ids.join(',') }, tabindex: 0, role: 'button', onclick: () => { if (local.sel) toggleSel(ids); else { local.setId = t.set.id; rerender(); } } },
     h('span', { class: 'selmark' }, '✓'), stack, h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, t.set.name), h('div', { class: 'a muted ellipsis' }, (t.books[0].author || '') + (done ? ` · ${done}/${t.books.length} read` : ''))));
+  el.__onHold = () => setMenu(t.set, ctx);
+  return el;
 }
 
 /* ---------- set page ---------- */

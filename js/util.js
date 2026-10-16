@@ -47,6 +47,8 @@ function bindEscape() {
   if (escBound) return; escBound = true;
   document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !sheetStack.length) return; e.preventDefault(); e.stopPropagation(); sheetStack[sheetStack.length - 1].close(); }, true);
 }
+/** Close the topmost sheet / dialog / guide (the Back button). Returns false when none is open. */
+export function closeTopSheet() { const t = sheetStack[sheetStack.length - 1]; if (!t) return false; t.close(); return true; }
 /** Show a bottom sheet. build(close) returns an element/array. Returns {close}.
  *  Every sheet has a ✕ at the top, a Done / Back button at the bottom (opts.closeLabel; opts.noFooter hides it for dialogs that carry their own buttons),
  *  closes on a tap outside (unless opts.noDim) and on Escape, keeps clear of the iOS notch / home indicator and scrolls inside when long. */

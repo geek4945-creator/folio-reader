@@ -12,6 +12,7 @@ const canvasW = (page) => page.$eval('#viewer canvas.pdf-canvas', (c) => parseFl
 (async () => {
   const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
   const ctx = await browser.createBrowserContext(); const page = await ctx.newPage();
+  await page.evaluateOnNewDocument(() => { if (!localStorage.getItem('folio.settings')) localStorage.setItem('folio.settings', JSON.stringify({ flow: 'paginated', flowChosen: true })); });   // these tests drive page turns: seed the explicit Pages choice (the default is Scroll since v0.5.2)
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message)); page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push('console: ' + m.text()); });
   await page.goto(URL, { waitUntil: 'networkidle0' });

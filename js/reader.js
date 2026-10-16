@@ -106,7 +106,8 @@ async function startRendition(cfi) {
   await r.display(cfi);
   if (scrolled) {   // keep "Page X of Y" live while scrolling
     const k = r.manager && r.manager.container; let raf = 0;
-    if (k) k.addEventListener('scroll', () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; if (c.rendition === r && c.pager) c.pager.update(); }); }, { passive: true });
+    let settle = 0;
+    if (k) k.addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (c.rendition === r && c.pager) c.pager.update(); }); clearTimeout(settle); settle = setTimeout(() => { if (c.rendition === r) syncScrollLoc(); }, 250); }, { passive: true });
   }
   if (c.pager) c.pager.settle(300);
   if (cfi && !scrolled) {   // epub.js can land one page early when the saved CFI is the first character of a page
@@ -193,7 +194,7 @@ function chapterOf(loc) {
   try { const it = cur.epub.navigation.get(loc.start.href); if (it) return (it.label || '').trim(); } catch { /* ignore */ }
   return '';
 }
-function updateProgress(loc) {
+function updateProgress(loc, noSave) {
   const c = cur; if (!c) return;
   let p = 0;
   if (c.locReady) p = c.epub.locations.percentageFromCfi(loc.start.cfi) || 0;
@@ -205,10 +206,16 @@ function updateProgress(loc) {
   c.label.textContent = fmtPct(p) + (chap ? ' · ' + chap : '');
   c.curChapter = chap;
   refreshBookmarkStar();
-  savePositionSoon(loc);
+  if (!noSave) savePositionSoon(loc);
+}
+/** Continuous scroll: epub.js does not always report `relocated` while the reader scrolls, so read the position from the rendition ourselves. */
+function syncScrollLoc(noSave) {
+  const c = cur; if (!c || !c.rendition || c.closed || c.rendition.settings.flow !== 'scrolled') return;
+  try { const l = c.rendition.currentLocation(); if (l && l.start && l.start.cfi) { c.loc = l; updateProgress(l, noSave); c.pager && c.pager.update(l); } } catch { /* ignore */ }
 }
 const savePositionSoon = debounce(() => savePosition(), 500);
 async function savePosition() {
+  syncScrollLoc(true);
   const c = cur; if (!c || !c.loc) return;
   const b = await S.getBook(c.book.id); if (!b) return;
   b.cfi = c.loc.start.cfi; b.progress = c.progress; b.lastOpened = Date.now();

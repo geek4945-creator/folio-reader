@@ -7,6 +7,7 @@ import { loadFeed, loadHtml, resolveSearch, expandTemplate, detectSource, pickEp
 import { fetchSmart, download, isBlockedSite, openLibraryCover, CorsError, SiteError, normalizeUrl } from './net.js';
 import { getSources, addSource, removeSource, restoreSeeds, SEED_SOURCES, addBookFromBuffer, getBooks } from './store.js';
 import { settings } from './settings.js';
+import { registerBack } from './nav.js';
 import { openDriveBrowser } from './drive.js';
 import * as G from './google.js';
 
@@ -110,11 +111,14 @@ function sourceMenu(s) {
 
 async function open(src) { st = { src, stack: [], searchTpl: null, query: '' }; st.feed = null; st.error = null; await renderBrowse(true); }
 
+/** One step back inside Catalogs: previous feed, else the source list. False when already at the source list (the Back button / hardware back). */
+function catalogsBack() { if (st.stack.length) { st.feed = st.stack.pop(); st.query = ''; renderBrowse(); return true; } if (st.src) { st = { src: null, stack: [] }; renderCatalogs(root); return true; } return false; }
+registerBack('catalogs', catalogsBack);
 async function renderBrowse(initial) {
   const view = root; view.replaceChildren();
   const q = h('input', { type: 'search', class: 'field search', placeholder: 'Search ' + st.src.name, value: st.query, enterkeyhint: 'search' });
   const body = h('div', { class: 'browse' });
-  const back = h('button', { class: 'btn-text', onclick: () => { if (st.stack.length) { st.feed = st.stack.pop(); st.query = ''; renderBrowse(); } else { st = { src: null, stack: [] }; renderCatalogs(root); } } }, '‹ ' + (st.stack.length ? 'Back' : 'Catalogs'));
+  const back = h('button', { class: 'btn-text', onclick: catalogsBack }, '‹ ' + (st.stack.length ? 'Back' : 'Catalogs'));
   const searchable = st.src.kind !== 'html' && (st.src.kind !== 'opds' || st.src.searchTemplate || st.searchTpl || !st.feed);
   put(view, h('header', { class: 'topbar' }, back, h('h2', { class: 'grow ellipsis' }, st.feed?.title || st.src.name)),
     searchable ? h('form', { class: 'pad', onsubmit: async (e) => { e.preventDefault(); st.stack = []; st.feed = null; st.query = q.value.trim(); await loadInto(body, () => openSource(st.src, st.query)); } }, q) : null, body);
