@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Folio Reader</string>
+    <string name="title_activity_main">Folio Reader</string>
+    <string name="package_name">com.folio.reader</string>
+    <string name="custom_url_scheme">com.folio.reader</string>
+</resources>

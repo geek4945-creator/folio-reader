@@ -1,0 +1,7 @@
+{
+  "appId": "com.folio.reader",
+  "appName": "Folio Reader",
+  "webDir": "www",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false }
+}

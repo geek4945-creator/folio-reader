@@ -6,8 +6,11 @@ const DENY = [/annas-archive/i, /z-?lib/i, /zlibrary/i, /libgen/i, /library\.lol
 
 export default {
   async fetch(request, env) {
-    const origin = env.ALLOW_ORIGIN || '*';
-    const cors = (h = {}) => ({ 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Allow-Headers': 'Range, Accept', 'Access-Control-Expose-Headers': 'Content-Length, Content-Type, Content-Range', ...h });
+    // ALLOW_ORIGIN: comma-separated list of allowed origins (or "*"). The matching request Origin is echoed back.
+    const allowed = (env.ALLOW_ORIGIN || '*').split(',').map((s) => s.trim()).filter(Boolean);
+    const reqOrigin = request.headers.get('Origin') || '';
+    const origin = allowed.includes('*') ? '*' : (allowed.includes(reqOrigin) ? reqOrigin : allowed[0]);
+    const cors = (h = {}) => ({ 'Access-Control-Allow-Origin': origin, 'Vary': 'Origin', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Allow-Headers': 'Range, Accept', 'Access-Control-Expose-Headers': 'Content-Length, Content-Type, Content-Range', ...h });
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors() });
     if (!['GET', 'HEAD'].includes(request.method)) return new Response('GET only', { status: 405, headers: cors() });
     const target = new URL(request.url).searchParams.get('url');

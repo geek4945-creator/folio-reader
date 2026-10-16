@@ -47,6 +47,34 @@ After a change, bump `VERSION` in `sw.js` (the worker is network-first, so updat
 3. Import some EPUBs (Library → ＋) or download from the Catalogs tab.
 4. Tip: iOS can evict website storage if an app is unused for a long time. The installed home-screen app asks for persistent storage, but to be safe turn on **Google sync** (state) and keep your EPUBs somewhere else too (book *files* are not uploaded).
 
+## Android install
+
+A signed Android APK is published on the [Releases page](https://github.com/geek4945-creator/folio-reader/releases/latest) (no Google Play needed).
+
+1. On the Android phone, open this link and download the file: <https://github.com/geek4945-creator/folio-reader/releases/latest/download/folio-reader.apk>
+2. Open the downloaded `folio-reader.apk`. When Android asks, allow your browser / Files app to **install unknown apps** (Settings → Apps → Special access → Install unknown apps), then tap **Install**.
+3. Open **Folio Reader** from the app drawer. Books and settings are stored on the device.
+
+Notes:
+- The APK wraps the same web app using [Capacitor](https://capacitorjs.com) (app id `com.folio.reader`). It runs from the origin `https://localhost`; the Cloudflare proxy (`proxy/wrangler.toml`, `ALLOW_ORIGIN`) allows that origin alongside the GitHub Pages one.
+- **Google sign-in / Drive sync will not work in the APK until you set your own OAuth client.** Google rejects sign-in from the `https://localhost` origin unless it is listed on your OAuth Web client (add `https://localhost` under *Authorized JavaScript origins*, then set the Client ID in `config.js` or in Settings). The GIS popup flow may still be limited inside an Android WebView, so use the Files-app import for Drive books meanwhile.
+- The APK is not updated automatically; install a newer release over the old one (same signing key) to upgrade.
+
+### Building the APK yourself
+
+Needs JDK 17, the Android SDK (platform 34, build-tools 34.0.0) and Node.
+
+```bash
+cd android-app
+npm install
+npm run sync            # copies the web files into www/ and syncs them into android/
+cd android
+echo "sdk.dir=/path/to/android-sdk" > local.properties
+./gradlew assembleRelease   # signed if a keystore.properties exists (see app/build.gradle), else unsigned
+```
+
+Signing reads `storeFile`, `storePassword`, `keyAlias`, `keyPassword` from `/workspace/folio-keystore/keystore.properties` (override the path with `FOLIO_KEYSTORE_PROPS`). **Keep your keystore backed up and out of git**: if it is lost you cannot publish upgrades that install over existing installs. Build outputs and keystores are git-ignored.
+
 ## Catalogs and CORS
 
 Browsers only let a web page read another site's responses if that site sends CORS headers. What I measured (Oct 2026):

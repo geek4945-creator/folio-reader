@@ -5,5 +5,5 @@ compatibility_date = "2024-09-01"
 [vars]
 # Comma-separated extra hosts (your own Calibre-Web / OPDS server). Default catalogs are already allowed.
 ALLOW_HOSTS = ""
-# Lock CORS to your app's origin once deployed, e.g. "https://you.github.io"
-ALLOW_ORIGIN = "https://geek4945-creator.github.io"
+# Comma-separated allowed origins: the GitHub Pages site plus the Android (Capacitor) app origins
+ALLOW_ORIGIN = "https://geek4945-creator.github.io,https://localhost,http://localhost,capacitor://localhost"
