@@ -48,7 +48,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     assert(after.idx === saved.idx, JSON.stringify({ saved, after })); await close(page); return JSON.stringify({ saved: saved.idx, after: after.idx });
   });
   await step('PDF still opens and has its own paged / scroll controls (PDF follows the same Pages / Scroll choice)', async () => {
-    await open(page, 'Folio Test PDF|Flimsy Test PDF|Test'); await until(() => page.evaluate(() => !!document.querySelector('#viewer canvas, #viewer .pdf-page, #viewer .scroll-mode, #viewer .paged-mode')), 15000, 'pdf');
+    await open(page, '^Folio Test PDF$'); await until(() => page.evaluate(() => !!document.querySelector('#viewer canvas, #viewer .pdf-page, #viewer .scroll-mode, #viewer .paged-mode')), 15000, 'pdf');
     const r = await page.evaluate(() => ({ scroll: document.querySelector('#viewer').classList.contains('scroll-mode'), canvases: document.querySelectorAll('#viewer canvas').length })); assert(r.scroll && r.canvases >= 1, JSON.stringify(r)); await close(page);
   });
   await step('Choosing Pages in the reader is remembered as an explicit choice and sticks across reload', async () => {
