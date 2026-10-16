@@ -34,7 +34,7 @@ export const DEFAULTS = {
   groupSets: true,
   showFinished: true,   // show Finished as its own section in the All view
   chip: 'all',          // selected shelf chip
-  proxyUrl: '',
+  proxyUrl: (typeof window !== 'undefined' && window.FOLIO_CONFIG && window.FOLIO_CONFIG.proxyUrl) || '',
   setSort: 'volume',
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };

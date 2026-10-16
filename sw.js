@@ -1,5 +1,5 @@
 // Offline shell + runtime caching of same-origin assets. Bump VERSION to refresh.
-const VERSION = 'folio-v1';
+const VERSION = 'folio-v2';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app.css', 'vendor/jszip.min.js', 'vendor/epub.min.js',
   'js/app.js', 'js/util.js', 'js/db.js', 'js/settings.js', 'js/store.js', 'js/epubmeta.js', 'js/net.js', 'js/opds.js', 'js/catalogs.js',
   'js/library.js', 'js/reader.js', 'js/dragsort.js', 'js/google.js', 'js/drive.js', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
