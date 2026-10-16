@@ -49,7 +49,7 @@ const syncNow = (page, force = false) => page.evaluate(async (force) => { const 
     for (const o of [{ title: 'The Test Odyssey', author: 'Ada Writer' }, { title: 'Mystery Tome' }, { title: 'Wrong Match', author: 'Real Author', language: 'en', description: 'Has one', date: '2000' }, { title: 'Zzz No Hits', author: 'Nobody Here' },
       { title: 'Edited Book', author: 'Eddie Tor', description: 'Original blurb' }, { title: 'Saga Part Two', author: 'Sage Teller' }, { title: 'Isbn Book', author: 'Isbn Person', identifier: 'urn:isbn:9780306406157', language: 'en' }])
       await A.evaluate((o) => window.__mk(o), o);
-    await A.evaluate(async () => { const f = new File([await (await fetch('/tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); const r = await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); if (!r.ok.length) throw new Error(JSON.stringify(r.errs)); });
+    await A.evaluate(async () => { const f = new File([await (await fetch('./tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); const r = await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); if (!r.ok.length) throw new Error(JSON.stringify(r.errs)); });
     const bs = await dbAll(A, 'books'); assert(bs.length === 7 && S.log.ol.length === 0 && S.log.gb.length === 0, `books ${bs.length}, lookups ${S.log.ol.length}`);
     const a = (await dbAll(A, 'audiobooks'))[0]; assert(a.title === 'Ogg Tone' && a.author === 'Ogg Artist' && !a.description && a.coverSource === 'file', JSON.stringify({ t: a.title, a: a.author, s: a.coverSource }));
     return '7 books + "Ogg Tone"';
@@ -166,7 +166,7 @@ const syncNow = (page, force = false) => page.evaluate(async (force) => { const 
     assert(ed.description === 'My own notes' && ed.userSet.description === true && ed.hasCover, 'user-set description did not restore');
     const pend = await B.evaluate(() => JSON.parse(localStorage.getItem('folio.pendingMeta') || '{}')); const pk = Object.keys(pend).find((k) => /Mystery/.test(k)); assert(pk && pend[pk].author.v === 'Zed Edited', JSON.stringify(Object.keys(pend)));
     await B.evaluate(() => window.__mk({ title: 'Mystery Tome' })); const my = await book(B, 'Mystery Tome'); assert(my.author === 'Zed Edited' && my.userSet.author === true, JSON.stringify({ a: my.author, u: my.userSet }));
-    await B.evaluate(async () => { const f = new File([await (await fetch('/tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); });
+    await B.evaluate(async () => { const f = new File([await (await fetch('./tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); });
     const og = await book(B, 'Ogg Tone', 'audiobooks'); assert(og.description === 'Mine, not Google’s' && og.userSet.description === true, JSON.stringify({ d: og.description })); await syncNow(B);
     const og2 = await book(B, 'Ogg Tone', 'audiobooks'); assert(og2.hasCover && og2.coverSource === 'enrich', 'audiobook cover did not restore'); return 'description, year, language, cover, user flags restored; pending applied at import';
   });
@@ -186,7 +186,7 @@ const syncNow = (page, force = false) => page.evaluate(async (force) => { const 
 
   await step('Tombstones + cover GC: deleting items drops their synced metadata; orphaned covers are deleted only once older than an hour', async () => {
     // a unique custom cover on Wrong Match
-    const wm = await book(A, 'Wrong Match'); await A.evaluate(async (id) => { const C = await import('/js/covers.js'); const r = await fetch('/tests/fixtures/img/big.jpg'); await C.setUserCover('book', id, await C.resizeCover(await r.blob())); }, wm.id); await syncNow(A);
+    const wm = await book(A, 'Wrong Match'); await A.evaluate(async (id) => { const C = await import('/js/covers.js'); const r = await fetch('./tests/fixtures/img/big.jpg'); await C.setUserCover('book', id, await C.resizeCover(await r.blob())); }, wm.id); await syncNow(A);
     const cid = (await book(A, 'Wrong Match')).coverId; assert(cid && S.cloud.covers.has(`cover-${cid}.jpg`), 'unique cover not uploaded');
     await A.evaluate(async (id) => (await import('/js/store.js')).deleteBooks([id]), wm.id); const og = await book(A, 'Ogg Tone', 'audiobooks'); await A.evaluate(async (id) => (await import('/js/audiostore.js')).deleteAudiobooks([id]), og.id);
     await A.evaluate(async () => { const S2 = await import('/js/store.js'); const b = (await S2.getBooks()).find((x) => x.title === 'Saga Part Two'); await S2.deleteBooks([b.id]); });

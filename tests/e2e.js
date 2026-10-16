@@ -268,7 +268,7 @@ const frameInfo = (page) => page.evaluate(() => { const f = document.querySelect
 
   await step('Drag & drop an .epub onto the window imports it (Files / desktop)', async () => {
     const before = await page.$$eval('.tile', (t) => t.length); const n0 = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('folio-reader'); r.onsuccess = () => { const c = r.result.transaction('books').objectStore('books').count(); c.onsuccess = () => res(c.result); }; }));
-    await page.evaluate(async () => { const b = await (await fetch('/tests/fixtures/saga-3.epub')).blob(); const f = new File([b], 'dropped-saga-3.epub', { type: 'application/epub+zip' }); const dt = new DataTransfer(); dt.items.add(f); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+    await page.evaluate(async () => { const b = await (await fetch('./tests/fixtures/saga-3.epub')).blob(); const f = new File([b], 'dropped-saga-3.epub', { type: 'application/epub+zip' }); const dt = new DataTransfer(); dt.items.add(f); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
     await sleep(1500); const n1 = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('folio-reader'); r.onsuccess = () => { const c = r.result.transaction('books').objectStore('books').count(); c.onsuccess = () => res(c.result); }; }));
     // saga-3 is already in the library (same identifier) so this must be rejected as a duplicate, not crash
     const toast = await page.$eval('#toast', (e) => e.innerText); assert(n1 === n0, 'duplicate imported: ' + n0 + '→' + n1); return 'duplicate correctly rejected (toast: ' + toast.slice(0, 60) + ')';

@@ -33,7 +33,7 @@ async function applyCrop(page, { x, zoom, keep } = {}) {
   const A = await mk(await browser.createBrowserContext(), { login: true });
   const seed = async (p) => { for (const o of [{ title: 'Cover Book', author: 'Cora Author', cover: true }, { title: 'Plain Book', author: 'Pat Plain' }, { title: 'The Test Odyssey', author: 'Ada Writer' }]) await p.evaluate((o) => window.__mk(o), o); await p.evaluate(() => window.__folio.show('library')); await sleep(500); };
   await seed(A);
-  await A.evaluate(async () => { const f = new File([await (await fetch('/tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); });
+  await A.evaluate(async () => { const f = new File([await (await fetch('./tests/fixtures/audio/tone.ogg')).arrayBuffer()], 'tone.ogg', { type: 'audio/ogg' }); await (await import('/js/audiostore.js')).importAudioFiles([f], 'each'); });
   let fileCover;
 
   await step('Crop geometry (pure): frame is 2:3, zoom halves the window, centre / edges map to the right pixels', async () => {
@@ -119,7 +119,7 @@ async function applyCrop(page, { x, zoom, keep } = {}) {
     assert(it.coverSource === 'user' && it.userSet.cover === true && it.coverId === e.id && it.cover.w === 400 && it.cover.size === a.cover.size, JSON.stringify({ s: it.coverSource, id: it.coverId, r2 })); return 'restored on B (' + it.cover.size + ' bytes)';
   });
   await step('Sync conflict: a user cover beats a newer automatic cover from another device', async () => {
-    await B.evaluate(async () => { const { DB } = await import('/js/db.js'); const C = await import('/js/covers.js'); const b = (await DB.all('books')).find((x) => x.title === 'Plain Book'); const blob = await C.resizeCover(await (await fetch('/tests/fixtures/img/cover-b.jpg')).blob());
+    await B.evaluate(async () => { const { DB } = await import('/js/db.js'); const C = await import('/js/covers.js'); const b = (await DB.all('books')).find((x) => x.title === 'Plain Book'); const blob = await C.resizeCover(await (await fetch('./tests/fixtures/img/cover-b.jpg')).blob());
       Object.assign(b, { coverBlob: blob, coverSource: 'enrich', coverId: null, userSet: {}, metaAt: { cover: Date.now() + 120000 }, _noTouch: true }); await DB.put('books', b); localStorage.removeItem('folio.sync.state'); /* B has not seen A's user cover yet */ });
     const aBefore = await getItem(A, 'Plain Book'); await syncNow(B); await syncNow(A); const a = await getItem(A, 'Plain Book'), b = await getItem(B, 'Plain Book');
     assert(a.coverId === aBefore.coverId && a.coverSource === 'user' && b.coverSource === 'user' && b.coverId === aBefore.coverId, JSON.stringify({ a: a.coverSource, b: b.coverSource, aid: a.coverId, bid: b.coverId, orig: aBefore.coverId })); return 'user cover kept on both';
