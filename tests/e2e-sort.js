@@ -13,7 +13,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
   const titles = () => page.$$eval('.tile .t', (e) => e.map((x) => x.innerText));
   const show = async () => { await page.evaluate(() => window.__folio.show('library')); await sleep(500); };
   const sortState = () => page.evaluate(() => ({ field: document.querySelector('#sort-sel').value, dir: document.querySelector('#sort-dir')?.dataset.dir }));
-  const chip = async (id) => { await page.evaluate((id) => document.querySelector(`[data-chip="${id}"]`).click(), id); await sleep(500); };
+  const chip = async (id) => { await page.waitForSelector(`[data-chip="${id}"]`, { timeout: 15000 }); await page.evaluate((id) => document.querySelector(`[data-chip="${id}"]`).click(), id); await sleep(500); };   // a render in flight has emptied the view for a moment: wait for the chip
   const patchBooks = (fn) => page.evaluate(async (src) => { const S = await import('./js/store.js'); const { DB } = await import('./js/db.js'); const f = eval(src); for (const b of await S.getBooks()) { f(b); await DB.put('books', b); } }, fn.toString());
 
   await step('Import mixed library: EPUBs, MOBI, AZW3, PDF', async () => {
@@ -62,7 +62,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await page.click('#sort-dir'); await sleep(300); t = await titles(); assert(t.join('|') === 'Saga Book Two|Saga Book One', 'reading desc ' + t.join('|'));
     await chip('want'); s = await sortState(); assert(s.field === 'recent', 'want kept default ' + JSON.stringify(s));
     await chip('all'); s = await sortState(); assert(s.field === 'type', 'all kept type ' + JSON.stringify(s));
-    await page.evaluate(() => document.querySelector('[data-chip]:not([data-chip=all]):not([data-chip=reading]):not([data-chip=want]):not([data-chip=finished])').click()); await sleep(500);
+    await page.waitForSelector('[data-chip]:not([data-chip=all]):not([data-chip=reading]):not([data-chip=want]):not([data-chip=finished])', { timeout: 15000 }); await page.evaluate(() => document.querySelector('[data-chip]:not([data-chip=all]):not([data-chip=reading]):not([data-chip=want]):not([data-chip=finished])').click()); await sleep(500);
     s = await sortState(); assert(s.field === 'recent', 'custom shelf default'); await page.select('#sort-sel', 'author'); await sleep(300);
     await chip('reading'); s = await sortState(); assert(s.field === 'title' && s.dir === 'desc', 'reading still title desc ' + JSON.stringify(s));
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('folio.settings')).sorts); assert(stored['shelf:all'].field === 'type' && stored['shelf:reading'].dir === 'desc' && Object.keys(stored).length === 3, JSON.stringify(stored)); return JSON.stringify(stored);
