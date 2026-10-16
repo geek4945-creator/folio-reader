@@ -143,6 +143,7 @@ export function attachWordHold(target, host) {
   // while a hold is pending (and just after it fired) no native text selection / callout may start; the release must not turn the page or toggle the toolbars
   const quiet = (e) => { if (st || Date.now() < armedUntil) e.preventDefault(); };
   for (const t of ['selectstart', 'contextmenu']) target.addEventListener(t, quiet, true);
+  doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bubble) { e.preventDefault(); closeBubble(); } }, true);
   target.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; } }, true);
 }
 

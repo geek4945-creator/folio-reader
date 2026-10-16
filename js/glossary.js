@@ -139,6 +139,7 @@ function dedupe(list) { const seen = new Set(); return list.filter((x) => { cons
 /* ------------------------------------------------------------------ extraction from glossary / appendix pages */
 const PAGE_RE = /\b(glossary|glossaries|appendix|appendices|dramatis personae|cast of characters|list of characters|characters|lexicon|vocabulary|terms|gazetteer|who'?s who|people and places|notes on (the )?(language|names|terms)|names and terms)\b/i;
 export const looksLikeGlossaryTitle = (t) => PAGE_RE.test(String(t || ''));
+const tag = (e) => (e.localName || e.tagName || '').toUpperCase();   // XHTML sections are XML documents: tag names keep their (lower) case
 const textOf = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
 const LEAD = 'b,strong,i,em,dfn,span,u,a';
 function leadSplit(p) {
@@ -154,12 +155,12 @@ function leadSplit(p) {
 /** Candidate entries found in a parsed document (or element): definition lists, two-column tables, and "Term – definition" paragraphs / list items. */
 export function extractFromDoc(root) {
   const out = []; const scope = root.body || root; if (!scope || !scope.querySelectorAll) return out;
-  for (const dl of scope.querySelectorAll('dl')) { let t = null; for (const n of dl.children) { if (n.tagName === 'DT') t = textOf(n); else if (n.tagName === 'DD' && t) { out.push({ term: t, def: textOf(n), src: 'auto' }); } } }
-  for (const tr of scope.querySelectorAll('tr')) { const c = [...tr.children].filter((x) => /^T[DH]$/.test(x.tagName)); if (c.length >= 2 && tr.querySelector('td')) { const t = textOf(c[0]), d = textOf(c[1]); if (t && d && t.length <= 80) out.push({ term: t, def: d, src: 'auto' }); } }
+  for (const dl of scope.querySelectorAll('dl')) { let t = null; for (const n of dl.children) { if (tag(n) === 'DT') t = textOf(n); else if (tag(n) === 'DD' && t) { out.push({ term: t, def: textOf(n), src: 'auto' }); } } }
+  for (const tr of scope.querySelectorAll('tr')) { const c = [...tr.children].filter((x) => /^T[DH]$/.test(tag(x))); if (c.length >= 2 && tr.querySelector('td')) { const t = textOf(c[0]), d = textOf(c[1]); if (t && d && t.length <= 80) out.push({ term: t, def: d, src: 'auto' }); } }
   for (const el of scope.querySelectorAll('p, li, div')) {
-    if (el.closest('dl, table')) continue; if (el.tagName === 'DIV' && el.querySelector('p, li, div, table, dl')) continue; if (el.tagName === 'LI' && el.querySelector('li')) continue;
+    if (el.closest('dl, table')) continue; if (tag(el) === 'DIV' && el.querySelector('p, li, div, table, dl')) continue; if (tag(el) === 'LI' && el.querySelector('li')) continue;
     if (el.querySelector('br') && el.children.length > 1) {   // several entries in one paragraph, separated by <br>
-      const lines = el.innerHTML.split(/<br\s*\/?>/i); let any = false;
+      const lines = el.innerHTML.split(/<br\b[^>]*>/i); let any = false;
       for (const ln of lines) { const d = document.createElement('div'); d.innerHTML = ln; const p = leadSplit(d); if (p) { out.push({ ...p, src: 'auto' }); any = true; } }
       if (any) continue;
     }
@@ -180,7 +181,7 @@ export async function extractFromSection(epub, href) {
   const [file, frag] = String(href).split('#'); const sec = epub.spine.get(file) || epub.spine.get(href); if (!sec) return [];
   try {
     const el = await sec.load(epub.load.bind(epub)); const doc = el.ownerDocument || el; let root = doc;
-    if (frag) { const a = doc.getElementById(frag); if (a) { const box = doc.createElement('div'); let n = a.closest('h1,h2,h3,h4,h5,h6,p,div,section') || a; const start = n; let node = start.nextElementSibling; box.append(start.cloneNode(true)); while (node && !/^H[1-3]$/.test(node.tagName)) { box.append(node.cloneNode(true)); node = node.nextElementSibling; } root = box; } }
+    if (frag) { const a = doc.getElementById(frag); if (a) { const box = doc.createElement('div'); let n = a.closest('h1,h2,h3,h4,h5,h6,p,div,section') || a; const start = n; let node = start.nextElementSibling; box.append(start.cloneNode(true)); while (node && !/^H[1-3]$/.test(tag(node))) { box.append(node.cloneNode(true)); node = node.nextElementSibling; } root = box; } }
     return extractFromDoc(root);
   } finally { try { sec.unload(); } catch { /* ignore */ } }
 }

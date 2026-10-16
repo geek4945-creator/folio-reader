@@ -74,6 +74,11 @@ async function install(page, S) {
     if (/^https:\/\/cors\.example\.test\/wide\.png/.test(target)) { S.log.img.push(target); return img('wide.png', 'image/png'); }
     if (/^https:\/\/cors\.example\.test\/page\.html/.test(target)) return req.respond({ status: 200, headers: CORS, contentType: 'text/html', body: '<html><body>not an image</body></html>' });
     if (/^https:\/\/customsearch\.googleapis\.com|googleapis\.com\/customsearch\/v1/.test(target)) { S.log.cse.push(target); return json({ items: [{ link: 'https://cors.example.test/wide.png', image: { thumbnailLink: 'https://cors.example.test/wide.png' } }] }); }
+    if (/^https:\/\/(api\.dictionaryapi\.dev|en\.wiktionary\.org\/api\/rest_v1|api\.datamuse\.com)\//.test(u)) {   // v0.5.6 dictionary sources: S.dict.reply(url) → { status, body }
+      if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers: CORS });
+      const d = S.dict || { calls: [], reply: () => ({ status: 404, body: {} }) }; (d.calls = d.calls || []).push(u); const r = (d.reply ? d.reply(u) : null) || { status: 404, body: {} };
+      return req.respond({ status: r.status, headers: CORS, contentType: 'application/json', body: JSON.stringify(r.body) });
+    }
     if (!/googleapis\.com/.test(u)) return req.continue();
     if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers: CORS });
     S.cloud.auth.push(req.headers().authorization);

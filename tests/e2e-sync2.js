@@ -7,7 +7,7 @@ const APP = process.env.URL || 'http://localhost:8765/index.html'; const sleep =
 async function step(name, fn) { try { const v = await fn(); results.push([true, name]); console.log('PASS', name, v === undefined ? '' : '→ ' + v); } catch (e) { results.push([false, name, e.message]); console.log('FAIL', name, '→', e.message); } }
 const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
 const S = makeState(); const C = S.cloud; const PFX = /flimsy/i.test(APP) ? 'flimsy' : 'folio';
-const F = { lib: PFX + '-sync.json', pos: PFX + '-positions.json', set: PFX + '-settings.json', dev: PFX + '-devices.json' };
+const F = { lib: PFX + '-sync.json', pos: PFX + '-positions.json', set: PFX + '-settings.json', dev: PFX + '-devices.json', gl: PFX + '-glossary.json' };
 
 async function mk(ctx, name, { login = true } = {}) {
   const page = await ctx.newPage(); await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });

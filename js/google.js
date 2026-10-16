@@ -293,6 +293,7 @@ function mergeState(a, b, posFields) {
   st.gAt = {};   // each group of structure (status / shelves / series / name) is last-writer-wins on its own stamp
   for (const [g, d] of Object.entries(GROUPS)) { const w = stGroupAt(b, g) > stGroupAt(a, g) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
   st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+  if (a.addedAt || b.addedAt) st.addedAt = Math.min(...[a.addedAt, b.addedAt].filter(Boolean));   // the same book imported on two devices: one agreed date, so neither device keeps rewriting the file
   const posA = posAtOfState(a), posB = posAtOfState(b);
   const pw = posB > posA ? b : a; if (pw !== ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a)) for (const f of posFields) { if (pw[f] === undefined) delete st[f]; else st[f] = structuredClone(pw[f]); }
   st.posAt = Math.max(posA, posB);
