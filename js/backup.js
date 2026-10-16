@@ -108,11 +108,11 @@ export async function readBackup(file) {
   if (typeof man.version !== 'number' || man.version > FORMAT_VERSION) throw new BackupError('This backup was made by a newer version of the app (format ' + man.version + '). Update the app, then try again.');
   if (!man.snapshot || !Array.isArray(man.books)) throw new BackupError('The backup is incomplete (library data missing).');
   const files = man.books.filter((b) => b.file && zip.has(b.file)).length;
-  return { zip, manifest: man, size: file.size, summary: { app: man.appName || man.app, fromOtherApp: man.app !== APP_ID, createdAt: man.createdAt, books: man.books.length, audiobooks: (man.audiobooks || []).length, shelves: (man.snapshot.shelves || []).length, sets: (man.snapshot.sets || []).length, sources: (man.sources || []).length, bookmarks: Object.values(man.snapshot.bookmarks || {}).reduce((a, l) => a + l.length, 0), links: (man.snapshot.links || []).length, files, settings: Object.keys((man.settings || {}).all || {}).length } };
+  return { zip, manifest: man, size: file.size, summary: { app: man.appName || man.app, fromOtherApp: man.app !== APP_ID, createdAt: man.createdAt, books: man.books.length, audiobooks: (man.audiobooks || []).length, shelves: (man.snapshot.shelves || []).length, sets: (man.snapshot.sets || []).length, sources: (man.sources || []).length, bookmarks: Object.values(man.snapshot.bookmarks || {}).reduce((a, l) => a + l.length, 0), links: (man.snapshot.links || []).length, glossary: (man.snapshot.glossary || []).filter((x) => !x.del && x.kind !== 'meta').length, files, settings: Object.keys((man.settings || {}).all || {}).length } };
 }
 
 /* ---------------------------------------------------------------- undo snapshot */
-const UNDO_STORES = ['books', 'audiobooks', 'sets', 'shelves', 'orders', 'bookmarks', 'links', 'sources'];
+const UNDO_STORES = ['books', 'audiobooks', 'sets', 'shelves', 'orders', 'bookmarks', 'links', 'glossary', 'sources'];
 export async function makeUndo(label) {
   const rec = { id: 'last', at: Date.now(), label: label || '', stores: {}, ls: {} };
   for (const s of UNDO_STORES) rec.stores[s] = await DB.all(s);
@@ -155,11 +155,12 @@ function remapSnapshot(snap, keyMap) {
   snap.books = re(snap.books); snap.bookmarks = re(snap.bookmarks); snap.meta = re(snap.meta);
   snap.loans = Object.fromEntries(Object.entries(snap.loans || {}).map(([k, v]) => [k.startsWith('book:') ? 'book:' + m(k.slice(5)) : k, v]));
   snap.links = (snap.links || []).map((x) => ({ ...x, bookKey: m(x.bookKey) }));
+  snap.glossary = (snap.glossary || []).map((x) => ({ ...x, bookKey: m(x.bookKey) }));
   snap.orders = (snap.orders || []).map((o) => ({ ...o, ids: o.ids.map((x) => (x.startsWith('b:') ? 'b:' + m(x.slice(2)) : x)) }));
   snap.tombstones = (snap.tombstones || []).map((t) => (t.t === 'book' ? { ...t, id: m(t.id) } : t));
   return snap;
 }
-const emptySnapshot = () => ({ v: 1, meta: {}, audioMeta: {}, loans: {}, links: [], savedAt: 0, settings: { values: {}, updatedAt: -1 }, shelves: [], sets: [], orders: [], books: {}, bookmarks: {}, tombstones: [] });
+const emptySnapshot = () => ({ v: 1, meta: {}, audioMeta: {}, loans: {}, links: [], savedAt: 0, settings: { values: {}, updatedAt: -1 }, shelves: [], sets: [], orders: [], books: {}, bookmarks: {}, tombstones: [], glossary: [] });
 const AUDIO_STATE = ['position', 'progress', 'status', 'shelves', 'speed', 'lastOpened', 'finishedAt', 'track', 'trackIndex'];
 const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 

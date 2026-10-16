@@ -10,6 +10,8 @@ import { fsButton } from './fullscreen.js';
 import { makeLoading, withTimeout } from './openguard.js';
 import { makeFooter, applyFooterSettings, paintFooter, footerToggles } from './pages.js';
 import { registerOpenCheck } from './positions.js';
+import { attachWordHold, closeBubble } from './wordbubble.js';
+import { openGlossary, openTermEditor } from './glossaryui.js';
 
 let cur = null;
 registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
@@ -39,6 +41,10 @@ export async function openPdf(book, blob, opts = {}) {
   el.replaceChildren(top, viewer, bottom, makeFooter(), loading.el); applyFooterSettings(); paintFooter({});
   cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, textMode: !!book.pdfText, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
   const c = cur;
+  const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
+  attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.textMode && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage'))?.dataset.page || 0),
+    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words') } });   // word lookup works in the Text (reflow) view
+  c.glossaryCtx = gctx;
   try {
     loading.stage('Reading the file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (cur !== c) return;
     loading.stage('Loading the PDF…'); c.pdf = await withTimeout(openPdfDocument(buf), 25000, 'loading the PDF'); if (cur !== c) return;
@@ -295,6 +301,7 @@ export function showSettings() {
         h('div', { class: 'row-ctl' }, h('label', null, 'Layout')),
         h('div', { class: 'seg wide' }, ['paginated', 'scrolled'].map((f) => h('button', { class: settings.get('flow') === f ? 'on' : '', 'data-flow': f, onclick: () => { settings.set({ flow: f }); redo(); draw(); } }, f === 'paginated' ? 'Pages' : 'Scroll'))));
     }
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Word lookup')), h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'aa-wordlookup', checked: !!settings.get('wordLookup'), onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, c.textMode ? 'Press and hold a word for its definition' : 'Press and hold a word (Text view only)')), h('button', { class: 'btn block', id: 'aa-glossary', onclick: () => { w.close(); openGlossary(c.glossaryCtx()); } }, 'Words & glossary'));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Theme')),
       h('div', { class: 'themes' }, Object.entries(THEMES).map(([k, t]) => h('button', { class: 'swatch' + (settings.get('theme') === k ? ' on' : ''), 'data-theme-pick': k, style: { background: t.bg, color: t.fg, borderColor: t.accent }, onclick: () => { settings.set({ theme: k }); redo(); } }, 'Aa', h('small', null, t.name)))));
     if (!c.textMode && themeNow().dark) wrap.append(h('label', { class: 'row-ctl' }, h('span', null, 'Invert page colors (dark mode)'), h('input', { type: 'checkbox', id: 'pdf-invert', checked: settings.get('pdfInvert') !== false, onchange: (e) => { settings.set({ pdfInvert: e.target.checked }); styleViewer(c); } })));
@@ -307,7 +314,7 @@ settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.text
 
 /* ---------- close ---------- */
 export async function closePdf() {
-  const c = cur; if (!c) return;
+  const c = cur; if (!c) return; closeBubble();
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
   cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }

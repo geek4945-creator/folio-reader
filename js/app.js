@@ -22,6 +22,9 @@ import { initViewport } from './viewport.js';
 import { initNav, noteTab } from './nav.js';
 import { PINCH_LABELS } from './pinch.js';
 import { initHold, holdSeconds, HOLD_MIN, HOLD_MAX } from './hold.js';
+import { wordHoldSeconds, HOLD_MIN as WHOLD_MIN, HOLD_MAX as WHOLD_MAX, highlightSupported } from './wordbubble.js';
+import { openAllWords } from './glossaryui.js';
+import * as Dict from './dict.js';
 import { pairSettingsSection, pairNotify } from './findplace.js';
 import { startAutoPair } from './links.js';
 import { handleSharedCover } from './covers.js';
@@ -88,6 +91,16 @@ function renderSettings() {
       (() => { const out = h('span', { class: 'muted', id: 'hold-sec-val' }, holdSeconds().toFixed(1) + ' s');
         const r = h('input', { type: 'range', id: 'hold-sec', min: HOLD_MIN, max: HOLD_MAX, step: 0.5, value: holdSeconds(), oninput: (e) => { out.textContent = (+e.target.value).toFixed(1) + ' s'; settings.set({ holdSec: +e.target.value }); } });
         return h('div', { class: 'row-ctl' }, h('label', { for: 'hold-sec' }, 'Hold time'), r, out); })()),
+    h('section', { class: 'pad card-sec', id: 'sec-words' }, h('h3', null, 'Word lookup & glossary'),
+      h('p', { class: 'muted small' }, 'In the reader, press and hold a word for its definition (the book’s own glossary is checked first). Save words to the book, keep a glossary per book, and look words up offline once they’ve been seen.'),
+      h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'word-lookup', checked: !!s.wordLookup, onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, 'Press and hold a word to look it up')),
+      (() => { const out = h('span', { class: 'muted', id: 'word-hold-val' }, wordHoldSeconds().toFixed(1) + ' s');
+        const r = h('input', { type: 'range', id: 'word-hold', min: WHOLD_MIN, max: WHOLD_MAX, step: 0.1, value: wordHoldSeconds(), oninput: (e) => { out.textContent = (+e.target.value).toFixed(1) + ' s'; settings.set({ wordHoldSec: +e.target.value }); } });
+        return h('div', { class: 'row-ctl' }, h('label', { for: 'word-hold' }, 'Hold time'), r, out); })(),
+      h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'gl-highlight', checked: !!s.glossaryHighlight, onchange: (e) => settings.set({ glossaryHighlight: e.target.checked }) }), h('span', null, 'Underline glossary terms in the text', h('small', { class: 'muted' }, highlightSupported(window) ? '' : ' — not supported by this browser'))),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', id: 'saved-words-all', onclick: () => openAllWords() }, 'Saved words & glossaries'),
+        h('button', { class: 'btn', id: 'dict-clear', onclick: async () => { const n = await Dict.cacheSize(); await Dict.clearCache(); toast(n ? 'Cleared ' + n + ' saved definition' + (n === 1 ? '' : 's') : 'Nothing to clear'); } }, 'Clear offline definitions'))),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Library sorting'),
       h('p', { class: 'muted small' }, 'Each shelf (All, Currently Reading, Want to Read, Finished, your own shelves) and each set remembers its own sort. This default applies to any that don’t have one yet.'),
       h('div', { class: 'row-ctl' }, h('label', null, 'Default sort'),

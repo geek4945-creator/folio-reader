@@ -174,10 +174,11 @@ async function drive(path, init = {}, retry = true, tried = 0) {
   return r;
 }
 /* ---- sync files: one small file per domain, so a change in one place rewrites only that file ---- */
-const FILES = { library: 'folio-sync.json', settings: 'folio-settings.json', positions: 'folio-positions.json', devices: 'folio-devices.json' };
+const FILES = { library: 'folio-sync.json', settings: 'folio-settings.json', positions: 'folio-positions.json', devices: 'folio-devices.json', glossary: 'folio-glossary.json' };
 export const SYNC_DOMAINS = [
   { id: 'positions', name: 'Reading positions', hint: 'where you are in every book and audiobook, finished / reading status' },
   { id: 'library', name: 'Library', hint: 'shelves, series, order, metadata & covers, per-book reading settings, Borrowed, audiobook ↔ ebook links' },
+  { id: 'glossary', name: 'Glossaries & saved words', hint: 'each book’s glossary entries, saved dictionary words and the series-sharing option' },
   { id: 'settings', name: 'Settings', hint: 'theme, text size, margins, page flow, sorting and the rest (each one on its own)' },
 ];
 const lsj = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d; } catch { return d; } };
@@ -249,7 +250,7 @@ function applySettingsPart(part, ctx) {
 /* ---------- snapshot / merge / apply ---------- */
 const putQuiet = (store) => (it) => DB.put(store, { ...it, _noTouch: true });
 export async function buildSnapshot() {
-  const [books, sets, shelves, orders, bms, audio, links] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks(), DB.all('links')]);
+  const [books, sets, shelves, orders, bms, audio, links, gloss] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks(), DB.all('links'), DB.all('glossary')]);
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
@@ -266,6 +267,7 @@ export async function buildSnapshot() {
   for (const a of audio) if (a.loanAt) loans['audio:' + (a.syncKey || a.id)] = { b: a.borrowed ? 1 : 0, due: a.dueAt || null, src: a.loanSource || '', at: a.loanAt };
   return { meta, audioMeta, audioState, v: 1, loans,
     links: links.map((x) => ({ id: x.id, bookKey: x.bookKey, audioKey: x.audioKey, state: x.state, by: x.by || 'user', score: x.score ?? null, bookTitle: x.bookTitle || '', audioTitle: x.audioTitle || '', createdAt: x.createdAt || 0, updatedAt: x.updatedAt || x.createdAt || 0 })),
+    glossary: gloss.map((x) => ({ ...x, updatedAt: x.updatedAt || x.at || 0 })).sort((a, b) => (a.id < b.id ? -1 : 1)),
     savedAt: Date.now(), settings: buildSettingsPart(),
     shelves: shelves.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
     sets: sets.map((x) => ({ id: x.id, name: x.name, auto: !!x.auto, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
@@ -338,6 +340,7 @@ export function mergeSnapshots(local, remote) {
   const deadMeta = (type) => (k, at) => dead(type, k, at);
   out.meta = mergeMetaMaps(L.meta, R.meta, (k, at) => deadBooks.has(k) || dead('book', k, at));
   out.audioMeta = mergeMetaMaps(L.audioMeta, R.audioMeta, deadMeta('audio'));
+  out.glossary = mergeList('glossary', (x) => x.id).filter((x) => !x.del || Date.now() - (x.updatedAt || 0) < 90 * 864e5).sort((a, b) => (a.id < b.id ? -1 : 1));   // v0.5.6: glossary terms / saved words / share flags (deletions are small tombstones)
   out.links = mergeList('links', (x) => x.id);   // audiobook ↔ ebook links + remembered rejections (older snapshots have none)
   out.loans = {}; for (const k of new Set([...Object.keys(L.loans || {}), ...Object.keys(R.loans || {})])) { const a = (L.loans || {})[k], b = (R.loans || {})[k]; out.loans[k] = !a ? b : !b ? a : (b.at || 0) > (a.at || 0) ? b : a; }
   out.idmap = [...idmap.entries()];
@@ -355,7 +358,7 @@ export async function applySnapshot(m, ctx = {}) {
   for (const x of m.shelves) await DB.put('shelves', { ...x, ...touch });
   for (const s of sets) if (!m.sets.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('sets', s.id);
   for (const s of shelves) if (!m.shelves.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('shelves', s.id);
-  const doms = { library: true, positions: true, settings: true, ...(ctx.domains || {}) };
+  const doms = { library: true, positions: true, settings: true, glossary: true, ...(ctx.domains || {}) };
   if (doms.settings) applySettingsPart(m.settings, ctx);
   const keyToId = new Map(); const pending = {}; let appliedBooks = 0, deletedBooks = 0, posApplied = 0, posConflicts = 0;
   for (const b of books) {
@@ -382,6 +385,11 @@ export async function applySnapshot(m, ctx = {}) {
   const metaRes = await applyMeta(m, keyToId, ctx);
   for (const x of m.links || []) { const cur = await DB.get('links', x.id); if (!cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) await DB.put('links', { ...x, _noTouch: true }); }
   await applyLoans(m.loans || {});
+  if (doms.glossary) {   // v0.5.6: glossary terms, saved words, share flags (a Replace restore also drops what the backup doesn't have)
+    const have = new Map((await DB.all('glossary')).map((x) => [x.id, x])); const want = new Set((m.glossary || []).map((x) => x.id));
+    for (const x of m.glossary || []) { const cur = have.get(x.id); if (ctx.force || !cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) await DB.put('glossary', { ...x, _noTouch: true }); }
+    if (ctx.force && !ctx.sync) for (const id of have.keys()) if (!want.has(id)) await DB.del('glossary', id);
+  }
   // bookmarks
   const have = new Map(bms.map((x) => [x.id, x]));
   const pendBm = {};
@@ -491,17 +499,19 @@ export function splitSnapshot(snap) {
   const books = {}, bpos = {}, audio = {}, apos = {};
   for (const [k, st] of Object.entries(snap.books)) { if (st.title !== undefined) books[k] = omit(st, POS_STATE); bpos[k] = pick(st, POS_STATE); }
   for (const [k, st] of Object.entries(snap.audioState || {})) { if (st.title !== undefined) audio[k] = omit(st, AUDIO_POS_STATE); apos[k] = pick(st, AUDIO_POS_STATE); }
-  const { settings: _s, ...lib } = snap;
+  const { settings: _s, glossary: gl, ...lib } = snap;
   return {
     library: { ...lib, books, audioState: audio, domain: 'library' },
     positions: { v: 1, domain: 'positions', savedAt: snap.savedAt, books: bpos, audio: apos },
     settings: { v: 1, domain: 'settings', savedAt: snap.savedAt, flat: snap.settings.flat, updatedAt: snap.settings.updatedAt },
+    glossary: { v: 1, domain: 'glossary', savedAt: snap.savedAt, glossary: gl || [] },
   };
 }
-const EMPTY_LIB = () => ({ v: 1, shelves: [], sets: [], orders: [], books: {}, bookmarks: {}, tombstones: [], meta: {}, audioMeta: {}, links: [], loans: {}, audioState: {}, settings: { flat: {}, updatedAt: 0 } });
-export function joinParts({ library, positions, settings }) {
+const EMPTY_LIB = () => ({ v: 1, shelves: [], sets: [], orders: [], books: {}, bookmarks: {}, tombstones: [], meta: {}, audioMeta: {}, links: [], loans: {}, audioState: {}, glossary: [], settings: { flat: {}, updatedAt: 0 } });
+export function joinParts({ library, positions, settings, glossary }) {
   const out = { ...EMPTY_LIB(), ...(library || {}) }; out.books = { ...(out.books || {}) }; out.audioState = { ...(out.audioState || {}) };
   out.settings = settings ? { flat: settings.flat || {}, updatedAt: settings.updatedAt || 0 } : (library && library.settings) || { flat: {}, updatedAt: 0 };   // a v0.5.4 library file still carries the settings
+  out.glossary = (glossary && glossary.glossary) || [];
   if (positions) {
     for (const [k, p] of Object.entries(positions.books || {})) out.books[k] = { ...(out.books[k] || {}), ...p };
     for (const [k, p] of Object.entries(positions.audio || {})) out.audioState[k] = { ...(out.audioState[k] || {}), ...p };
@@ -552,11 +562,11 @@ async function doSync(quiet, only, force) {
     const res = { domains: mode, uploaded: [], downloaded: [] };
     if (doms.every((d) => mode[d] === 'skip')) { finishOk(st, res, files, only); return res; }
     const read = {}; await Promise.all(doms.filter((d) => mode[d] === 'merge' && files.get(FILES[d])).map(async (d) => { read[d] = await readFile(files.get(FILES[d])); res.downloaded.push(d); }));
-    const remote = joinParts({ library: read.library, positions: read.positions, settings: read.settings });
+    const remote = joinParts({ library: read.library, positions: read.positions, settings: read.settings, glossary: read.glossary });
     const merged = mergeSnapshots(local, remote);
     let covers = null; if (doms.includes('library') && mode.library !== 'skip') { try { covers = await listCoverFiles(); } catch { /* covers are best-effort: metadata still syncs */ } }
     const getCover = async (cid) => { const f = covers?.get(`cover-${cid}.jpg`); if (!f) return null; try { return await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 1 })).blob(); } catch { return null; } };
-    Object.assign(res, await applySnapshot(merged, { getCover, sync: true, domains: { library: mode.library === 'merge', positions: mode.positions === 'merge' || (mode.library === 'merge' && domainEnabled('positions') && !files.get(FILES.positions)), settings: mode.settings === 'merge' || (mode.library === 'merge' && domainEnabled('settings') && !files.get(FILES.settings) && !!read.library?.settings) } }));   // a v0.5.4 library file still holds positions + settings
+    Object.assign(res, await applySnapshot(merged, { getCover, sync: true, domains: { glossary: mode.glossary === 'merge', library: mode.library === 'merge', positions: mode.positions === 'merge' || (mode.library === 'merge' && domainEnabled('positions') && !files.get(FILES.positions)), settings: mode.settings === 'merge' || (mode.library === 'merge' && domainEnabled('settings') && !files.get(FILES.settings) && !!read.library?.settings) } }));   // a v0.5.4 library file still holds positions + settings
     const finalSnap = await buildSnapshot();   // re-read so ids/timestamps are consistent
     const toPush = mergeSnapshots(finalSnap, merged); const pp = splitSnapshot(toPush), fp = splitSnapshot(finalSnap);
     if (covers) {
