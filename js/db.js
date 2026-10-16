@@ -2,9 +2,9 @@
 // Stores: books (metadata + cover blob), files (epub blobs), bookmarks, sets (series),
 // shelves (custom), orders (manual order per context), sources (catalog sources).
 const NAME = 'folio-reader';
-const VERSION = 5;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only)
+const VERSION = 6;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only); v6: glossary (per-book glossary entries + saved words, synced) + dict (offline dictionary cache, device-only)
 let dbp;
-const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders', 'links']);
+const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders', 'links', 'glossary']);
 import { deviceId, deviceName } from './device.js';
 
 /* Fine-grained change stamps for cross-device sync. A book / audiobook has three independent kinds of change:
@@ -53,6 +53,8 @@ function open() {
       mk('audiobooks', { keyPath: 'id' }); mk('audiofiles', { keyPath: 'id' });   // audiobooks: metadata + cover; audiofiles: one blob per track ('<bookId>:<n>'), device-only (never synced)
       mk('links', { keyPath: 'id' });   // audiobook ↔ ebook links + remembered rejections (synced; see links.js)
       mk('undo', { keyPath: 'id' });   // one record: the library state before the last backup import (Undo)
+      mk('glossary', { keyPath: 'id' }, (o) => o.createIndex('bookKey', 'bookKey'));   // v0.5.6: glossary terms, saved words and per-book share flags (synced; see glossary.js)
+      mk('dict', { keyPath: 'word' });   // v0.5.6: offline cache of dictionary lookups (device-only)
       mk('pagecache', { keyPath: 'key' });   // not synced: {key: '<bookId>|chars' | '<bookId>|k' | '<bookId>|cal|<layout>', bookId, v}
     };
     req.onsuccess = () => { const db = req.result; db.onversionchange = () => { try { db.close(); } catch { /* ignore */ } dbp = null; }; resolve(db); };   // let a newer version of the app (another tab / window) upgrade the database instead of blocking it
