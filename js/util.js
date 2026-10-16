@@ -1,0 +1,92 @@
+// DOM helpers, toast, bottom sheets, dialogs.
+export function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+    else if (k === 'dataset') Object.assign(el.dataset, v);
+    else if (k === 'html') el.innerHTML = v;
+    else if (v === true) el.setAttribute(k, '');
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+export const $ = (s, r = document) => r.querySelector(s);
+export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+let toastTimer;
+export function toast(msg, ms = 2600) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+export function debounce(fn, ms) {
+  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+export function hashHue(s) {
+  let x = 0; for (const c of s) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360;
+}
+
+export function fmtPct(p) { return Math.round((p || 0) * 100) + '%'; }
+
+/** Show a bottom sheet. build(close) returns an element/array. Returns {close}. */
+export function sheet(title, build, opts = {}) {
+  const ov = $('#overlay');
+  const wrap = h('div', { class: 'sheet-wrap' + (opts.noDim ? ' nodim' : ''), onclick: (e) => { if (e.target === wrap) close(); } });
+  const box = h('div', { class: 'sheet' + (opts.tall ? ' tall' : '') , role: 'dialog', 'aria-label': title });
+  const close = () => { wrap.remove(); if (!ov.children.length) ov.hidden = true; opts.onClose && opts.onClose(); };
+  box.append(h('div', { class: 'sheet-head' },
+    h('strong', null, title), h('button', { class: 'btn-text', onclick: close }, opts.closeLabel || 'Done')));
+  const body = h('div', { class: 'sheet-body' });
+  body.append(...[].concat(build(close)));
+  box.append(body); wrap.append(box); ov.append(wrap); ov.hidden = false;
+  return { close, body };
+}
+
+export function confirmDlg(title, message, okLabel = 'OK', danger = false) {
+  return new Promise((resolve) => {
+    let done = false;
+    const s = sheet(title, (close) => [
+      h('p', { class: 'muted' }, message),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', onclick: () => { done = true; close(); resolve(false); } }, 'Cancel'),
+        h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => { done = true; close(); resolve(true); } }, okLabel)),
+    ], { closeLabel: 'Cancel', onClose: () => { if (!done) resolve(false); } });
+    return s;
+  });
+}
+
+export function promptDlg(title, value = '', placeholder = '', okLabel = 'Save') {
+  return new Promise((resolve) => {
+    let done = false;
+    const input = h('input', { type: 'text', value, placeholder, class: 'field', autocapitalize: 'words' });
+    sheet(title, (close) => [
+      input,
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', onclick: () => { done = true; close(); resolve(null); } }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: () => { done = true; close(); resolve(input.value.trim() || null); } }, okLabel)),
+    ], { closeLabel: 'Cancel', onClose: () => { if (!done) resolve(null); } });
+    setTimeout(() => input.focus(), 50);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { done = true; $('#overlay .sheet-wrap:last-child')?.remove(); if (!$('#overlay').children.length) $('#overlay').hidden = true; resolve(input.value.trim() || null); } });
+  });
+}
+
+/** Action sheet: items = [{label, onClick, danger, checked}] */
+export function actionSheet(title, items) {
+  return sheet(title, (close) => h('div', { class: 'list' }, items.map((it) =>
+    h('button', { class: 'list-item' + (it.danger ? ' danger-text' : ''), onclick: async () => { if (!it.keepOpen) close(); await it.onClick?.(); } },
+      h('span', null, it.label), it.checked != null ? h('span', { class: 'check' }, it.checked ? '✓' : '') : null))));
+}
+
+/** append() that skips null/false (native append stringifies them). */
+export function put(parent, ...kids) { parent.append(...kids.flat(Infinity).filter((k) => k != null && k !== false)); return parent; }

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Folio Reader</title>
+<meta name="description" content="A private, offline-capable ebook reader.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f2940" id="meta-theme">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Folio">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app">
+  <main id="view" aria-live="polite"></main>
+  <nav id="tabbar" aria-label="Main">
+    <button data-tab="library" class="tab"><span class="ico">&#128218;</span><span>Library</span></button>
+    <button data-tab="catalogs" class="tab"><span class="ico">&#127760;</span><span>Catalogs</span></button>
+    <button data-tab="settings" class="tab"><span class="ico">&#9881;&#65039;</span><span>Settings</span></button>
+  </nav>
+</div>
+<div id="reader" hidden></div>
+<div id="overlay" hidden></div>
+<div id="toast" hidden></div>
+<input type="file" id="file-input" accept=".epub,application/epub+zip" multiple hidden>
+<script src="config.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/epub.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

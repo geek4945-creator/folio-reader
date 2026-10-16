@@ -1,0 +1,9 @@
+name = "folio-proxy"
+main = "worker.js"
+compatibility_date = "2024-09-01"
+
+[vars]
+# Comma-separated extra hosts (your own Calibre-Web / OPDS server). Default catalogs are already allowed.
+ALLOW_HOSTS = ""
+# Lock CORS to your app's origin once deployed, e.g. "https://you.github.io"
+ALLOW_ORIGIN = "*"

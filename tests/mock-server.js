@@ -1,0 +1,23 @@
+// Local mock catalogs for tests: OPDS Atom (+series, pagination, OpenSearch), OPDS 2 JSON, and a plain HTML listing.
+const http = require('http'); const fs = require('fs'); const path = require('path');
+const fx = path.join(__dirname, 'fixtures'); const PORT = 8766; const B = `http://localhost:${PORT}`;
+const entry = (id, title, author, file, cover, series, idx) => `<entry><id>urn:t:${id}</id><title>${title}</title><author><name>${author}</name></author><summary>Test book ${title}</summary>
+ ${series ? `<category scheme="calibre:series" term="${series}"/><calibre:series xmlns:calibre="http://calibre.kovidgoyal.net/2009/metadata"><calibre:series_index>${idx}</calibre:series_index>${series}</calibre:series>` : ''}
+ <link rel="http://opds-spec.org/image" href="${B}/files/${cover}" type="image/png"/><link rel="http://opds-spec.org/image/thumbnail" href="${B}/files/${cover}" type="image/png"/>
+ <link rel="http://opds-spec.org/acquisition" href="${B}/files/${file}" type="application/epub+zip"/><link rel="http://opds-spec.org/acquisition" href="${B}/files/x.pdf" type="application/pdf"/></entry>`;
+const feed = (title, body, links = '') => `<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"><id>urn:f</id><title>${title}</title>${links}${body}</feed>`;
+http.createServer((req, res) => {
+  const u = new URL(req.url, B); const h = { 'Access-Control-Allow-Origin': '*' };
+  const send = (t, type, body) => { res.writeHead(200, { ...h, 'Content-Type': type }); res.end(body); };
+  if (u.pathname.startsWith('/files/')) { const f = path.join(fx, path.basename(u.pathname)); if (fs.existsSync(f)) { res.writeHead(200, { ...h, 'Content-Type': f.endsWith('.png') ? 'image/png' : 'application/epub+zip' }); return fs.createReadStream(f).pipe(res); } }
+  if (u.pathname === '/opds') return send(0, 'application/atom+xml', feed('Mock Library', `<entry><id>n1</id><title>Recent additions</title><content type="text">Newest books</content><link rel="subsection" type="application/atom+xml;profile=opds-catalog" href="${B}/opds/new"/></entry>`,
+    `<link rel="search" type="application/opensearchdescription+xml" href="${B}/opds/osd.xml"/><link rel="self" href="${B}/opds"/>`));
+  if (u.pathname === '/opds/osd.xml') return send(0, 'application/opensearchdescription+xml', `<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"><ShortName>Mock</ShortName><Url type="application/atom+xml;profile=opds-catalog" template="${B}/opds/search?q={searchTerms}"/></OpenSearchDescription>`);
+  if (u.pathname === '/opds/new') return send(0, 'application/atom+xml', feed('Recent additions', entry(1, 'Saga Book One', 'Test Author', 'saga-1.epub', 'cover-a.png', 'Test Saga', 1) + entry(2, 'Saga Book Two', 'Test Author', 'saga-2.epub', 'cover-b.png', 'Test Saga', 2), `<link rel="next" type="application/atom+xml" href="${B}/opds/new2"/>`));
+  if (u.pathname === '/opds/new2') return send(0, 'application/atom+xml', feed('Recent additions (2)', entry(3, 'A Standalone Tale', 'Another Author', 'standalone.epub', 'cover-c.png', 'Hinted Series', 7)));
+  if (u.pathname === '/opds/search') return send(0, 'application/atom+xml', feed('Results for ' + u.searchParams.get('q'), entry(4, 'Result: ' + u.searchParams.get('q'), 'Someone', 'standalone.epub', 'cover-c.png')));
+  if (u.pathname === '/opds2.json') return send(0, 'application/opds+json', JSON.stringify({ metadata: { title: 'Mock OPDS 2' }, links: [{ rel: 'self', href: B + '/opds2.json', type: 'application/opds+json' }, { rel: 'search', href: B + '/opds2.json?q={searchTerms}', type: 'application/opds+json', templated: true }],
+    publications: [{ metadata: { title: 'JSON Book', author: [{ name: 'Json Author' }], belongsTo: { series: [{ name: 'Json Series', position: 2 }] } }, images: [{ href: B + '/files/cover-a.png', type: 'image/png' }], links: [{ rel: 'http://opds-spec.org/acquisition', href: B + '/files/standalone.epub', type: 'application/epub+zip' }] }] }));
+  if (u.pathname === '/html') return send(0, 'text/html', `<html><head><title>My Library</title></head><body><ul><li class="book"><img src="${B}/files/cover-b.png"><h3>HTML Book</h3><a href="${B}/files/saga-3.epub">Download EPUB</a></li></ul><a rel="next" href="${B}/html2">Next</a></body></html>`);
+  res.writeHead(404, h); res.end('nf');
+}).listen(PORT, () => console.log('mock on', PORT));

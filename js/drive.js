@@ -1,0 +1,49 @@
+// Browse your Google Drive for EPUB files and import them into the library (read-only access, requested on first use).
+import { h, toast, sheet, put } from './util.js';
+import * as G from './google.js';
+import { addBookFromBuffer } from './store.js';
+
+const fmtSize = (n) => (n ? (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB') : '');
+
+export async function openDriveBrowser() {
+  if (!G.isSignedIn()) { toast('Sign in with Google first: Settings → Account & sync', 4500); return; }
+  if (!G.canBrowseDrive()) {
+    try { await G.enableDriveBrowse(); } catch (e) { toast(e.message, 5000); return; }
+  }
+  const path = [{ id: 'root', name: 'My Drive' }];
+  let search = ''; let tok = ''; let busy = false;
+  const list = h('div', { class: 'list', id: 'drive-list' }); const crumbs = h('div', { class: 'muted small', id: 'drive-crumbs' });
+  const more = h('button', { class: 'btn block', hidden: true }, 'Load more');
+  const q = h('input', { type: 'search', class: 'field search', id: 'drive-search', placeholder: 'Search Drive for EPUBs' });
+  const w = sheet('Google Drive', () => [h('form', { onsubmit: (e) => { e.preventDefault(); search = q.value.trim(); load(true); } }, q), crumbs, list, more], { tall: true });
+
+  async function load(reset) {
+    if (busy) return; busy = true;
+    if (reset) { list.replaceChildren(h('div', { class: 'spinner-row' }, h('div', { class: 'spinner' }), 'Loading…')); tok = ''; }
+    crumbs.textContent = search ? `Search: “${search}”` : path.map((p) => p.name).join(' › ');
+    try {
+      const d = await G.listDriveFiles({ folderId: path[path.length - 1].id, search, pageToken: tok });
+      if (reset) list.replaceChildren();
+      if (!search && path.length > 1 && reset) list.append(row('‹ Back', '', () => { path.pop(); load(true); }));
+      for (const f of d.files) {
+        if (f.mimeType === 'application/vnd.google-apps.folder') list.append(row('📁 ' + f.name, '›', () => { search = ''; q.value = ''; path.push({ id: f.id, name: f.name }); load(true); }, 'folder'));
+        else list.append(importRow(f));
+      }
+      if (reset && !d.files.length) list.append(h('p', { class: 'muted pad' }, 'No folders or EPUB files here.'));
+      tok = d.nextPageToken || ''; more.hidden = !tok;
+    } catch (e) { list.replaceChildren(h('p', { class: 'err pad' }, e.message)); }
+    busy = false;
+  }
+  more.onclick = () => load(false);
+  function row(label, right, fn, cls = '') { return h('button', { class: 'list-item ' + cls, onclick: fn }, h('span', { class: 'grow' }, label), h('span', { class: 'chev' }, right)); }
+  function importRow(f) {
+    const btn = h('button', { class: 'btn primary small dl', onclick: async (e) => {
+      e.stopPropagation(); btn.disabled = true; btn.textContent = 'Downloading…';
+      try { const blob = await G.downloadDriveFile(f.id); btn.textContent = 'Importing…'; await addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id }); btn.textContent = '✓ Added'; toast('Imported “' + f.name + '”'); }
+      catch (err) { btn.disabled = false; btn.textContent = /Already|already/.test(err.message) ? '✓ In library' : 'Import'; toast(err.message, 5000); }
+    } }, 'Import');
+    return h('div', { class: 'list-item file', 'data-id': f.id }, h('span', { class: 'grow' }, f.name, h('div', { class: 'muted small' }, fmtSize(+f.size))), btn);
+  }
+  load(true);
+  return w;
+}
