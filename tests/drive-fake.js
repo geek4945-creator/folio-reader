@@ -29,7 +29,7 @@ async function handle(req, u, C, json, CORS) {
   if (m === 'GET' && media) { const f = [...C.files.values()].find((x) => x.id === media[1]); if (injected()) return true; if (!f) { req.respond({ status: 404, headers: CORS, body: 'nf' }); return true; } C.calls.push('get ' + f.name); req.respond({ status: 200, headers: CORS, contentType: 'application/json', body: f.buf }); return true; }
   if (u.includes('/upload/drive/v3/files')) {
     const buf = C.lastBody || Buffer.from(req.postData() || ''); const s = buf.toString('latin1');
-    if (m === 'POST') { const nm = /"name":"([^"]+)"/.exec(s); if (!nm || /^cover-/.test(nm[1])) return false; if (injected()) return true; const mark = 'Content-Type: application/json\r\n\r\n'; const rest = s.slice(s.lastIndexOf(mark) + mark.length); const f = C.put(nm[1], Buffer.from(rest.slice(0, rest.lastIndexOf('\r\n--folio')), 'latin1')); C.writes++; C.calls.push('post ' + f.name); json(meta(f)); return true; }
+    if (m === 'POST') { const nm = /"name":"([^"]+)"/.exec(s); if (!nm || /^cover-/.test(nm[1])) return false; if (injected()) return true; const mark = 'Content-Type: application/json\r\n\r\n'; const rest = s.slice(s.lastIndexOf(mark) + mark.length); const f = C.put(nm[1], Buffer.from(rest.slice(0, rest.lastIndexOf('\r\n--')), 'latin1')); C.writes++; C.calls.push('post ' + f.name); json(meta(f)); return true; }
     const id = /\/upload\/drive\/v3\/files\/(F\d+)/.exec(u); if (m === 'PATCH' && id) { const f = [...C.files.values()].find((x) => x.id === id[1]); if (!f) return false; if (injected()) return true; C.put(f.name, buf); C.writes++; C.calls.push('patch ' + f.name); json(meta(f)); return true; }
   }
   return false;
