@@ -107,3 +107,21 @@ export function actionSheet(title, items) {
 
 /** append() that skips null/false (native append stringifies them). */
 export function put(parent, ...kids) { parent.append(...kids.flat(Infinity).filter((k) => k != null && k !== false)); return parent; }
+
+/** v0.5.8: every search field (input[type=search], anywhere, also in sheets and dialogs added later) gets an "×" at its right edge that clears the text and refocuses; it shows only while there is text. */
+export function initClearButtons(root = document.body) {
+  const decorate = (inp) => {
+    if (inp.dataset.clr || inp.type !== 'search' || !inp.parentNode) return; inp.dataset.clr = '1';
+    const w = document.createElement('span'); w.className = 'clr-wrap'; inp.parentNode.insertBefore(w, inp); w.append(inp);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'clr-btn'; b.setAttribute('aria-label', 'Clear search'); b.title = 'Clear'; b.tabIndex = -1; b.textContent = '×'; b.hidden = !inp.value;
+    const upd = () => { b.hidden = !inp.value; };
+    b.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the keyboard up
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('search', { bubbles: true })); upd(); inp.focus(); });
+    ['input', 'change', 'keyup', 'focus', 'search'].forEach((t) => inp.addEventListener(t, upd));
+    const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');   // code that sets .value (e.g. a restored query) also updates the button
+    Object.defineProperty(inp, 'value', { get() { return d.get.call(this); }, set(v) { d.set.call(this, v); upd(); }, configurable: true });
+    w.append(b);
+  };
+  const scan = (n) => { if (n.nodeType !== 1) return; if (n.matches && n.matches('input[type=search]')) decorate(n); n.querySelectorAll && n.querySelectorAll('input[type=search]').forEach(decorate); };
+  scan(root); new MutationObserver((ms) => { for (const m of ms) m.addedNodes.forEach(scan); }).observe(document.body, { childList: true, subtree: true });
+}

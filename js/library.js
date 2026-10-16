@@ -16,7 +16,7 @@ import { installMode, installLabel, startInstall } from './install.js';
 let view; const covers = new Map();
 let local = { setId: null, q: '', sel: null, visible: [] };   // sel: Set of selected book ids while in multi-select mode
 
-function coverUrl(b) {
+export function coverUrl(b) {
   if (!b.coverBlob) return null;
   const k = b.id + ':' + b.coverBlob.size;
   if (!covers.has(k)) covers.set(k, URL.createObjectURL(b.coverBlob));
@@ -434,4 +434,4 @@ export async function importFiles(files) {
   if (errs.length) toast(errs[0], 5200);
   rerender();
 }
-export function refreshLibrary() { return rerender(); }
+export function refreshLibrary() { try { window.dispatchEvent(new Event('folio-library-refresh')); } catch { /* not in a window */ } return view && view.dataset.screen && view.dataset.screen !== 'library' ? Promise.resolve() : rerender(); }   // another tab (Reading now) is on screen: don't paint the library over it
