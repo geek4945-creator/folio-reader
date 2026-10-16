@@ -1,7 +1,7 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
 import { settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups } from './settings.js';
-import { DB, structAtOf, posAtOf, gAtOf, GROUPS } from './db.js';
+import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS } from './db.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
 import { APP_VERSION } from './device.js';
@@ -291,7 +291,7 @@ function mergeState(a, b, posFields) {
   st.gAt = {};   // each group of structure (status / shelves / series / name) is last-writer-wins on its own stamp
   for (const [g, d] of Object.entries(GROUPS)) { const w = stGroupAt(b, g) > stGroupAt(a, g) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
   st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
-  const posA = a.posAt ?? a.lastOpened ?? 0, posB = b.posAt ?? b.lastOpened ?? 0;
+  const posA = posAtOfState(a), posB = posAtOfState(b);
   const pw = posB > posA ? b : a; if (pw !== ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a)) for (const f of posFields) { if (pw[f] === undefined) delete st[f]; else st[f] = structuredClone(pw[f]); }
   st.posAt = Math.max(posA, posB);
   if (a.overrides || b.overrides || a.ovAt || b.ovAt) {

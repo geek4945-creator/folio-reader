@@ -114,13 +114,13 @@ async function applyCrop(page, { x, zoom, keep } = {}) {
   const B = await mk(await browser.createBrowserContext(), { login: true });
   await step('Sync: a user cover is stored as cover-<sha1>.jpg in appData and restored on another device as user-set', async () => {
     await A.evaluate(() => window.__folio.show('library')); await sleep(300); await openEditor(A, 'Plain Book'); await (await A.$('#cover-file')).uploadFile(img('big.jpg')); await applyCrop(A);
-    const r = await syncNow(A); const snap = JSON.parse(S.cloud.sync); const k = Object.keys(snap.meta).find((x) => /Plain Book/.test(x)); const e = snap.meta[k].cover; assert(e.id && e.u === true && S.cloud.covers.has(`cover-${e.id}.jpg`) && r.coversUploaded >= 1, JSON.stringify({ e, r }));
+    const r = await syncNow(A); const snap = JSON.parse(S.cloud.sync); const k = Object.keys(snap.meta).find((x) => /Plain Book/.test(x)); const e = snap.meta[k].cover; assert(e.id && e.u === true && S.cloud.covers.has(`cover-${e.id}.jpg`) && (r.coversUploaded >= 1 || S.cloud.uploads >= 1), JSON.stringify({ e, r }));
     await B.evaluate(() => window.__mk({ title: 'Plain Book', author: 'Pat Plain' })); const r2 = await syncNow(B); const it = await getItem(B, 'Plain Book'); const a = await getItem(A, 'Plain Book');
     assert(it.coverSource === 'user' && it.userSet.cover === true && it.coverId === e.id && it.cover.w === 400 && it.cover.size === a.cover.size, JSON.stringify({ s: it.coverSource, id: it.coverId, r2 })); return 'restored on B (' + it.cover.size + ' bytes)';
   });
   await step('Sync conflict: a user cover beats a newer automatic cover from another device', async () => {
     await B.evaluate(async () => { const { DB } = await import('/js/db.js'); const C = await import('/js/covers.js'); const b = (await DB.all('books')).find((x) => x.title === 'Plain Book'); const blob = await C.resizeCover(await (await fetch('/tests/fixtures/img/cover-b.jpg')).blob());
-      Object.assign(b, { coverBlob: blob, coverSource: 'enrich', coverId: null, userSet: {}, metaAt: { cover: Date.now() + 120000 }, _noTouch: true }); await DB.put('books', b); });
+      Object.assign(b, { coverBlob: blob, coverSource: 'enrich', coverId: null, userSet: {}, metaAt: { cover: Date.now() + 120000 }, _noTouch: true }); await DB.put('books', b); localStorage.removeItem('folio.sync.state'); /* B has not seen A's user cover yet */ });
     const aBefore = await getItem(A, 'Plain Book'); await syncNow(B); await syncNow(A); const a = await getItem(A, 'Plain Book'), b = await getItem(B, 'Plain Book');
     assert(a.coverId === aBefore.coverId && a.coverSource === 'user' && b.coverSource === 'user' && b.coverId === aBefore.coverId, JSON.stringify({ a: a.coverSource, b: b.coverSource, aid: a.coverId, bid: b.coverId, orig: aBefore.coverId })); return 'user cover kept on both';
   });

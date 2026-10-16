@@ -58,8 +58,8 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await open(page, 'Frankenstein'); await rendered(page); assert((await mode(page)).flow === 'paginated', 'did not reopen paginated'); await close(page);
   });
   await step('Sync: an untouched default is not written to Drive settings; an explicit choice is', async () => {
-    const a = await page.evaluate(async () => { const { settings } = await import('./js/settings.js'); const { buildSnapshot } = await import('./js/google.js'); settings.set({ flow: 'scrolled' }); const s1 = await buildSnapshot(); return s1.settings.values.flow; }); assert(a === 'scrolled', 'chosen scroll should sync: ' + a);
-    const b = await page.evaluate(async () => { const { settings } = await import('./js/settings.js'); const { buildSnapshot } = await import('./js/google.js'); settings.set({ flowChosen: false }); const s = await buildSnapshot(); return 'flow' in s.settings.values; }); assert(b === false, 'default flow leaked into the snapshot');
+    const a = await page.evaluate(async () => { const { settings } = await import('./js/settings.js'); const { buildSnapshot } = await import('./js/google.js'); settings.set({ flow: 'scrolled' }); const s1 = await buildSnapshot(); return s1.settings.flat.flow && s1.settings.flat.flow.v; }); assert(a === 'scrolled', 'chosen scroll should sync: ' + a);
+    const b = await page.evaluate(async () => { const { settings } = await import('./js/settings.js'); const { buildSnapshot } = await import('./js/google.js'); settings.set({ flowChosen: false }); const s = await buildSnapshot(); return 'flow' in s.settings.flat; }); assert(b === false, 'default flow leaked into the snapshot');
   });
   await page.close();
 

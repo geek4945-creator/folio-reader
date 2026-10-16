@@ -55,7 +55,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
     sourceKey: hints.sourceKey || null, source: hints.source || 'import', origFormat, overrides: null, locations: null,
   };
   if (hints.borrowed) Object.assign(book, { borrowed: true, dueAt: hints.dueAt || null, loanAt: Date.now(), loanSource: hints.source || '' });   // library loan: lands in the Borrowed filter
-  applyPending(book);
+  applyPending(book); book.posAt ??= 0;   // a fresh import has no position of its own (never outranks another device's)
   await DB.put('files', { id: book.id, blob: new Blob([buffer], { type: pdfMeta ? 'application/pdf' : 'application/epub+zip' }) });
   // A fresh import is not a user edit (keeps cross-device merge fair), unless the book was deleted before: then it must outrank the deletion tombstone.
   const tombed = getTombs().some((t) => t.t === 'book' && t.id === book.syncKey);

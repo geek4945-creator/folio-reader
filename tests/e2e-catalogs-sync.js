@@ -126,7 +126,7 @@ const fakeLogin = (exp) => `localStorage.setItem('folio.google', JSON.stringify(
       const s1 = books.find((b) => /Book One/.test(b.title)), s3 = books.find((b) => /Book Three/.test(b.title)); await S.saveOrder('set:' + s1.setId, ['b:' + s3.id, 'b:' + s1.id]); window.__folio.settings.set({ theme: 'ocean', fontSizePt: 18, sort: 'title' }); });
     await a.evaluate(async () => { const { syncNow } = await import('/js/google.js'); await syncNow(); });
     const remote = JSON.parse(cloud.file); assert(cloud.parents, 'file not created in appDataFolder'); assert(cloud.auth.every((x) => x === 'Bearer seed-token'), 'auth header');
-    const keys = Object.keys(remote.books); assert(keys.length === 4 && remote.shelves.length === 1 && remote.sets.length === 1 && remote.settings.values.theme === 'ocean', JSON.stringify({ keys: keys.length, shelves: remote.shelves.length, sets: remote.sets.length }));
+    const keys = Object.keys(remote.books); assert(keys.length === 4 && remote.shelves.length === 1 && remote.sets.length === 1 && cloud.json('folio-settings.json').flat.theme.v === 'ocean', JSON.stringify({ keys: keys.length, shelves: remote.shelves.length, sets: remote.sets.length }));
     await a.screenshot({ path: '/tmp/shot-settings-signedin.png' }); return `remote: ${keys.length} books, ${remote.shelves.length} shelf, ${remote.sets.length} set, ${Object.values(remote.bookmarks).flat().length} bookmark, ${remote.orders.length} order(s), ${(cloud.file.length / 1024).toFixed(1)} KB`;
   });
   await a.close();

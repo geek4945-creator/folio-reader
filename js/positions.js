@@ -3,7 +3,7 @@
 //   • this device hasn't moved since the last sync  → it is applied silently (and a note "Continued from <device>" shows when you open the book);
 //   • this device moved too (both changed)            → nothing is overwritten; opening the book asks "Continue from <device> at 42%?" (Continue / Stay here);
 //   • the book is open right now                      → left alone (it is handled the next time it is opened).
-import { DB, posAtOf } from './db.js';
+import { DB, posAtOf, posAtOfState } from './db.js';
 import { h, toast, sheet } from './util.js';
 import * as S from './store.js';
 import * as A from './audiostore.js';
@@ -36,11 +36,11 @@ const isOpen = (kind, id) => openChecks.some((f) => { try { return f(kind, id); 
 function take(kind, it, st) {
   for (const f of fields(kind)) { if (st[f] === undefined) delete it[f]; else it[f] = st[f]; }
   if (kind === 'book') { it.pdfText = !!st.pdfText; if (st.pdfPage) it.pdfZoom = st.pdfZoom || 1; }
-  it.posAt = st.posAt ?? st.lastOpened ?? 0; it.posDev = st.dev || ''; it.posDevName = st.devName || '';
+  it.posAt = posAtOfState(st); it.posDev = st.dev || ''; it.posDevName = st.devName || '';
 }
 /** Apply a position from a merged snapshot state to a local item (mutates it; the caller saves it). Returns 'applied' | 'conflict' | 'same' | null. */
 export function applyPosition(kind, it, st, ctx = {}) {
-  const R = st.posAt ?? st.lastOpened ?? 0, L = posAtOf(it); const key = itemKey(kind, it);
+  const R = posAtOfState(st), L = posAtOf(it); const key = itemKey(kind, it);
   if (ctx.force) { take(kind, it, st); return 'applied'; }
   if (R <= L) return null;
   if (samePos(kind, it, st)) { it.posAt = R; it.posDev = st.dev || it.posDev; it.posDevName = st.devName || it.posDevName; if ((st.lastOpened || 0) > (it.lastOpened || 0)) it.lastOpened = st.lastOpened; return 'same'; }

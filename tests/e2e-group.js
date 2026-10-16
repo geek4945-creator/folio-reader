@@ -98,7 +98,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await page.click('#lib-menu'); await page.waitForSelector('#menu-group'); await page.click('#menu-group'); await page.waitForSelector('#group-opt-status'); await page.click('#group-opt-status'); await sleep(500); assert((await page.$eval('#group-sel', (e) => e.value)) === 'status');
   });
   await step('Choice is a synced setting', async () => {
-    const r = await page.evaluate(async () => { const st = await import('./js/settings.js'); const G = await import('./js/google.js'); st.settings.set({ groupBy: 'series' }); const snap = await G.buildSnapshot(); return { synced: st.SYNCED.includes('groupBy'), v: snap.settings.values.groupBy }; });
+    const r = await page.evaluate(async () => { const st = await import('./js/settings.js'); const G = await import('./js/google.js'); st.settings.set({ groupBy: 'series' }); const snap = await G.buildSnapshot(); return { synced: st.SYNCED.includes('groupBy'), v: snap.settings.flat.groupBy && snap.settings.flat.groupBy.v }; });
     assert(r.synced && r.v === 'series', JSON.stringify(r));
   });
   await step('No page errors', async () => assert(!errs.length, errs.join(' | ')));

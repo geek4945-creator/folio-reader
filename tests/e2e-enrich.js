@@ -25,7 +25,7 @@ const clickText = (page, sel, re) => page.evaluate((s, r) => { const el = [...do
 const tileMenu = async (page, title) => { await page.evaluate((t) => { const tile = [...document.querySelectorAll('.tile')].find((x) => x.querySelector('.t')?.innerText === t); if (!tile) throw new Error('no tile ' + t); tile.querySelector('.tile-more').click(); }, title); await sleep(200); };
 const closeSheets = (page) => page.evaluate(() => { document.querySelector('#overlay').replaceChildren(); document.querySelector('#overlay').hidden = true; });
 const odOf = async (p) => (await dbAll(p, 'books')).find((x) => x.identifier === 'urn:test:The Test Odyssey');
-const syncNow = (page) => page.evaluate(async () => { const g = await import('/js/google.js'); const r = await g.syncNow(); await new Promise((x) => setTimeout(x, 250)); return r; });
+const syncNow = (page, force = false) => page.evaluate(async (force) => { const g = await import('/js/google.js'); const r = await g.syncNow({ force }); await new Promise((x) => setTimeout(x, 250)); return r; }, force);
 
 (async () => {
   const browser = await puppeteer.launch({ executablePath: '/usr/bin/google-chrome', headless: 'new', args: ['--no-sandbox'] });
@@ -194,7 +194,7 @@ const syncNow = (page) => page.evaluate(async () => { const g = await import('/j
     assert(!Object.keys(snap.meta).some((k) => /Wrong Match|Saga/.test(k)) && !Object.keys(snap.audioMeta).length, JSON.stringify(Object.keys(snap.meta)));
     assert(snap.tombstones.some((t) => t.t === 'book') && snap.tombstones.some((t) => t.t === 'audio'), 'tombstones missing: ' + JSON.stringify(snap.tombstones.map((t) => t.t)));
     assert(S.cloud.covers.has(`cover-${cid}.jpg`) && !S.cloud.deletes.length, 'a fresh orphan cover must not be deleted yet');
-    S.cloud.covers.get(`cover-${cid}.jpg`).createdTime = new Date(Date.now() - 2 * 3600e3).toISOString(); await syncNow(A);
+    S.cloud.covers.get(`cover-${cid}.jpg`).createdTime = new Date(Date.now() - 2 * 3600e3).toISOString(); await syncNow(A, true);
     assert(S.cloud.deletes.includes(`cover-${cid}.jpg`) && !S.cloud.covers.has(`cover-${cid}.jpg`), 'old orphan cover not garbage-collected'); assert(S.cloud.covers.size >= 1, 'referenced covers must survive GC');
     await syncNow(B); snap = JSON.parse(S.cloud.sync); assert(!Object.keys(snap.audioMeta).length, 'device B re-published metadata of an audiobook deleted on A'); return 'meta removed, tombstones kept, orphan cover GC\'d after 1 h';
   });

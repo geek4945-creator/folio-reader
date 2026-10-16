@@ -24,7 +24,8 @@ export const GROUPS = {
 const posSig = (b) => J([b.cfi || null, Math.round((b.progress || 0) * 1e4), b.pdfPage || 0, b.pdfText ? 1 : 0, b.pdfZoom || 0, Math.round(b.position || 0), b.trackIndex ?? null]);
 export const structAtOf = (b) => b.structAt ?? b.updatedAt ?? 0;
 export const gAtOf = (b, g) => b.gAt?.[g] ?? structAtOf(b);
-export const posAtOf = (b) => b.posAt ?? b.lastOpened ?? 0;
+export const posAtOf = (b) => b.posAt ?? Math.max(b.lastOpened || 0, b.updatedAt || 0);   // legacy records: their last touch
+export const posAtOfState = (st) => st.posAt ?? Math.max(st.lastOpened || 0, st.updatedAt || 0);
 function stamp(val, old) {
   const now = Date.now();
   if (!old) { val.structAt = 0; val.gAt = {}; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
