@@ -64,7 +64,7 @@ const canvasW = (page) => page.$eval('#viewer canvas.pdf-canvas', (c) => parseFl
   await step('Appearance: PDF has zoom/layout/theme only (no font, margin or line-spacing controls)', async () => {
     await page.click('#r-aa'); await page.waitForSelector('.sheet'); const t = await page.$eval('.sheet', (e) => e.innerText);
     assert(/Zoom/.test(t) && /Layout/.test(t) && /Theme/.test(t), t); assert(!(await page.$('#fs-num')) && !(await page.$('#font-sel')) && !(await page.$('#lh-range')) && !(await page.$('#mg-range')), 'text controls present');
-    assert(!/Line spacing|Margins|Text size/.test(t.replace(/Text size, margins and line spacing apply[^.]*\./, '')), t);
+    const note = await page.$eval('#pdf-note', (e) => e.innerText); assert(!/Line spacing|Margins|Text size/.test(t.replace(note, '')), t);
     await page.screenshot({ path: '/tmp/shot-pdf-appearance.png' });
     await page.evaluate(() => document.querySelector('[data-theme-pick=dark]').click()); await sleep(500);
     const cls = await page.$eval('#viewer', (e) => e.className); assert(/pdf-inv/.test(cls), cls); assert(await page.$('#pdf-invert'), 'invert toggle');
