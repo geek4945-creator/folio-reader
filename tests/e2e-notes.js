@@ -94,7 +94,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   await step('Selection menu: Define opens the word bubble without a stale menu', async () => {
     await toStart(A);
     await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await click(A, '#an-define'); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await noMenu(A);
-    await A.evaluate(() => window.__folioBack()); await sleep(200); assert(!(await A.$('#wl-bubble')), 'bubble still open');
+    await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(200); assert(!(await A.$('#wl-bubble')), 'bubble still open');
   });
   await step('Note: the ✎ Note button saves a highlight and opens the editor on the note; saving stores it and underlines the highlight', async () => {
     await toStart(A); await selectText(A, 'Paragraph 1.2 ends', 'here'); await menu(A); await click(A, '#an-note'); await A.waitForSelector('#an-note-text', { timeout: 5000 }); await sleep(250);
@@ -119,7 +119,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     assert(items.length === 4, JSON.stringify(items.map((x) => x.t.slice(0, 30)))); const long = items.find((x) => x.more); assert(long && long.t.endsWith('…') && long.t.length < 260, 'long excerpt not truncated: ' + (long && long.t.length));
     assert(items.some((x) => /Remember this line/.test(x.n) && x.c === 'purple'), JSON.stringify(items));
     await click(A, '.an-more'); await sleep(250); const full = await A.evaluate(() => [...document.querySelectorAll('#an-list .an-text')].map((e) => e.textContent.length).sort((a, b) => b - a)[0]); assert(full > 1000, 'Show more did not expand: ' + full);
-    await click(A, '[data-filter=notes]'); await sleep(300); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'notes filter'); await click(A, '[data-filter=all]'); await sleep(300); await A.evaluate(() => window.__folioBack()); await sleep(300);
+    await click(A, '[data-filter=notes]'); await sleep(300); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'notes filter'); await click(A, '[data-filter=all]'); await sleep(300); await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(300);
   });
   await step('Tapping a list item jumps to the highlight (closes the sheet, reader at that place); edit and delete from the list', async () => {
     await A.evaluate(() => { const rn = window.__reader.rendition; return rn.display(rn.book.spine.get(1).href); }); await sleep(600);
@@ -132,7 +132,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     assert((await recs(A)).some((x) => x.note === 'Edited from the list'), 'edit lost');
     await A.waitForSelector('#an-list .an-item'); await A.evaluate(() => { const it = [...document.querySelectorAll('#an-list .an-item')].find((e) => /Edited from/.test(e.textContent)); it.querySelector('.an-rm').click(); }); await sleep(500);
     assert((await recs(A)).length === 3, 'delete failed: ' + (await recs(A)).length); assert((await paintedText(A, 'purple')).length === 0, 'deleted highlight still painted');
-    await A.evaluate(() => window.__folioBack());
+    await A.evaluate(() => (window.__folioBack || window.__flimsyBack)());
   });
   await step('Word hold and highlights coexist: holding a word opens the bubble (no selection menu); “Highlight…” in the bubble turns the word into a selection with handles; a colour saves it', async () => {
     await toStart(A); const p = await wordXY(A, 'harbour'); assert(p, 'word not visible');
@@ -147,12 +147,12 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   await step('Reload: highlights and notes persist and are painted again; Back closes the selection menu first', async () => {
     const before = await recs(A); await A.reload({ waitUntil: 'networkidle0' }); await open(A); await rendered(A); await toStart(A);
     const after = await recs(A); assert(after.length === before.length && before.length >= 4, before.length + ' vs ' + after.length); assert((await paintedText(A, 'yellow')).length >= 1 && (await paintedText(A, 'pink')).includes('harbour'), 'not painted after reload');
-    await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await A.evaluate(() => window.__folioBack()); await sleep(250); assert(await A.$('#r-toc'), 'reader closed by the first Back'); assert(!(await A.$('#an-menu')), 'menu still open'); assert((await selLen(A)) === 0, 'selection kept');
+    await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(250); assert(await A.$('#r-toc'), 'reader closed by the first Back'); assert(!(await A.$('#an-menu')), 'menu still open'); assert((await selLen(A)) === 0, 'selection kept');
   });
   await step('Copy all / Export produce Markdown with chapter heading, quoted excerpt and note', async () => {
     const md = await A.evaluate(async () => { const An = await import('./js/annots.js'); const S = await import('./js/store.js'); const b = (await S.getBooks())[0]; return An.toMarkdown(await An.forBook(b), b); });
     assert(/^# Notes Book/.test(md) && /## Chapter One/.test(md) && /> Paragraph 1\.1 begins here/.test(md), md.slice(0, 200));
-    assert(await A.$('#r-toc'), 'no reader toolbar: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#reader').className + ' | ' + document.querySelector('#reader').children.length)); await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-export'); assert(!(await A.$eval('#an-export', (e) => e.disabled)) && !(await A.$eval('#an-copy-all', (e) => e.disabled)), 'buttons disabled'); await A.evaluate(() => window.__folioBack());
+    assert(await A.$('#r-toc'), 'no reader toolbar: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#reader').className + ' | ' + document.querySelector('#reader').children.length)); await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-export'); assert(!(await A.$eval('#an-export', (e) => e.disabled)) && !(await A.$eval('#an-copy-all', (e) => e.disabled)), 'buttons disabled'); await A.evaluate(() => (window.__folioBack || window.__flimsyBack)());
   });
   /* ---------------- PDF Text (reflow) view ---------------- */
   await step('PDF Text view: select across paragraphs and pages (native selection, same menu), save, paint, reload, tap to edit, notes list from the toolbar', async () => {
@@ -167,7 +167,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     await close(A); await openPdf(); const pt2 = await A.evaluate(() => [...(CSS.highlights.get('folio-hl-green') || [])].length); assert(pt2 === 1, 'not repainted after reopening: ' + pt2);
     const xy = await A.evaluate(() => { const r = [...CSS.highlights.get('folio-hl-green')][0]; const b = r.getClientRects()[0]; return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
     await A.mouse.click(xy.x, xy.y); await A.waitForSelector('#an-save', { timeout: 4000 }); await click(A, '#an-save'); await sleep(300);
-    await click(A, '#r-notes'); await A.waitForSelector('#an-list .an-item'); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'list'); await A.evaluate(() => window.__folioBack()); await sleep(200); await close(A);
+    await click(A, '#r-notes'); await A.waitForSelector('#an-list .an-item'); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'list'); await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(200); await close(A);
   });
   /* ---------------- sync between two devices + backup ---------------- */
   const P1 = await mk(await browser.createBrowserContext(), { login: true }), P2 = await mk(await browser.createBrowserContext(), { login: true });
