@@ -2,15 +2,19 @@
 import { h, toast, sheet, debounce, $, fmtPct } from './util.js';
 import { settings, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from './settings.js';
 import * as S from './store.js';
+import { fsButton } from './fullscreen.js';
+import { openPdf, closePdf, pdfCurrent } from './pdfreader.js';
+import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
 
 let cur = null;   // active reading session
 
 const root = () => $('#reader');
 
 export async function openReader(id) {
-  if (cur) await closeReader();
+  if (cur || pdfCurrent()) await closeReader();
   const book = await S.getBook(id); const blob = await S.getFile(id);
   if (!book || !blob) { toast('Book file not found'); return; }
+  if (book.format === 'pdf') return openPdf(book, blob);
   const el = root(); el.hidden = false; document.body.classList.add('reading');
   const viewer = h('div', { id: 'viewer' });
   const title = h('div', { class: 'r-title ellipsis' }, book.title);
@@ -23,10 +27,12 @@ export async function openReader(id) {
     h('div', { class: 'grow r-titlewrap' }, title, ovr),
     h('button', { class: 'btn-icon', id: 'r-toc', 'aria-label': 'Table of contents', onclick: showToc }, '☰'),
     bmBtn,
+    fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
   const loading = h('div', { class: 'r-loading' }, h('div', { class: 'spinner' }), 'Opening…');
-  el.replaceChildren(top, viewer, bottom, loading);
+  const foot = makeFooter();
+  el.replaceChildren(top, viewer, bottom, foot, loading); applyFooterSettings(); paintFooter({});
 
   cur = { book, viewer, slider, label, bmBtn, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
   try {
@@ -37,6 +43,7 @@ export async function openReader(id) {
     await startRendition(book.cfi || undefined);
     loading.remove(); cur.ready = true;
     slider.disabled = false;
+    cur.pager = createPager(cur); cur.pager.init();
     if (!cur.locReady) generateLocations();
     S.saveBook(await touchOpened(book));
   } catch (e) {
@@ -48,7 +55,7 @@ export async function openReader(id) {
     const cfi = cur.epub.locations.cfiFromPercentage(slider.value / 1000); if (cfi) await cur.rendition.display(cfi);
   });
   slider.addEventListener('input', () => { label.textContent = Math.round(slider.value / 10) + '%'; });
-  window.addEventListener('keydown', keyNav); document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('keydown', keyNav); document.addEventListener('visibilitychange', onHide); window.addEventListener('resize', onResize);
   window.__reader = cur;
 }
 
@@ -73,7 +80,7 @@ async function startRendition(cfi) {
   const r = c.epub.renderTo(c.viewer, { width: '100%', height: '100%', flow: scrolled ? 'scrolled' : 'paginated', manager: scrolled ? 'continuous' : 'default', spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
   c.rendition = r;
   r.hooks.content.register((contents) => injectStyle(contents));
-  r.on('relocated', (loc) => { if (c.rendition !== r) return; c.loc = loc; updateProgress(loc); });
+  r.on('relocated', (loc) => { if (c.rendition !== r) return; c.loc = loc; updateProgress(loc); c.pager && c.pager.update(loc); });
   r.on('click', onTap);
   let tx = null;
   r.on('touchstart', (e) => { tx = e.changedTouches ? [e.changedTouches[0].screenX, e.changedTouches[0].screenY] : null; });
@@ -83,11 +90,17 @@ async function startRendition(cfi) {
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { dx < 0 ? r.next() : r.prev(); e.__swiped = true; swipedAt = Date.now(); }
   });
   await r.display(cfi);
+  if (scrolled) {   // keep "Page X of Y" live while scrolling
+    const k = r.manager && r.manager.container; let raf = 0;
+    if (k) k.addEventListener('scroll', () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; if (c.rendition === r && c.pager) c.pager.update(); }); }, { passive: true });
+  }
+  if (c.pager) c.pager.settle(300);
   if (cfi && !scrolled) {   // epub.js can land one page early when the saved CFI is the first character of a page
     try { const l = r.currentLocation(); const cmp = new ePub.CFI(); if (l && l.end && cmp.compare(cfi, l.end.cfi) > 0) await r.next(); } catch { /* ignore */ }
   }
 }
 let swipedAt = 0;
+const onResize = () => { if (cur && cur.pager) cur.pager.settle(500); };
 
 /* ----- tap zones ----- */
 function onTap(e) {
@@ -150,6 +163,7 @@ export function applyAppearance() {
   applyMargin();
   c.rendition.getContents().forEach(injectStyle);
   c.ovr.hidden = !S.hasOverrides(c.book);
+  c.pager && c.pager.settle(800);
   clearTimeout(reflowTimer);
   reflowTimer = setTimeout(async () => {
     const cfi = c.loc?.start?.cfi;
@@ -270,6 +284,7 @@ export function showSettings() {
       h('div', { class: 'seg wide' }, ['paginated', 'scrolled'].map((f) => h('button', { class: settings.get('flow') === f ? 'on' : '', 'data-flow': f, onclick: async () => { settings.set({ flow: f }); w.body.replaceChildren(build()); const cfi = c.loc?.start?.cfi; await startRendition(cfi); } }, f === 'paginated' ? 'Pages' : 'Scroll'))),
       h('div', { class: 'row-ctl' }, h('label', null, 'Tap zones')),
       h('div', { class: 'seg wide' }, [['on', 'Left = back'], ['inverted', 'Left = next'], ['off', 'Off']].map(([v, n]) => h('button', { class: settings.get('tapZones') === v ? 'on' : '', onclick: () => { settings.set({ tapZones: v }); w.body.replaceChildren(build()); } }, n))));
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles());
     ui.reset = h('button', { class: 'btn block', id: 'reset-book', hidden: !S.hasOverrides(c.book), onclick: async () => { c.book = await S.resetOverrides(c.book.id); scope = 'global'; applyAppearance(); w.body.replaceChildren(build()); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults');
     wrap.append(ui.reset);
     return wrap;
@@ -279,8 +294,10 @@ export function showSettings() {
 
 /* ----- close ----- */
 export async function closeReader() {
+  if (pdfCurrent()) return closePdf();
   const c = cur; if (!c) return; cur = null;
-  window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide);
+  window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
+  c.closed = true; c.pager && c.pager.stop();
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;
   try { c.rendition && c.rendition.destroy(); } catch { /* ignore */ }
   try { c.epub && c.epub.destroy(); } catch { /* ignore */ }
@@ -288,4 +305,4 @@ export async function closeReader() {
   $('#overlay').replaceChildren(); $('#overlay').hidden = true;
   const { refreshLibrary } = await import('./library.js'); refreshLibrary();
 }
-export const currentReader = () => cur;
+export const currentReader = () => cur || pdfCurrent();

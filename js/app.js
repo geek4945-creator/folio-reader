@@ -1,10 +1,17 @@
 import { h, $, $$, toast, sheet, confirmDlg } from './util.js';
-import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from './settings.js';
-import { renderLibrary, importFiles } from './library.js';
+import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
+import { KINDLE_TYPE_RE } from './kindle.js';
+import { renderLibrary, importFiles, deleteAllBooksFlow } from './library.js';
 import { renderCatalogs, resetCatalogs } from './catalogs.js';
 import { onLibraryChange, getBooks, pruneSets } from './store.js';
 import * as G from './google.js';
 import { closeReader, currentReader } from './reader.js';
+import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
+import { initInstall, installMode, installLabel, startInstall } from './install.js';
+import { initFullscreen, fsButton } from './fullscreen.js';
+import { isInstalledApp } from './env.js';
+import { normalizeUrl } from './net.js';
+import { footerToggles } from './pages.js';
 
 applyUI();
 let tab = localStorage.getItem('folio.tab') || 'library';
@@ -48,9 +55,29 @@ function renderSettings() {
       h('div', { class: 'row-ctl' }, h('label', null, 'Reading layout')),
       h('div', { class: 'seg wide' }, [['paginated', 'Pages'], ['scrolled', 'Scroll']].map(([v, n]) => h('button', { class: s.flow === v ? 'on' : '', onclick: () => { settings.set({ flow: v }); renderSettings(); } }, n))),
       sample),
+    h('section', { class: 'pad card-sec', id: 'sec-footer' }, h('h3', null, 'Reader footer'),
+      h('p', { class: 'muted small' }, 'The line at the bottom of the reader. EPUB page counts follow your text size, margins and line spacing; PDFs use their real page numbers.'),
+      ...footerToggles()),
+    h('section', { class: 'pad card-sec', id: 'sec-display' }, h('h3', null, 'App & display'),
+      isInstalledApp() ? h('p', { class: 'muted small' }, 'You’re running Folio as an installed app, already full screen.') : h('p', { class: 'muted small' }, 'Put Folio on your Home Screen for an app icon and full-screen reading, or hide the browser bars with Full screen.'),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', id: 'settings-install', 'data-install-btn': '1', hidden: !installMode(), onclick: startInstall }, installLabel()),
+        fsButton({ class: 'btn', id: 'settings-fs' }))),
+    h('section', { class: 'pad card-sec' }, h('h3', null, 'Help: getting books'),
+      h('div', { class: 'row-actions' }, h('button', { class: 'btn', id: 'help-public-library', onclick: () => openPublicLibraryGuide() }, 'Public library guide'), h('button', { class: 'btn', id: 'help-drmfree', onclick: () => openDrmFreeHelp() }, 'Where to get DRM-free books'))),
+    h('section', { class: 'pad card-sec' }, h('h3', null, 'Library sorting'),
+      h('p', { class: 'muted small' }, 'Each shelf (All, Currently Reading, Want to Read, Finished, your own shelves) and each set remembers its own sort. This default applies to any that don’t have one yet.'),
+      h('div', { class: 'row-ctl' }, h('label', null, 'Default sort'),
+        h('div', { class: 'row-actions' },
+          h('select', { class: 'field', id: 'default-sort-field', onchange: (e) => { setDefaultSort({ field: e.target.value }); renderSettings(); } }, SORT_FIELDS.filter(([k]) => k !== 'custom').map(([v, n]) => h('option', { value: v, selected: v === s.defaultSort.field }, n))),
+          h('button', { class: 'btn', id: 'default-sort-dir', 'data-dir': s.defaultSort.dir, onclick: () => { setDefaultSort({ dir: s.defaultSort.dir === 'asc' ? 'desc' : 'asc' }); renderSettings(); } }, (s.defaultSort.dir === 'asc' ? '↑ ' : '↓ ') + dirWord(s.defaultSort.field, s.defaultSort.dir)))),
+      h('button', { class: 'btn', id: 'reset-all-sorts', onclick: async () => { if (await confirmDlg('Reset all shelves?', 'Every shelf and set will use the default sort again. Custom drag orders are kept for when you switch back to Custom order.', 'Reset', false)) { resetAllSorts(); toast('All shelves use the default sort'); renderSettings(); } } }, 'Reset all shelves to default sort')),
+    h('section', { class: 'pad card-sec', id: 'sec-library' }, h('h3', null, 'Library'),
+      h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
+      h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Network (CORS proxy)'),
       h('p', { class: 'muted small' }, 'Some catalogs (notably Project Gutenberg downloads) don’t allow browser downloads. Deploy the tiny proxy from /proxy and paste its URL here. Leave empty to connect directly.'),
-      h('input', { class: 'field', id: 'proxy-url', type: 'url', placeholder: 'https://your-proxy.workers.dev/', value: s.proxyUrl, autocapitalize: 'none', onchange: (e) => { settings.set({ proxyUrl: e.target.value.trim() }); toast('Proxy saved'); } }),
+      h('input', { class: 'field', id: 'proxy-url', type: 'text', inputmode: 'url', spellcheck: 'false', placeholder: 'https://your-proxy.workers.dev/', value: s.proxyUrl, autocapitalize: 'none', onchange: (e) => { const v = e.target.value.trim(); if (!v) { settings.set({ proxyUrl: '' }); toast('Proxy cleared'); return; } try { const u = normalizeUrl(v); e.target.value = u; settings.set({ proxyUrl: u }); toast('Proxy saved'); } catch (err) { toast(err.message, 4500); } } }),
       h('select', { class: 'field', id: 'proxy-mode', onchange: (e) => settings.set({ proxyMode: e.target.value }) }, [['fallback', 'Direct first, proxy if blocked'], ['always', 'Always use proxy'], ['never', 'Never use proxy']].map(([v, n]) => h('option', { value: v, selected: s.proxyMode === v }, n)))),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'About'),
       h('p', { class: 'muted small' }, 'Folio Reader — your books stay on this device (IndexedDB). Only reading state syncs if you sign in with Google. Legal sources only.'),
@@ -80,6 +107,7 @@ function accountBox() {
         h('p', { class: 'muted small' }, 'Syncs settings, shelves, sets, custom order, per-book reading settings, positions and bookmarks to a private app-data folder in your Drive. Book files are not uploaded.'));
     } else {
       box.append(h('p', { class: 'muted small' }, 'Sign in with Google to back up and sync your shelves, sets, reading positions and settings across devices (stored privately in your Drive’s hidden app-data folder).'),
+        G.signInUnavailableHere() ? h('div', { class: 'plib-warn', id: 'android-signin-note' }, h('strong', null, 'Sign in from your browser. '), 'Google doesn’t allow sign-in inside the Android app. Open Folio in Chrome to sign in and sync: ', h('a', { href: G.webAppUrl(), target: '_blank', rel: 'noopener' }, G.webAppUrl().replace(/^https:\/\//, ''))) : null,
         h('button', { class: 'btn primary', id: 'sign-in', disabled: !cid, onclick: () => G.signIn().then(() => { draw(); G.syncNow({ quiet: true }); }).catch((e) => toast(e.message, 5000)) }, 'Sign in with Google'),
         h('details', { open: !cid }, h('summary', null, 'Google OAuth Client ID'), h('p', { class: 'muted small' }, 'Create a Web OAuth client (see README → Google sign-in) and paste its Client ID. Add this site’s origin as an authorized JavaScript origin.'),
           h('input', { class: 'field', id: 'gcid', placeholder: 'xxxxxxxx.apps.googleusercontent.com', value: cid, autocapitalize: 'none', onchange: (e) => { G.setClientId(e.target.value); draw(); } })));
@@ -92,13 +120,14 @@ function accountBox() {
 /* ---------- drag & drop EPUBs onto the window (desktop / iPad) ---------- */
 window.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
-  const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.epub$/i.test(f.name) || f.type === 'application/epub+zip');
+  const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.(epub|pdf|mobi|azw3?|kf8)$/i.test(f.name) || f.type === 'application/epub+zip' || f.type === 'application/pdf' || KINDLE_TYPE_RE.test(f.type));
   if (!files.length) return; e.preventDefault(); await importFiles(files); show('library');
 });
 
 /* ---------- boot ---------- */
 G.initSync();
 show(tab);
+initInstall(); initFullscreen();
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));

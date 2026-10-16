@@ -244,7 +244,7 @@ const frameInfo = (page) => page.evaluate(() => { const f = document.querySelect
   });
   await step('Custom order in library grid: touch long-press drag (iOS path)', async () => {
     await click(page, '#set-back'); await sleep(300);
-    await page.evaluate(() => window.__folio.settings.set({ sort: 'custom', view: 'grid' })); await page.evaluate(() => window.__folio.show('library')); await sleep(600);
+    await page.evaluate(async () => { const st = await import('./js/settings.js'); window.__folio.settings.set({ view: 'grid' }); st.setSort('shelf:' + st.settings.get('chip'), { field: 'custom' }); }); await page.evaluate(() => window.__folio.show('library')); await sleep(600);
     await page.evaluate(() => { const c = [...document.querySelectorAll('.tiles')].find((c) => c.querySelectorAll('.tile').length >= 2); c.dataset.t = '1'; });
     const before = await page.$$eval('.tiles[data-t] .tile', (t) => t.map((x) => x.dataset.key)); assert(before.length >= 2);
     const pos = (i) => page.$$eval('.tiles[data-t] .tile', (t, i) => { const r = t[i].getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, i);

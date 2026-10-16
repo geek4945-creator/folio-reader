@@ -22,9 +22,10 @@ export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 let toastTimer;
-export function toast(msg, ms = 2600) {
+export function toast(msg, ms = 2600, action = null) {
   const t = $('#toast');
-  t.textContent = msg; t.hidden = false;
+  t.replaceChildren(document.createTextNode(msg)); t.classList.toggle('has-act', !!action); t.hidden = false;
+  if (action) t.append(' ', h('button', { class: 'toast-act', id: 'toast-action', onclick: () => { t.hidden = true; clearTimeout(toastTimer); action.onClick(); } }, action.label));
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
@@ -84,7 +85,7 @@ export function promptDlg(title, value = '', placeholder = '', okLabel = 'Save')
 /** Action sheet: items = [{label, onClick, danger, checked}] */
 export function actionSheet(title, items) {
   return sheet(title, (close) => h('div', { class: 'list' }, items.map((it) =>
-    h('button', { class: 'list-item' + (it.danger ? ' danger-text' : ''), onclick: async () => { if (!it.keepOpen) close(); await it.onClick?.(); } },
+    h('button', { class: 'list-item' + (it.danger ? ' danger-text' : '') + (it.primary ? ' primary-item' : ''), id: it.id, onclick: async () => { if (!it.keepOpen) close(); await it.onClick?.(); } },
       h('span', null, it.label), it.checked != null ? h('span', { class: 'check' }, it.checked ? '✓' : '') : null))));
 }
 

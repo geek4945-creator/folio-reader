@@ -11,7 +11,7 @@ A mobile-first **EPUB reader Progressive Web App** inspired by the *workflow* of
 
 | Area | What you get |
 |---|---|
-| **Library** | Cover grid or list; sort by title / author / recent / **custom order**; search (title, author, series); reading-progress badge (NEW / % / ✓); delete; import EPUBs from the **Files app / file picker** (multi-select; on iPhone: Library ⋯ → *Import EPUB files…* → Browse; also drag-and-drop on desktop) or from **Google Drive** (Library ⋯ → *Import from Google Drive…*). |
+| **Library** | Cover grid or list; sort, group, select and delete (see below);  search (title, author, series); reading-progress badge (NEW / % / ✓); delete; import EPUBs from the **Files app / file picker** (multi-select; on iPhone: Library ⋯ → *Import EPUB files…* → Browse; also drag-and-drop on desktop) or from **Google Drive** (Library ⋯ → *Import from Google Drive…*). |
 | **Metadata** | Title, author, language, description and **cover** extracted from the EPUB (JSZip + OPF parsing). Missing covers fall back to the catalog image, then [Open Library covers](https://covers.openlibrary.org), then a generated placeholder. |
 | **Series / sets** | Books are auto-grouped using `calibre:series` / `calibre:series_index`, EPUB3 `belongs-to-collection` + `group-position`, and catalog metadata (OPDS 1 Calibre-style series, OPDS 2 `belongsTo.series`). Sets show as stacked-cover tiles, open to volume order. Create, rename, delete sets; assign a book and volume number manually (⋯ → *Edit details & set*). |
 | **Shelves** | Built-in **Currently Reading**, **Want to Read**, **Finished** (+ custom shelves). Opening a book moves it to *Reading*; reaching the end moves it to *Finished*; move manually any time (⋯ → *Move to shelf*). *Library ⋯ → Show Finished as a separate section* toggles whether Finished appears as its own section in **All**. |
@@ -19,6 +19,13 @@ A mobile-first **EPUB reader Progressive Web App** inspired by the *workflow* of
 | **Reader** | epub.js: paginated and scroll modes, tap zones (left/right thirds turn pages, centre toggles the toolbar; left/right can be inverted or disabled), swipe, arrow keys, table of contents, bookmarks (☆), position remembered per book, progress slider with locations. |
 | **Appearance** | Text size in **points (8–60, 0.5 steps)** with numeric field + − / + buttons + slider, all synced; font family (publisher default, Georgia, Palatino, Iowan, San Francisco, Avenir/Helvetica, mono); line spacing; margins; **8 themes** (Light, Sepia, Paper, Solarized, Dark, Ocean, Forest, Night/black). Themes recolour the reader *and* the app UI. Global defaults persist in `localStorage`. |
 | **Per-book overrides** | In the reader's **Aa** panel switch **All books ↔ This book only**. Per-book size / font / line spacing / margins win over the globals and are injected with `!important`, so they beat the EPUB's own CSS. Each has a *Use global …* button; *Reset this book to defaults* clears them all. A gold **Aa** badge (library tile and reader header) shows a book has custom settings. |
+| **Formats** | **EPUB, MOBI / AZW / AZW3 / KF8 and PDF** from every import path (Files app / iCloud Drive, drag-and-drop, Google Drive, catalogs). DRM-free Kindle files are converted to EPUB in the browser at import time (vendored [foliate-js](https://github.com/johnfactotum/foliate-js) `mobi.js`), so all reader features work on them. PDFs open in a dedicated pdf.js reader (paged or scrolling, zoom / fit width, page jump, outline, dark-mode inversion, remembered page + zoom). **DRM-protected files (Kindle DRM, KFX, password PDFs) are detected and refused with an explanation — Folio never removes DRM.** |
+| **Where to get DRM-free books** | Library menu / Settings → a help screen listing legitimate DRM-free sources (Project Gutenberg, Standard Ebooks, Internet Archive, Smashwords, Kobo’s DRM-free titles, Humble Bundle, publishers such as Tor and Baen). |
+| **Public library (Libby / OverDrive)** | Library menu → *Public library*: *Find my library* (search by name or city), search that library’s OverDrive catalog by title, see availability (available / holds), covers, and **Open in Libby** deep links. Loans happen in Libby; Folio does no DRM handling. Libraries with OPDS / Calibre-Web / Koha / Evergreen catalogs can be added as sources (a short list of known public catalogs is built in). |
+| **Sorting & grouping** | Per shelf (All, Reading, Want, Finished, each custom shelf) and per set: Recently read / added, Title, Author, Series, Reading progress, File type, **Custom order**, each with an ascending / descending toggle. Choices are remembered per shelf/set and synced; **Settings → Library sorting** sets the default and has *Reset all shelves to default sort*. In **All**, *Group by* Status (default), None (one flat list), Series, Author or File type, with collapsible headers; sort and drag order apply inside each group (the flat list keeps its own order). |
+| **Selecting & deleting** | Delete from a book’s ⋯ menu, or **Select** (button in the Library header / menu) → tap books (tapping a set selects its books), *Select all* / *Clear*, then **Delete**, **Move to shelf** or **Mark finished**. **Delete all books…** (Library menu and Settings) needs you to type `DELETE`. Every delete shows a confirm with the count, removes the file, cover, reading position, bookmarks, per-book settings, custom-order entries and any set left empty, and syncs the deletion (tombstones in the Drive app-data state, so other devices drop the book too; re-importing later brings it back). **Originals on the device / in Drive are never touched.** Single and multi deletes offer an **Undo** for ~7 s. |
+| **Reader footer** | *Page X of Y* and *N pages left in chapter* under the reader, readable in every theme, safe-area aware on iPhone, and still visible when the toolbars are hidden. EPUB pages are **rendered pages**: each chapter’s text length is counted once, and characters-per-page is calibrated from what the reader actually lays out (epub.js pagination, or scroll height ÷ viewport height in scroll mode) starting from a font / line-spacing / margin model, so totals follow every change of text size, margins, line spacing, font, layout or window size straight away (themes don’t change layout). Counts and calibrations are cached per book + layout in IndexedDB (*Calculating pages…* only on a book’s first open). PDFs show real page numbers and pages left in the current outline section (the section part is hidden when a PDF has no outline). Switch either part off in the reader’s **Aa** panel or **Settings → Reader footer** (synced). |
+| **Install & full screen** | *Add to iPhone Home Screen* button (Library menu / Settings) with an illustrated guide and a dismissible first-visit banner in iOS Safari (warns in Gmail / Messenger-style in-app browsers); Android Chrome gets an *Install app* button via `beforeinstallprompt`. A **Full screen** toggle (reader toolbar + Settings) uses the Fullscreen API; iPhone Safari has none, so it opens the Home Screen guide instead. All of this is hidden when already installed / inside the Android app. |
 | **Catalogs** | Pre-seeded: Project Gutenberg (OPDS), Gutenberg via the Gutendex API, Standard Ebooks (OPDS), Internet Archive (open EPUBs only: Gutenberg mirror, pre-1927 Americana, Creative-Commons items; lending-library items excluded). **Add a source**: paste any **OPDS 1 (Atom) or OPDS 2 (JSON)** URL (Calibre-Web `/opds`, Calibre content server `/opds`, COPS, Kavita, Komga…) with browse, OpenSearch search, pagination ("Load more"), covers, and one-tap download straight into the library. Optional **generic HTML mode** scrapes a page you own for `.epub` links and cover images. |
 | **Google sync** | Sign in with Google (Identity Services), remembered profile name/photo, silent token renewal, Sign out / Disconnect. Syncs settings, shelves, sets, custom order, per-book overrides, reading positions, bookmarks to Drive `appDataFolder`. Optional **Drive browse/import** (read-only access requested only when you tap *Allow browsing my Drive for EPUBs* in Settings): navigate folders, search, one-tap import of `.epub` files. |
 
@@ -43,7 +50,7 @@ After a change, bump `VERSION` in `sw.js` (the worker is network-first, so updat
 ## Install on iPhone
 
 1. Open the hosted **https** URL in **Safari** (it must be Safari for Add to Home Screen on iOS).
-2. Tap **Share → Add to Home Screen → Add**. It launches full-screen, offline-capable, with its own icon.
+2. Tap **Share → Add to Home Screen → Add** (the app has an illustrated guide: Library menu → *Add to iPhone Home Screen*). It launches full-screen, offline-capable, with its own icon.
 3. Import some EPUBs (Library → ＋) or download from the Catalogs tab.
 4. Tip: iOS can evict website storage if an app is unused for a long time. The installed home-screen app asks for persistent storage, but to be safe turn on **Google sync** (state) and keep your EPUBs somewhere else too (book *files* are not uploaded).
 
@@ -57,7 +64,7 @@ A signed Android APK is published on the [Releases page](https://github.com/geek
 
 Notes:
 - The APK wraps the same web app using [Capacitor](https://capacitorjs.com) (app id `com.folio.reader`). It runs from the origin `https://localhost`; the Cloudflare proxy (`proxy/wrangler.toml`, `ALLOW_ORIGIN`) allows that origin alongside the GitHub Pages one.
-- **Google sign-in / Drive sync will not work in the APK until you set your own OAuth client.** Google rejects sign-in from the `https://localhost` origin unless it is listed on your OAuth Web client (add `https://localhost` under *Authorized JavaScript origins*, then set the Client ID in `config.js` or in Settings). The GIS popup flow may still be limited inside an Android WebView, so use the Files-app import for Drive books meanwhile.
+- **Google sign-in / Drive sync does not work inside the APK**: Google blocks OAuth in embedded WebViews (and the Identity Services popup can’t open there). The app shows a clear message with a link to the browser version (`webAppUrl` in `config.js`); sign in and sync there, and use the Files-app import for Drive books in the APK.
 - The APK is not updated automatically; install a newer release over the old one (same signing key) to upgrade.
 
 ### Building the APK yourself
@@ -95,19 +102,23 @@ So for Gutenberg downloads (and most self-hosted servers) use the **optional pro
 `GET {proxy}?url=<encoded target>` → streams the target back with CORS headers.
 
 * **Node** (no dependencies): `node proxy/server.js` → `http://localhost:8787/`. Env: `PORT`, `ALLOW_HOSTS`, `ALLOW_ORIGIN`, `ALLOW_PRIVATE=1` (only if the proxy runs on your own LAN next to your library server).
-* **Cloudflare Worker**: `cd proxy && npx wrangler deploy` (uses `worker.js` + `wrangler.toml`), then set `ALLOW_HOSTS` / `ALLOW_ORIGIN` in the dashboard.
+* **Cloudflare Worker**: `cd proxy && npx wrangler deploy` (uses `worker.js` + `wrangler.toml`), then set `ALLOW_ORIGIN` in the dashboard. **The current `worker.js` lets any public host through** (the piracy deny-list stays, and localhost / private / link-local addresses are refused); `ALLOW_HOSTS` is now optional and only matters with **`STRICT=1`**, which restores the old allow-list behaviour. Don’t redeploy an older copy over it.
 
-Safety: GET/HEAD only, http(s) only, **host allow-list** (default: Gutenberg, Standard Ebooks, Internet Archive, Open Library, Gutendex; add your own library host to `ALLOW_HOSTS`), private/loopback addresses blocked (Node), redirects re-validated, size cap, piracy-site deny-list, and `ALLOW_ORIGIN` should be set to your app's origin once deployed. Paste the proxy URL in **Settings → Network**.
+Safety: GET/HEAD only, http(s) only, private/loopback addresses blocked, and — for the **Node proxy** and the Worker with `STRICT=1` — a **host allow-list** (default: Gutenberg, Standard Ebooks, Internet Archive, Open Library, Gutendex; add your own library host to `ALLOW_HOSTS`), redirects re-validated, size cap, piracy-site deny-list, and `ALLOW_ORIGIN` should be set to your app's origin once deployed. Paste the proxy URL in **Settings → Network** (a bare host like `my-proxy.workers.dev` is fine; Folio adds `https://`).
+
+Proxy / network errors are shown in plain language: *“This site isn’t supported”* (proxy deny-list), *“That site blocked the request; try downloading in the browser and importing the file”* (HTTP 403 or a Cloudflare challenge page), and a plain proxy 400 shows the proxy’s own message (for example a private address).
 
 ## Add a source (OPDS / HTML)
 
-Catalogs tab → **+ Add a source** → paste a URL → **Check** (auto-detects OPDS Atom, OPDS JSON, or an HTML page; HTML pages that advertise an OPDS feed via `<link rel="alternate">` are followed) → **Add**.
+Catalogs tab → **+ Add a source** → paste a URL (https:// is optional, so `archive.org` or `my-calibre.example.com/opds` work; spaces are stripped and bad input gets a friendly inline message; Internet Archive, Project Gutenberg and Standard Ebooks addresses offer the built-in source, which works much better than the generic page mode, unless you explicitly pick *OPDS feed*) → **Check** (auto-detects OPDS Atom, OPDS JSON, or an HTML page; HTML pages that advertise an OPDS feed via `<link rel="alternate">` are followed) → **Add**.
 
 * OPDS: navigation feeds, acquisition feeds, `rel=next` pagination, OpenSearch description or `{searchTerms}` / `{?query}` templates, `application/epub+zip` acquisition links (lending/DRM "borrow" links are skipped), cover/thumbnail links. Project Gutenberg's two-step result entries are resolved lazily on download.
 * HTML mode: finds `<a href="….epub">` (also Calibre-Web `/download/<id>/epub`), grabs the nearest `<img>` and heading as cover/title, follows `rel=next`. If a page has no EPUB links, cards with cover images that link to detail pages are offered as navigation.
 * Not supported: sources behind HTTP Basic auth in the URL (browsers strip credentials from `fetch`), and sites that block cross-origin access without a proxy.
 
 ## Google sign-in & Drive sync (OAuth setup)
+
+**The OAuth client is already configured**: `config.js` carries the project’s public Web client ID (`609673488555-…apps.googleusercontent.com`; client IDs are not secrets) with authorized origins `https://geek4945-creator.github.io`, `https://localhost` and `http://localhost`, and scopes `drive.readonly`, `drive.appdata`, `openid`, `email`, `profile`. The consent screen is in **Testing** mode, so **every Google account that wants to sign in must be added as a *Test user*** (Google Cloud console → *APIs & Services → OAuth consent screen → Test users*); other accounts see an “access blocked” page. Test-mode grants also expire after 7 days (tap *Reconnect*), unless the app is published. **The Android app can’t sign in**: Google blocks OAuth inside app WebViews, so the app explains this and links to the browser version, where signing in and syncing work normally. The steps below are only needed if you fork the project or deploy somewhere else.
 
 The app uses **Google Identity Services** (token model, no server) with scopes `openid email profile` and `https://www.googleapis.com/auth/drive.appdata` (a private, hidden per-app folder; the app can't see your other Drive files). **Optional** Drive browse/import additionally requests `https://www.googleapis.com/auth/drive.readonly` (incremental, only after you opt in; it is a *restricted* scope, fine for personal use with Test users in *Testing* mode, but public release would need Google verification). If you don't want it, add only `drive.appdata` and ignore the button.
 
@@ -139,8 +150,13 @@ js/store.js      data layer (books, sets, shelves, orders, overrides, bookmarks,
 js/epubmeta.js   EPUB metadata / cover / series extraction
 js/google.js     Google sign-in, Drive appDataFolder sync (snapshot / merge / apply), Drive file listing/download
 js/drive.js      "Import from Google Drive" browser sheet
+js/kindle.js     Kindle format detection, DRM refusal, MOBI/AZW3 → EPUB conversion
+js/pdf.js, js/pdfreader.js   PDF import (metadata, cover) and the pdf.js reader
+js/pages.js      reader footer: page counting, calibration + IndexedDB cache
+js/publib.js     public library (Libby / OverDrive) guide, library finder, catalog search, DRM-free help
+js/install.js, js/fullscreen.js, js/env.js   Add-to-Home-Screen guide + banner, Full screen toggle, environment detection
 js/db.js settings.js util.js
-vendor/          epub.min.js (0.3.93), jszip.min.js (3.10.2) + licences
+vendor/          epub.min.js (0.3.93), jszip.min.js (3.10.2), foliate-mobi.js, pdfjs/ + licences
 proxy/           optional CORS proxy: server.js (Node), worker.js + wrangler.toml (Cloudflare)
 tests/           headless-Chrome end-to-end tests + mock catalog server + EPUB fixtures
 ```
@@ -157,14 +173,25 @@ node proxy/server.js &          # proxy on :8787 (for the Gutenberg download tes
 node tests/smoke.js             # quick import + no-page-errors check
 node tests/e2e.js               # library, reader, appearance, shelves, sets, custom order, drag-drop import (29 steps)
 node tests/e2e-catalogs-sync.js # catalogs (mock + live), Google sign-in/sync/Drive browse with Google mocked (24 steps)
+node tests/e2e-kindle.js        # MOBI / AZW3 / KF8 import (all paths), DRM refusal, series
+node tests/e2e-pdf.js           # PDF import + reader
+node tests/e2e-sort.js          # per-shelf / per-set sorting, default sort, reset-all
+node tests/e2e-group.js         # All view: Group by Status / None / Series / Author / File type
+node tests/e2e-delete.js        # single / multi-select / delete-all, Undo, cleanup, cross-device deletion sync
+node tests/e2e-pages.js         # reader footer: page counts, recalculation, cache, scroll mode, PDF, themes, safe areas
+node tests/e2e-install.js       # Add to Home Screen, Install app, Full screen, Android-app Google message
+node tests/e2e-source-url.js    # Add a source: bare domains, friendly errors, built-in redirects
+node tests/e2e-proxy-errors.js  # friendly proxy / site-blocked messages
+node tests/e2e-publib.js        # Libby / OverDrive finder (mocked, plus one live OverDrive call)
 ```
 
 Edit `executablePath` in the tests if Chrome isn't at `/usr/bin/google-chrome`. The live catalog steps need internet.
 
 ## Known gaps
 
-* Google sync was verified against a **mocked** Google (GIS + Drive REST) because no OAuth client is available here; the request shapes follow Google's docs but a real-account run is still to be done.
-* No DRM support (Adobe/LCP) and no PDF/MOBI/CBZ/audio: EPUB only. Lending ("borrow") catalog entries are skipped.
+* Google sync was verified against a **mocked** Google (GIS + Drive REST) because the tests can’t sign in to a real Google account; the OAuth client is configured (see above) but a real-account run on a device is still to be done.
+* No DRM support (Adobe/LCP, Kindle, KFX) and no CBZ/audio: EPUB, DRM-free MOBI/AZW3 and PDF only. Lending ("borrow") catalog entries are skipped; use Libby for loans.
+* Footer page numbers for EPUB are close estimates for chapters you haven’t opened yet (they firm up as you read), and *pages left* counts to the end of the current spine item (chapter file), not to the next TOC anchor inside one file. Selecting books works in the main Library view (not inside a set page).
 * Book files are not synced between devices (only state). A Drive-file sync would need the broader `drive.file` scope.
 * Drag-to-reorder works within one section/container at a time; there is no cross-shelf drag.
 * iOS PWA details were not testable on a physical iPhone here (tested with Chrome device emulation incl. touch events): check the long-press drag feel, install flow and the silent Google token renewal on a real device.

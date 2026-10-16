@@ -4,6 +4,7 @@ import { settings, SYNCED } from './settings.js';
 import { DB } from './db.js';
 import * as S from './store.js';
 import { onLibraryChange } from './store.js';
+import { isCapacitor } from './env.js';
 
 const SCOPES = 'openid email profile https://www.googleapis.com/auth/drive.appdata';
 const AUTH_KEY = 'folio.google';
@@ -15,6 +16,10 @@ const setStatus = (state, message = '') => { Object.assign(status, { state, mess
 export const getStatus = () => ({ ...status });
 
 export const getClientId = () => (localStorage.getItem('folio.gClientId') || (window.FOLIO_CONFIG && window.FOLIO_CONFIG.googleClientId) || '').trim();
+export const webAppUrl = () => (window.FOLIO_CONFIG && window.FOLIO_CONFIG.webAppUrl) || 'https://geek4945-creator.github.io/folio-reader/';
+/** Google blocks OAuth inside embedded WebViews (and the GIS popup can't open there), so the Android app can't sign in itself. */
+export const signInUnavailableHere = () => isCapacitor();
+export const ANDROID_SIGNIN_MSG = 'Google sign-in doesn’t work inside the Android app (Google blocks it in app WebViews). Open Folio in your browser to sign in and sync: ' ;
 export const setClientId = (id) => localStorage.setItem('folio.gClientId', id.trim());
 const load = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; } };
 const save = (a) => localStorage.setItem(AUTH_KEY, JSON.stringify(a));
@@ -36,11 +41,12 @@ function loadGis() {
 
 function requestToken(prompt, hint, scope = SCOPES) {
   return new Promise((resolve, reject) => {
+    if (isCapacitor()) return reject(new Error(ANDROID_SIGNIN_MSG + webAppUrl()));
     const cid = getClientId(); if (!cid) return reject(new Error('Add your Google OAuth Client ID in Settings first.'));
     const client = google.accounts.oauth2.initTokenClient({
       client_id: cid, scope, prompt, login_hint: hint || undefined,
       callback: (r) => (r.error ? reject(new Error(r.error_description || r.error)) : resolve(r)),
-      error_callback: (e) => reject(new Error(e.type === 'popup_closed' ? 'Sign-in window closed' : (e.message || e.type || 'Sign-in failed'))),
+      error_callback: (e) => reject(new Error(e.type === 'popup_closed' ? 'Sign-in window closed' : e.type === 'popup_failed_to_open' ? 'The sign-in window couldn’t open here. Allow pop-ups for this site, or open Folio in your browser: ' + webAppUrl() : (e.message || e.type || 'Sign-in failed'))),
     });
     client.requestAccessToken();
   });
@@ -69,6 +75,7 @@ export async function getToken() {
 }
 
 export async function signIn() {
+  if (isCapacitor()) throw new Error(ANDROID_SIGNIN_MSG + webAppUrl());
   await loadGis();
   const r = await requestToken(isSignedIn() ? '' : 'consent', getProfile()?.email);
   const scopes = r.scope || '';
@@ -91,7 +98,7 @@ export async function enableDriveBrowse() {
   if (!(r.scope || '').includes('drive.readonly')) throw new Error('Drive read access was not granted.');
   a.token = r.access_token; a.exp = Date.now() + (r.expires_in - 30) * 1000; a.scope = scope; save(a); scheduleRenew(a.exp);
 }
-const EPUB_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType='application/epub+zip' or name contains '.epub')";
+const EPUB_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType='application/epub+zip' or mimeType='application/pdf' or mimeType='application/x-mobipocket-ebook' or mimeType='application/vnd.amazon.ebook' or name contains '.epub' or name contains '.pdf' or name contains '.mobi' or name contains '.azw')";
 export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '' } = {}) {
   const q = search ? `trashed=false and name contains '${search.replace(/['\\]/g, ' ')}' and ${EPUB_Q}` : `trashed=false and '${folderId}' in parents and ${EPUB_Q}`;
   const u = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, orderBy: 'folder,name', pageSize: '50', fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)', spaces: 'drive', ...(pageToken ? { pageToken } : {}) });
@@ -141,7 +148,7 @@ export async function buildSnapshot() {
   const [books, sets, shelves, orders, bms] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks')]);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: b.updatedAt || 0 };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: b.updatedAt || 0 };   // untouched imports are 0 so another device's edits win
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
@@ -180,12 +187,15 @@ export function mergeSnapshots(local, remote) {
   out.shelves = mergeList('shelves', (x) => x.id, 'shelf');
   out.sets = mergeList('sets', (x) => x.id, 'set');
   out.orders = mergeList('orders', (x) => x.key);
-  out.books = {}; for (const k of new Set([...Object.keys(L.books), ...Object.keys(R.books)])) out.books[k] = lww(L.books[k], R.books[k]);
+  out.books = {}; const deadBooks = new Set();
+  for (const k of new Set([...Object.keys(L.books), ...Object.keys(R.books)])) { const st = lww(L.books[k], R.books[k]); if (dead('book', k, Math.max(st.updatedAt || 0, st.addedAt || 0))) deadBooks.add(k); else out.books[k] = st; }   // deleted on some device → gone everywhere
   out.bookmarks = {};
   for (const k of new Set([...Object.keys(L.bookmarks), ...Object.keys(R.bookmarks)])) {
     const m = new Map(); for (const x of [...(L.bookmarks[k] || []), ...(R.bookmarks[k] || [])]) m.set(x.id, lww(m.get(x.id), x));
     out.bookmarks[k] = [...m.values()].filter((x) => !dead('bookmark', x.id, x.updatedAt || 0));
   }
+  for (const k of deadBooks) delete out.bookmarks[k];
+  out.orders = out.orders.map((o) => ({ ...o, ids: o.ids.filter((x) => !(x.startsWith('b:') && deadBooks.has(x.slice(2)))) }));
   const live = new Set([...out.shelves.map((x) => x.id), ...out.sets.map((x) => x.id)]);
   for (const st of Object.values(out.books)) { st.shelves = (st.shelves || []).filter((id) => live.has(id)); if (st.setId && !live.has(st.setId)) st.setId = null; }
   out.idmap = [...idmap.entries()];
@@ -204,9 +214,10 @@ export async function applySnapshot(m) {
   for (const s of sets) if (!m.sets.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('sets', s.id);
   for (const s of shelves) if (!m.shelves.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('shelves', s.id);
   if ((m.settings.updatedAt || 0) > settings.updatedAt()) { settings.set(m.settings.values, { remote: true }); localStorage.setItem('folio.settings.at', String(m.settings.updatedAt)); }
-  const keyToId = new Map(); const pending = {}; let appliedBooks = 0;
+  const keyToId = new Map(); const pending = {}; let appliedBooks = 0, deletedBooks = 0;
   for (const b of books) {
-    const key = S.bookSyncKey(b); keyToId.set(key, b.id); const st = m.books[key]; if (!st) continue;
+    const key = S.bookSyncKey(b); keyToId.set(key, b.id); const st = m.books[key];
+    if (!st) { if ((m.tombstones || []).some((t) => t.t === 'book' && t.id === key && t.at >= Math.max(b.updatedAt || 0, b.addedAt || 0))) { await S.deleteBooks([b.id], { tomb: false, emit: false }); keyToId.delete(key); deletedBooks++; } continue; }   // deleted on another device
     const localAt = b.updatedAt || 0;
     if ((st.updatedAt || 0) > localAt) {
       Object.assign(b, { status: st.status, shelves: st.shelves, setId: st.setId, seriesIndex: st.seriesIndex, overrides: st.overrides, progress: st.progress, cfi: st.cfi, lastOpened: st.lastOpened, title: st.title || b.title, author: st.author || b.author, updatedAt: st.updatedAt, _noTouch: true });
@@ -235,7 +246,7 @@ export async function applySnapshot(m) {
   }
   for (const o of orders) if (!liveKeys.has(o.key) && (o.key.startsWith('set:') || o.key.startsWith('shelf:')) && !m.sets.concat(m.shelves).some((x) => o.key.endsWith(':' + x.id))) await DB.del('orders', o.key);
   localStorage.setItem('folio.tombs', JSON.stringify(m.tombstones || []));
-  return { appliedBooks, pending: Object.keys(pending).length };
+  return { appliedBooks, deletedBooks, pending: Object.keys(pending).length };
 }
 
 /* ---------- sync driver ---------- */

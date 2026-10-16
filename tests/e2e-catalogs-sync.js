@@ -51,8 +51,8 @@ const fakeLogin = (exp) => `localStorage.setItem('folio.google', JSON.stringify(
 
   // --- local mocks first (deterministic)
   await step('Add a source: auto-detect OPDS (Atom + OpenSearch) from pasted URL', async () => {
-    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet input[type=url]');
-    await page.type('.sheet input[type=url]', 'http://localhost:8766/opds'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found an OPDS catalog/.test(document.querySelector('.sheet').innerText), { timeout: 10000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet #source-url');
+    await page.type('.sheet #source-url', 'http://localhost:8766/opds'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found an OPDS catalog/.test(document.querySelector('.sheet').innerText), { timeout: 10000 });
     const msg = await page.$eval('.sheet .small:last-of-type', (e) => e.innerText).catch(() => ''); await clickText(page, '.sheet .btn.primary', 'Add'); await sleep(500);
     const names = await page.$$eval('.source strong', (e) => e.map((x) => x.innerText)); assert(names.includes('Mock Library'), names.join()); return 'added "Mock Library"';
   });
@@ -76,19 +76,19 @@ const fakeLogin = (exp) => `localStorage.setItem('folio.google', JSON.stringify(
     await goBack(); await sleep(300); await page.waitForSelector('input.search'); await search('dragons'); await waitCards(1); const t = await page.$eval('.card-t', (e) => e.innerText); assert(/dragons/.test(t), t); return t;
   });
   await step('Add OPDS 2.0 JSON feed (belongsTo.series) and browse', async () => {
-    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet input[type=url]');
-    await page.type('.sheet input[type=url]', 'http://localhost:8766/opds2.json'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found an? OPDS catalog/.test(document.querySelector('.sheet').innerText), { timeout: 10000 }); await clickText(page, '.sheet .btn.primary', 'Add'); await sleep(500);
+    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet #source-url');
+    await page.type('.sheet #source-url', 'http://localhost:8766/opds2.json'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found an? OPDS catalog/.test(document.querySelector('.sheet').innerText), { timeout: 10000 }); await clickText(page, '.sheet .btn.primary', 'Add'); await sleep(500);
     await page.evaluate(() => [...document.querySelectorAll('.source')].find((s) => /Mock OPDS 2/.test(s.innerText)).click()); await waitCards(1); const s = await page.$eval('.badge-series', (e) => e.innerText); assert(s === 'Json Series #2', s); return s;
   });
   await step('Generic HTML mode: finds EPUB link + cover on a page, downloads it', async () => {
-    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet input[type=url]');
-    await page.type('.sheet input[type=url]', 'http://localhost:8766/html'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found a web page/.test(document.querySelector('.sheet').innerText), { timeout: 10000 }); await clickText(page, '.sheet .btn.primary', 'Add'); await sleep(500);
+    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet #source-url');
+    await page.type('.sheet #source-url', 'http://localhost:8766/html'); await clickText(page, '.sheet .btn', 'Check'); await page.waitForFunction(() => /Found a web page/.test(document.querySelector('.sheet').innerText), { timeout: 10000 }); await clickText(page, '.sheet .btn.primary', 'Add'); await sleep(500);
     await page.evaluate(() => [...document.querySelectorAll('.source')].find((s) => /My Library/.test(s.innerText)).click()); await waitCards(1); const t = await page.$eval('.card-t', (e) => e.innerText); assert(t === 'HTML Book', t);
     const img = await page.$eval('.card img.cover-img', (i) => i.complete && i.naturalWidth > 0).catch(() => false); assert(img, 'cover not shown'); await dl('HTML Book'); await waitLib(2, 20000); return 'HTML Book + cover; downloaded';
   });
   await step('Piracy sites are rejected in Add a source', async () => {
-    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet input[type=url]');
-    await page.type('.sheet input[type=url]', 'https://z-lib.fm/'); await clickText(page, '.sheet .btn', 'Check'); await sleep(500); const m = await page.$eval('.sheet', (e) => e.innerText); assert(/not supported/.test(m), m); await clickText(page, '.sheet .btn-text', 'Done');
+    await goBack(); await sleep(300); await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Add a source/.test(b.textContent)).click()); await page.waitForSelector('.sheet #source-url');
+    await page.type('.sheet #source-url', 'https://z-lib.fm/'); await clickText(page, '.sheet .btn', 'Check'); await sleep(500); const m = await page.$eval('.sheet', (e) => e.innerText); assert(/not supported/.test(m), m); await clickText(page, '.sheet .btn-text', 'Done');
     const r = await page.evaluate(async () => { try { await (await import('/js/net.js')).fetchSmart('https://annas-archive.pk/'); return 'fetched'; } catch (e) { return e.message; } }); assert(/not supported/.test(r), r);
   });
 
@@ -107,7 +107,7 @@ const fakeLogin = (exp) => `localStorage.setItem('folio.google', JSON.stringify(
   await live('Internet Archive', 'Internet Archive', 'alice in wonderland', { download: '', timeout: 120000 });
   await live('Project Gutenberg OPDS (direct, expect CORS failure on download without proxy)', 'Project Gutenberg', 'dracula');
   await step('Gutenberg download without proxy → clear CORS guidance; with proxy → succeeds', async () => {
-    await dl('Dracula'); await sleep(8000); const msg = await page.evaluate(() => (document.querySelector('.sheet')?.innerText || '') + ' ' + document.querySelector('#toast').innerText);
+    await page.evaluate(() => window.__folio.settings.set({ proxyUrl: '' })); await dl('Dracula'); await sleep(8000); const msg = await page.evaluate(() => (document.querySelector('.sheet')?.innerText || '') + ' ' + document.querySelector('#toast').innerText);
     const before = (await booksDb(page)).length;
     assert(/CORS|proxy|blocked|reach/i.test(msg), 'no guidance: ' + msg); await page.evaluate(() => document.querySelector('#overlay').replaceChildren());
     await page.evaluate(() => window.__folio.settings.set({ proxyUrl: 'http://localhost:8787/' })); await dl('Dracula'); await waitLib(before + 1, 90000);

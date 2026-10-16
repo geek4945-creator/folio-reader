@@ -27,10 +27,17 @@ export const DEFAULTS = {
   lineHeight: 1.5,
   margin: 24,           // px, left/right
   flow: 'paginated',    // 'paginated' | 'scrolled'
+  pdfInvert: true,      // PDF: invert page colors in dark themes
   tapZones: 'on',       // 'on' | 'off' | 'inverted'
   view: 'grid',         // library view: grid | list
-  sort: 'recent',       // title | author | recent | custom
+  sort: 'recent',       // legacy global sort (kept for old synced data; see sorts/defaultSort)
   lastAutoSort: 'recent',
+  defaultSort: { field: 'recent', dir: 'desc' },   // applies to any shelf / set without its own saved sort
+  publicLibrary: null,  // chosen OverDrive/Libby library: { name, key, fid, city, region }
+  sorts: {},            // per context: 'shelf:all' | 'shelf:reading|want|finished' | 'shelf:<shelfId>' | 'set:<setId>' → { field, dir }
+  groupBy: 'status',    // All view: 'status' | 'none' (flat) | 'series' | 'author' | 'type'
+  footerPages: true,    // reader footer: "Page X of Y"
+  footerLeft: true,     // reader footer: "N pages left in chapter"
   groupSets: true,
   showFinished: true,   // show Finished as its own section in the All view
   chip: 'all',          // selected shelf chip
@@ -39,7 +46,7 @@ export const DEFAULTS = {
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };
 
-export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'showFinished', 'setSort'];
+export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary'];
 let state = { ...DEFAULTS };
 try { Object.assign(state, JSON.parse(localStorage.getItem('folio.settings') || '{}')); } catch { /* ignore */ }
 const listeners = new Set();
@@ -58,6 +65,30 @@ export const settings = {
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
 };
 
+/* ---------- sorting: per shelf / set, with a default ---------- */
+export const GROUP_OPTIONS = [['status', 'Status (Reading / Want / Finished)'], ['none', 'None (one flat list)'], ['series', 'Series'], ['author', 'Author'], ['type', 'File type']];
+export const SORT_FIELDS = [['recent', 'Recently read'], ['added', 'Recently added'], ['title', 'Title'], ['author', 'Author'], ['series', 'Series'], ['progress', 'Reading progress'], ['type', 'File type'], ['custom', 'Custom order']];
+export const SET_SORT_FIELDS = [['volume', 'Volume order'], ['title', 'Title'], ['added', 'Recently added'], ['custom', 'Custom order']];
+export const DEFAULT_DIR = { recent: 'desc', added: 'desc', progress: 'desc', title: 'asc', author: 'asc', series: 'asc', type: 'asc', volume: 'asc', custom: 'asc' };
+export const dirWord = (field, dir) => ({ title: dir === 'asc' ? 'A–Z' : 'Z–A', author: dir === 'asc' ? 'A–Z' : 'Z–A', series: dir === 'asc' ? 'A–Z' : 'Z–A', type: dir === 'asc' ? 'A–Z' : 'Z–A', volume: dir === 'asc' ? '1→N' : 'N→1', recent: dir === 'desc' ? 'newest first' : 'oldest first', added: dir === 'desc' ? 'newest first' : 'oldest first', progress: dir === 'desc' ? 'most read first' : 'least read first' }[field] || dir);
+/** Effective sort for a context ('shelf:all', 'shelf:<id>', 'set:<id>'): its own saved sort, else the default sort. */
+export function getSort(ctxKey) {
+  const isSet = ctxKey.startsWith('set:'); const own = state.sorts && state.sorts[ctxKey];
+  const valid = (f) => (isSet ? SET_SORT_FIELDS : SORT_FIELDS).some(([k]) => k === f);
+  if (own && valid(own.field)) return { field: own.field, dir: own.dir || DEFAULT_DIR[own.field], own: true };
+  const d = state.defaultSort || { field: 'recent', dir: 'desc' };
+  if (valid(d.field) && d.field !== 'custom') return { field: d.field, dir: d.dir || DEFAULT_DIR[d.field], own: false };
+  return { field: isSet ? 'volume' : 'recent', dir: DEFAULT_DIR[isSet ? 'volume' : 'recent'], own: false };
+}
+export function setSort(ctxKey, patch) {
+  const cur = getSort(ctxKey); const next = { field: patch.field || cur.field, dir: patch.dir || (patch.field ? DEFAULT_DIR[patch.field] : cur.dir) };
+  settings.set({ sorts: { ...(state.sorts || {}), [ctxKey]: next } });
+}
+export function clearSort(ctxKey) { const o = { ...(state.sorts || {}) }; delete o[ctxKey]; settings.set({ sorts: o }); }
+export function resetAllSorts() { settings.set({ sorts: {} }); }
+export function setDefaultSort(patch) { const d = state.defaultSort || { field: 'recent', dir: 'desc' }; const field = patch.field || d.field; settings.set({ defaultSort: { field, dir: patch.dir || (patch.field ? DEFAULT_DIR[field] : d.dir) } }); }
+
+try { const saved = JSON.parse(localStorage.getItem('folio.settings') || '{}'); if (!saved.defaultSort && saved.sort && saved.sort !== 'custom' && DEFAULT_DIR[saved.sort]) state.defaultSort = { field: saved.sort, dir: DEFAULT_DIR[saved.sort] }; } catch { /* ignore */ }
 export const FONT_MIN = 8, FONT_MAX = 60, FONT_STEP = 0.5;
 export const clampPt = (v) => Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round((Number(v) || 15) * 2) / 2));
 

@@ -17,8 +17,15 @@ export function isEpubType(type, url = '') {
   return EPUB_RE.test(type || '') || /\.epub(\?|$)/i.test(url) || /\/epub(\.|$|\?)/i.test(url);
 }
 
+export function isKindleType(type, url = '') {
+  return /mobipocket|x-mobi8|vnd\.amazon\.(ebook|mobi)|x-kindle/i.test(type || '') || /\.(mobi|azw3?|kf8)(\?|$)/i.test(url);
+}
+export function isPdfType(type, url = '') { return /application\/pdf/i.test(type || '') || /\.pdf(\?|$)/i.test(url); }
+/** Best downloadable book: EPUB first, then a Kindle file (MOBI/AZW3, converted on import), then PDF. */
 function pickEpub(downloads) {
-  const eps = downloads.filter((d) => isEpubType(d.type, d.url));
+  let eps = downloads.filter((d) => isEpubType(d.type, d.url));
+  if (!eps.length) eps = downloads.filter((d) => isKindleType(d.type, d.url)).sort((a, b) => (/azw3|kf8|mobi8/i.test(b.type + b.url) ? 1 : 0) - (/azw3|kf8|mobi8/i.test(a.type + a.url) ? 1 : 0));
+  if (!eps.length) eps = downloads.filter((d) => isPdfType(d.type, d.url));
   if (!eps.length) return null;
   // Prefer epub3 / with images, then the first.
   eps.sort((a, b) => score(b) - score(a));
@@ -82,7 +89,7 @@ function parseAtom(doc, base) {
 
 function formatLabel(type, url) {
   if (isEpubType(type, url)) return 'EPUB';
-  if (/pdf/i.test(type)) return 'PDF'; if (/mobi|kindle/i.test(type)) return 'MOBI'; if (/text\/plain/i.test(type)) return 'TXT';
+  if (/pdf/i.test(type)) return 'PDF'; if (/\.azw3?(\?|$)/i.test(url)) return 'AZW3'; if (/mobi|kindle/i.test(type) || /\.mobi(\?|$)/i.test(url)) return 'MOBI'; if (/text\/plain/i.test(type)) return 'TXT';
   if (/html/i.test(type)) return 'HTML'; return (type || 'file').split('/').pop().toUpperCase().slice(0, 8);
 }
 
@@ -184,7 +191,7 @@ export function parseHtmlListing(html, base) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const isEpubLink = (a) => {
     const href = a.getAttribute('href') || '';
-    return isEpubType(a.getAttribute('type'), href) || /\/download\/\d+\/epub/i.test(href) || /\/get\/EPUB\//i.test(href) || /\bformat=epub\b/i.test(href);
+    return isEpubType(a.getAttribute('type'), href) || isKindleType(a.getAttribute('type'), href) || /\/download\/\d+\/epub/i.test(href) || /\/get\/EPUB\//i.test(href) || /\bformat=epub\b/i.test(href);
   };
   const cardOf = (a) => a.closest('li, article, tr, .card, .book, .item, .entry, [class*="book"], [class*="card"]') || a.parentElement;
   const og = doc.querySelector('meta[property="og:image"]')?.content;

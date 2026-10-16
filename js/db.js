@@ -2,7 +2,7 @@
 // Stores: books (metadata + cover blob), files (epub blobs), bookmarks, sets (series),
 // shelves (custom), orders (manual order per context), sources (catalog sources).
 const NAME = 'folio-reader';
-const VERSION = 1;
+const VERSION = 2;   // v2: pagecache (page-count caches for the reader footer)
 let dbp;
 const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders']);
 
@@ -11,15 +11,11 @@ function open() {
   dbp = new Promise((resolve, reject) => {
     const req = indexedDB.open(NAME, VERSION);
     req.onupgradeneeded = () => {
-      const db = req.result;
-      db.createObjectStore('books', { keyPath: 'id' });
-      db.createObjectStore('files', { keyPath: 'id' });
-      const bm = db.createObjectStore('bookmarks', { keyPath: 'id' });
-      bm.createIndex('bookId', 'bookId');
-      db.createObjectStore('sets', { keyPath: 'id' });
-      db.createObjectStore('shelves', { keyPath: 'id' });
-      db.createObjectStore('orders', { keyPath: 'key' });
-      db.createObjectStore('sources', { keyPath: 'id' });
+      const db = req.result; const mk = (n, opts, f) => { if (!db.objectStoreNames.contains(n)) { const o = db.createObjectStore(n, opts); f && f(o); } };
+      mk('books', { keyPath: 'id' }); mk('files', { keyPath: 'id' });
+      mk('bookmarks', { keyPath: 'id' }, (o) => o.createIndex('bookId', 'bookId'));
+      mk('sets', { keyPath: 'id' }); mk('shelves', { keyPath: 'id' }); mk('orders', { keyPath: 'key' }); mk('sources', { keyPath: 'id' });
+      mk('pagecache', { keyPath: 'key' });   // not synced: {key: '<bookId>|chars' | '<bookId>|k' | '<bookId>|cal|<layout>', bookId, v}
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -54,7 +50,9 @@ export const DB = {
   async deleteBookData(id) {
     const db = await open();
     const bms = await this.byIndex('bookmarks', 'bookId', id);
-    const tx = db.transaction(['books', 'files', 'bookmarks'], 'readwrite');
+    const pc = (await this.all('pagecache')).filter((x) => x.bookId === id);
+    const tx = db.transaction(['books', 'files', 'bookmarks', 'pagecache'], 'readwrite');
+    for (const x of pc) tx.objectStore('pagecache').delete(x.key);
     tx.objectStore('books').delete(id);
     tx.objectStore('files').delete(id);
     for (const b of bms) tx.objectStore('bookmarks').delete(b.id);

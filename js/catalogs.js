@@ -1,8 +1,11 @@
 // Catalogs tab: browse/search OPDS, Gutendex, Internet Archive, and generic HTML sources; one-tap download into the library.
 import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, hashHue, put } from './util.js';
+import { detectKindle } from './kindle.js';
+import { openPublicLibraryGuide } from './publib.js';
+import { isPdf } from './pdf.js';
 import { loadFeed, loadHtml, resolveSearch, expandTemplate, detectSource, pickEpub, isEpubType } from './opds.js';
-import { fetchSmart, download, isBlockedSite, openLibraryCover, CorsError } from './net.js';
-import { getSources, addSource, removeSource, restoreSeeds, addBookFromBuffer, getBooks } from './store.js';
+import { fetchSmart, download, isBlockedSite, openLibraryCover, CorsError, SiteError, normalizeUrl } from './net.js';
+import { getSources, addSource, removeSource, restoreSeeds, SEED_SOURCES, addBookFromBuffer, getBooks } from './store.js';
 import { settings } from './settings.js';
 import { openDriveBrowser } from './drive.js';
 import * as G from './google.js';
@@ -72,18 +75,21 @@ export async function renderCatalogs(view) {
   if (st.src) return renderBrowse();
   const srcs = await getSources();
   put(view, 
-    h('header', { class: 'topbar' }, h('h1', null, 'Catalogs'), h('button', { class: 'btn primary small', onclick: addSourceSheet }, '+ Add a source')),
+    h('header', { class: 'topbar' }, h('h1', null, 'Catalogs'), h('button', { class: 'btn primary small', id: 'add-source', onclick: () => addSourceSheet() }, '+ Add a source')),
+    h('div', { class: 'pad' }, h('button', { class: 'plib-card', id: 'plib-card', onclick: () => openPublicLibraryGuide() },
+      h('span', { class: 'plib-ico' }, '🏛️'), h('span', { class: 'grow' }, h('strong', null, 'Public library'), h('span', { class: 'muted small block' }, 'Find your library, search its catalog and see what’s available to borrow with Libby')), h('span', { class: 'chev' }, '›'))),
     h('p', { class: 'muted pad' }, 'Browse legal, open catalogs and download EPUBs straight into your library. Add your own OPDS server, Calibre-Web, or a page that links to your books.'),
     h('div', { class: 'list pad' }, h('div', { class: 'list-item source', id: 'src-drive', onclick: openDriveBrowser },
       h('div', { class: 'src-ico', style: { background: '#1a73e8' } }, 'G'), h('div', { class: 'grow' }, h('strong', null, 'Google Drive'), h('div', { class: 'muted small' }, G.isSignedIn() ? 'Browse your Drive and import EPUBs' : 'Sign in with Google in Settings to use')), h('span', { class: 'chev' }, '›')),
       srcs.map((s) => h('div', { class: 'list-item source', onclick: () => open(s) },
       h('div', { class: 'src-ico', style: { background: `hsl(${hashHue(s.name)} 45% 45%)` } }, s.name[0]),
-      h('div', { class: 'grow' }, h('strong', null, s.name), h('div', { class: 'muted small' }, s.note || (s.kind.toUpperCase() + ' · ' + (new URL(s.url).hostname)))),
+      h('div', { class: 'grow' }, h('strong', null, s.name), h('div', { class: 'muted small' }, s.note || (s.kind.toUpperCase() + ' · ' + hostOf(s.url)))),
       h('button', { class: 'btn-icon', 'aria-label': 'Source options', onclick: (e) => { e.stopPropagation(); sourceMenu(s); } }, '⋯')))),
     h('p', { class: 'muted small pad' }, 'Folio supports legal sources only. Piracy sites are blocked.'),
   );
 }
 
+const hostOf = (u) => { try { return new URL(u).hostname; } catch { return u; } };
 function sourceMenu(s) {
   actionSheet(s.name, [
     { label: 'Rename', onClick: async () => { const n = await promptDlg('Rename source', s.name); if (n) { s.name = n; await addSource({ ...s, order: s.order }); renderCatalogs(root); } } },
@@ -167,8 +173,8 @@ function coverImg(entry) {
 
 function card(entry) {
   const btn = h('button', { class: 'btn primary small dl', onclick: (e) => { e.stopPropagation(); doDownload(entry, btn); } }, 'Download');
-  if (entry.kind === 'book' && !entry.downloads.length && !entry.needsResolve && !entry.downloads.length && entry.kind !== 'lazy') { btn.textContent = 'No EPUB'; btn.disabled = true; }
-  else if (entry.kind === 'book' && entry.downloads.length && !pickEpub(entry.downloads)) { btn.textContent = 'No EPUB (' + [...new Set(entry.downloads.map((d) => d.label))].join('/') + ')'; btn.disabled = true; }
+  if (entry.kind === 'book' && !entry.downloads.length && !entry.needsResolve && !entry.downloads.length && entry.kind !== 'lazy') { btn.textContent = 'No EPUB/MOBI/PDF'; btn.disabled = true; }
+  else if (entry.kind === 'book' && entry.downloads.length && !pickEpub(entry.downloads)) { btn.textContent = 'No EPUB/MOBI/PDF (' + [...new Set(entry.downloads.map((d) => d.label))].join('/') + ')'; btn.disabled = true; }
   return h('div', { class: 'card', 'data-key': entry.id, onclick: () => details(entry, btn) },
     coverImg(entry), h('div', { class: 'card-t clamp2' }, entry.title), h('div', { class: 'card-a muted ellipsis' }, entry.author || ' '),
     entry.series ? h('div', { class: 'badge-series' }, entry.series + (entry.seriesIndex != null ? ' #' + entry.seriesIndex : '')) : null, btn);
@@ -196,53 +202,72 @@ async function doDownload(entry, btn) {
     }
     if (e.needsResolve) { entry.downloads = e.downloads = await iaResolve(e); }
     const dl = pickEpub(e.downloads);
-    if (!dl) throw new Error('No EPUB version is offered for this title.' + (e.downloads.length ? ' (Available: ' + e.downloads.map((d) => d.label).join(', ') + ')' : ''));
+    if (!dl) throw new Error('No EPUB, MOBI/AZW3 or PDF version is offered for this title.' + (e.downloads.length ? ' (Available: ' + e.downloads.map((d) => d.label).join(', ') + ')' : ''));
     const blob = await download(dl.url, (p) => { btn.textContent = Math.round(p * 100) + '%'; });
     btn.textContent = 'Importing…';
     const buf = await blob.arrayBuffer();
     const sig = new Uint8Array(buf.slice(0, 2));
-    if (sig[0] !== 0x50 || sig[1] !== 0x4b) throw new Error('The server did not return an EPUB file (it may require a login or a different link).');
-    await addBookFromBuffer(buf, { sourceKey: entry.id, source: st.src?.name, title: e.title, author: e.author, summary: e.summary, series: e.series, seriesIndex: e.seriesIndex, coverUrl: e.cover });
+    if ((sig[0] !== 0x50 || sig[1] !== 0x4b) && !detectKindle(buf) && !isPdf(buf)) throw new Error('The server did not return an EPUB, MOBI or PDF file (it may require a login or a different link).');
+    await addBookFromBuffer(buf, { filename: dl.url.split('?')[0].split('/').pop(), sourceKey: entry.id, source: st.src?.name, title: e.title, author: e.author, summary: e.summary, series: e.series, seriesIndex: e.seriesIndex, coverUrl: e.cover });
     setOwned(btn); toast('Added “' + e.title + '” to your library');
   } catch (err) {
     btn.disabled = false; btn.textContent = /Already/.test(err.message) ? '✓ In library' : label; if (/Already/.test(err.message)) setOwned(btn);
     toast(err.message || 'Download failed', 5200);
-    if (err instanceof CorsError || /CORS|proxy/i.test(err.message)) sheet('Download blocked by the browser', () => [
+    if (!(err instanceof SiteError) && (err instanceof CorsError || /CORS|proxy/i.test(err.message))) sheet('Download blocked by the browser', () => [
       h('p', null, 'This server doesn’t allow downloads from web apps (CORS). Fix it by pointing Folio at the small proxy included with the project (Settings → Network), or download the EPUB in Safari and use Import in the Library tab.')]);
   }
 }
 
 /* ---------- Add a source ---------- */
-function addSourceSheet() {
-  const url = h('input', { class: 'field', type: 'url', placeholder: 'https://example.com/opds', autocapitalize: 'none', autocorrect: 'off', inputmode: 'url' });
+/** Hosts that already have a purpose-built, better source. */
+const BUILTIN_HOSTS = [[/(^|\.)archive\.org$/i, 'seed-ia'], [/(^|\.)gutenberg\.org$/i, 'seed-gutenberg'], [/(^|\.)standardebooks\.org$/i, 'seed-se']];
+export function builtinFor(u) { try { const h = new URL(u).hostname; const hit = BUILTIN_HOSTS.find(([re]) => re.test(h)); return hit ? hit[1] : null; } catch { return null; } }
+
+export function addSourceSheet(prefill = '') {
+  if (typeof prefill !== 'string') prefill = '';   // (e.g. when used directly as a click handler)
+  const url = h('input', { class: 'field', id: 'source-url', type: 'text', placeholder: 'archive.org or https://example.com/opds', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', inputmode: 'url' });
   const name = h('input', { class: 'field', type: 'text', placeholder: 'Name (optional)' });
-  const kind = h('select', { class: 'field' }, h('option', { value: 'auto' }, 'Auto-detect'), h('option', { value: 'opds' }, 'OPDS feed (Atom / JSON)'), h('option', { value: 'html' }, 'Web page with EPUB links (generic)'));
-  const out = h('div', { class: 'muted small' }); let found = null;
+  const kind = h('select', { class: 'field', id: 'source-kind' }, h('option', { value: 'auto' }, 'Auto-detect'), h('option', { value: 'opds' }, 'OPDS feed (Atom / JSON)'), h('option', { value: 'html' }, 'Web page with EPUB links (generic)'));
+  const out = h('div', { class: 'muted small', id: 'source-out', role: 'status' }); let found = null;
+  const say = (msg, err = false) => { out.replaceChildren(msg); out.classList.toggle('err', err); };
+  /** Normalize what was typed; shows a friendly inline error and returns null if it can't be an address. */
+  const parse = () => { try { const u = normalizeUrl(url.value); url.value = u; return u; } catch (e) { say(e.message, true); return null; } };
+  /** Known sites get their built-in source instead of the generic HTML mode. Returns true when it showed the offer. */
+  const offerBuiltin = async (u) => {
+    if (kind.value === 'opds') return false;   // an explicit OPDS choice is respected
+    const id = builtinFor(u); if (!id) return false;
+    const seed = (await getSources()).find((x) => x.id === id) || SEED_SOURCES.find((x) => x.id === id);
+    out.classList.remove('err'); out.replaceChildren(`${new URL(u).hostname} already has a built-in source, “${seed.name}”, which works better than the generic page mode. `,
+      h('button', { class: 'btn small primary', id: 'builtin-offer', onclick: async () => { await restoreSeeds(); const src = (await getSources()).find((x) => x.id === id); s.close(); if (!(root && root.isConnected)) { document.querySelector('[data-tab=catalogs]')?.click(); await new Promise((r) => setTimeout(r, 80)); } if (src) await open(src); } }, 'Open “' + seed.name + '”'));
+    return true;
+  };
   const s = sheet('Add a source', (close) => [
-    h('p', { class: 'muted small' }, 'Paste the address of an OPDS catalog (Calibre-Web: /opds, Calibre content server: /opds, COPS, Kavita, Komga, Project Gutenberg…) or a page on your own server that links to EPUB files.'),
+    h('p', { class: 'muted small' }, 'Paste the address of an OPDS catalog (Calibre-Web: /opds, Calibre content server: /opds, COPS, Kavita, Komga, Project Gutenberg…) or a page on your own server that links to EPUB files. You can leave off https://.'),
     url, name, kind, out,
     h('div', { class: 'row-actions' },
-      h('button', { class: 'btn', onclick: async () => {
-        found = null; const u = url.value.trim();
-        if (!/^https?:\/\//i.test(u)) { out.textContent = 'Enter a full http(s) address.'; return; }
-        if (isBlockedSite(u)) { out.textContent = 'That site is not supported: Folio only connects to legal catalogs and your own libraries.'; return; }
-        out.textContent = 'Checking…';
+      h('button', { class: 'btn', id: 'source-check', onclick: async () => {
+        found = null; const u = parse(); if (!u) return;
+        if (isBlockedSite(u)) { say('That site is not supported: Folio only connects to legal catalogs and your own libraries.', true); return; }
+        if (await offerBuiltin(u)) return;
+        say('Checking…');
         try {
           if (kind.value === 'html') { const f = await loadHtml(u); found = { kind: 'html', url: u, feed: f, name: f.title }; }
           else if (kind.value === 'opds') { const f = await loadFeed(u); found = { kind: 'opds', url: u, feed: f, name: f.title }; }
           else found = await detectSource(u);
-          const books = found.feed.entries.filter((e) => e.kind !== 'nav').length;
-          out.textContent = `Found ${found.kind === 'opds' ? 'an OPDS catalog' : 'a web page'}: “${found.name}” — ${found.feed.entries.length} entries${books ? ` (${books} books)` : ''}.`;
+          found.inputUrl = u; const books = found.feed.entries.filter((e) => e.kind !== 'nav').length;
+          say(`Found ${found.kind === 'opds' ? 'an OPDS catalog' : 'a web page'}: “${found.name}” — ${found.feed.entries.length} entries${books ? ` (${books} books)` : ''}.`);
           if (!name.value) name.value = (found.name || '').slice(0, 60);
-        } catch (e) { out.textContent = e.message + (e instanceof CorsError ? '' : ''); }
+        } catch (e) { say(e.message || String(e), true); }
       } }, 'Check'),
-      h('button', { class: 'btn primary', onclick: async () => {
-        const u = url.value.trim();
-        if (!found) { out.textContent = 'Press Check first.'; return; }
-        await addSource({ name: name.value.trim() || found.name || new URL(u).hostname, kind: found.kind, url: found.url, note: found.kind === 'opds' ? 'OPDS catalog' : 'Web page (generic mode)' });
-        close(); toast('Source added'); renderCatalogs(root);
+      h('button', { class: 'btn primary', id: 'source-add', onclick: async () => {
+        const u = parse(); if (!u) return;
+        if (await offerBuiltin(u)) return;
+        if (!found || found.inputUrl !== u) { say('Press Check first.', true); return; }
+        await addSource({ name: name.value.trim() || found.name || hostOf(found.url), kind: found.kind, url: found.url, note: found.kind === 'opds' ? 'OPDS catalog' : 'Web page (generic mode)' });
+        close(); toast('Source added'); if (root && root.isConnected) renderCatalogs(root);
       } }, 'Add')),
   ], { tall: true });
+  if (prefill) url.value = prefill;
   setTimeout(() => url.focus(), 60);
   return s;
 }

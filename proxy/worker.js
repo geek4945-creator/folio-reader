@@ -20,7 +20,9 @@ export default {
       if (!/^https?:$/.test(u.protocol)) throw new Error('only http(s)');
       const h = u.hostname.toLowerCase();
       if (DENY.some((r) => r.test(h))) throw new Error('site not supported');
-      if (!allow.some((a) => h === a || h.endsWith('.' + a))) throw new Error('host not allowed (set ALLOW_HOSTS)');
+      if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || /^\[/.test(h) || /^(0|10|127|169\.254|172\.(1[6-9]|2\d|3[01])|192\.168|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\./.test(h) || /^\d+$/.test(h)) throw new Error('private addresses are not allowed');
+      // Any public host is allowed (the DENY list above still applies). ALLOW_HOSTS is kept for compatibility; set STRICT=1 to restrict to the allow list.
+      if (env.STRICT === '1' && !allow.some((a) => h === a || h.endsWith('.' + a))) throw new Error('host not allowed (set ALLOW_HOSTS)');
     };
     try {
       let u = new URL(target), r;

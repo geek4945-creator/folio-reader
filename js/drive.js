@@ -29,7 +29,7 @@ export async function openDriveBrowser() {
         if (f.mimeType === 'application/vnd.google-apps.folder') list.append(row('📁 ' + f.name, '›', () => { search = ''; q.value = ''; path.push({ id: f.id, name: f.name }); load(true); }, 'folder'));
         else list.append(importRow(f));
       }
-      if (reset && !d.files.length) list.append(h('p', { class: 'muted pad' }, 'No folders or EPUB files here.'));
+      if (reset && !d.files.length) list.append(h('p', { class: 'muted pad' }, 'No folders or book files (EPUB, PDF, MOBI, AZW3) here.'));
       tok = d.nextPageToken || ''; more.hidden = !tok;
     } catch (e) { list.replaceChildren(h('p', { class: 'err pad' }, e.message)); }
     busy = false;
@@ -39,7 +39,7 @@ export async function openDriveBrowser() {
   function importRow(f) {
     const btn = h('button', { class: 'btn primary small dl', onclick: async (e) => {
       e.stopPropagation(); btn.disabled = true; btn.textContent = 'Downloading…';
-      try { const blob = await G.downloadDriveFile(f.id); btn.textContent = 'Importing…'; await addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id }); btn.textContent = '✓ Added'; toast('Imported “' + f.name + '”'); }
+      try { const blob = await G.downloadDriveFile(f.id); btn.textContent = 'Importing…'; await addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id, filename: f.name }); btn.textContent = '✓ Added'; toast('Imported “' + f.name + '”'); }
       catch (err) { btn.disabled = false; btn.textContent = /Already|already/.test(err.message) ? '✓ In library' : 'Import'; toast(err.message, 5000); }
     } }, 'Import');
     return h('div', { class: 'list-item file', 'data-id': f.id }, h('span', { class: 'grow' }, f.name, h('div', { class: 'muted small' }, fmtSize(+f.size))), btn);
