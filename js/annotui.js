@@ -8,6 +8,21 @@ import { highlightSupported, lastWordHold, wordBubbleOpen } from './wordbubble.j
 let ui = null;      // { host, contents, range, text, menu, hs, he, drag }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+const BLOCK = 'p,div,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,dd,dt,pre,section,article,figcaption,tr';
+/** The visible text of a range with a space where one block ends and the next begins (Range.toString() would glue paragraphs together); page labels of the PDF text view are skipped. */
+export function rangeText(range) {
+  const root = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentNode; const doc = root.ownerDocument;
+  const w = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT); let out = '', last = null, n;
+  const first = range.startContainer.nodeType === 3 ? range.startContainer : null; if (first) w.currentNode = first;
+  for (n = first || w.nextNode(); n; n = w.nextNode()) {
+    if (!range.intersectsNode(n)) { if (n === first) continue; if (out) break; continue; }
+    const p = n.parentElement; if (!p || p.closest('script,style,.pdf-tp-n')) continue;
+    let a = n === range.startContainer ? range.startOffset : 0, b = n === range.endContainer ? range.endOffset : n.data.length; if (b <= a) { if (n === range.endContainer) break; continue; }
+    const blk = p.closest(BLOCK); if (last && blk !== last) out += ' '; last = blk; out += n.data.slice(a, b);
+    if (n === range.endContainer) break;
+  }
+  return norm(out);
+}
 export const hlCss = () => A.COLORS.map((c) => `::highlight(folio-hl-${c.id}) { background-color: ${c.hex}8c; color: inherit; }`).join('\n') + '\n::highlight(folio-hl-noted) { text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 2px; text-underline-offset: 3px; }\n';
 
 /* ------------------------------------------------------------------ painting */
@@ -83,7 +98,7 @@ const isOpen = () => !!ui;
 export const selectionActive = () => !!ui;
 
 function showUi(host, contents, range, opts = {}) {
-  const text = norm(range.toString()); if (!text) { closeSelectionUI(); return; }
+  const text = rangeText(range); if (!text) { closeSelectionUI(); return; }
   if (ui && ui.contents !== contents) closeSelectionUI(false);
   if (!ui) {
     const root = host.root();
@@ -130,7 +145,7 @@ function beginDrag(e, which) {
   u.drag = { which, fixed: which === 'start' ? { n: r.endContainer, o: r.endOffset } : { n: r.startContainer, o: r.startOffset }, lastTurn: 0, px: e.clientX, py: e.clientY };
   el.classList.add('drag'); u.menu.style.opacity = '0.35';
   const move = (ev) => { if (ui !== u || !u.drag) return; u.drag.px = ev.clientX; u.drag.py = ev.clientY; dragTo(); };
-  const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.classList.remove('drag'); clearInterval(u.edge); if (ui === u) { u.drag = null; u.menu.style.opacity = ''; u.range = currentRange(u) || u.range; u.text = norm(u.range.toString()); place(); } };
+  const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.classList.remove('drag'); clearInterval(u.edge); if (ui === u) { u.drag = null; u.menu.style.opacity = ''; u.range = currentRange(u) || u.range; u.text = rangeText(u.range); place(); } };
   el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
   u.edge = setInterval(() => edgeScroll(u), 140);
 }
@@ -139,7 +154,7 @@ function dragTo() {
   const u = ui; if (!u || !u.drag) return; const d = u.drag; const doc = u.contents.document; const off = frameOff(doc);
   // the finger is on the handle (below the line): aim at the text line just above it
   const c = caretAt(doc, d.px - off.x, d.py - off.y - 14); if (!c) return;
-  try { const s = u.contents.window.getSelection(); s.setBaseAndExtent(d.fixed.n, d.fixed.o, c.n, c.o); const r = currentRange(u); if (r) { u.range = r; u.text = norm(r.toString()); } } catch { /* ignore */ }
+  try { const s = u.contents.window.getSelection(); s.setBaseAndExtent(d.fixed.n, d.fixed.o, c.n, c.o); const r = currentRange(u); if (r) { u.range = r; u.text = rangeText(r); } } catch { /* ignore */ }
   place();
 }
 async function edgeScroll(u) {
@@ -166,7 +181,7 @@ export function onSelectionChange(host, contents) {
   let s; try { s = contents.window.getSelection(); } catch { return; }
   if (!s || !s.rangeCount || s.isCollapsed) { if (ui && ui.contents === contents) closeSelectionUI(false); return; }
   if (wordBubbleOpen() || Date.now() - lastWordHold() < 1400) return;
-  const range = s.getRangeAt(0).cloneRange(); if (!norm(range.toString())) return;
+  const range = s.getRangeAt(0).cloneRange(); if (!rangeText(range)) return;
   showUi(host, contents, range);
 }
 
