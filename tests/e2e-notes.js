@@ -154,6 +154,21 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     assert(/^# Notes Book/.test(md) && /## Chapter One/.test(md) && /> Paragraph 1\.1 begins here/.test(md), md.slice(0, 200));
     assert(await A.$('#r-toc'), 'no reader toolbar: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#reader').className + ' | ' + document.querySelector('#reader').children.length)); await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-export'); assert(!(await A.$eval('#an-export', (e) => e.disabled)) && !(await A.$eval('#an-copy-all', (e) => e.disabled)), 'buttons disabled'); await A.evaluate(() => window.__folioBack());
   });
+  /* ---------------- PDF Text (reflow) view ---------------- */
+  await step('PDF Text view: select across paragraphs and pages (native selection, same menu), save, paint, reload, tap to edit, notes list from the toolbar', async () => {
+    await close(A); await importFiles(A, path.join(__dirname, 'fixtures', 'plain-4pp.pdf'));
+    const openPdf = async () => { await A.evaluate(async () => { const b = (await (await import('./js/store.js')).getBooks()).find((b) => b.format === 'pdf'); (await import('./js/reader.js')).openReader(b.id); }); await until(() => A.evaluate(() => document.querySelector('#reader.pdf-mode') && !document.querySelector('#reader .r-loading')), 20000, 'pdf'); await A.evaluate(async () => (await import('./js/pdfreader.js')).setTextMode(true)); await until(() => A.evaluate(() => document.querySelectorAll('.pdf-tpage[data-filled]').length >= 2), 15000, 'text view'); await sleep(400); };
+    await openPdf();
+    await A.evaluate(() => { const bs = [...document.querySelectorAll('.pdf-tpage[data-filled] > p')]; const a = bs[0], b = bs[bs.length - 1]; const s = document.createTreeWalker(a, NodeFilter.SHOW_TEXT).nextNode(); const w = document.createTreeWalker(b, NodeFilter.SHOW_TEXT); let e, n; while ((n = w.nextNode())) e = n; window.getSelection().setBaseAndExtent(s, 2, e, Math.max(1, e.data.length - 2)); window.__expect = window.getSelection().toString().replace(/\s+/g, ' ').trim(); });
+    await menu(A); await colorBtn(A, 'green'); await noMenu(A); await sleep(300);
+    const r = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && x.fmt === 'pdf' && !x.del).map((x) => ({ text: x.text, loc: x.loc, color: x.color })));
+    assert(r.length === 1 && r[0].color === 'green' && r[0].loc.ep.page >= r[0].loc.sp.page && r[0].text === (await A.evaluate(() => window.__expect)), JSON.stringify(r).slice(0, 300));
+    const pt = await A.evaluate(() => [...(CSS.highlights.get('folio-hl-green') || [])].map((x) => x.toString().replace(/\s+/g, ' ').trim())); assert(pt.length === 1 && pt[0] === r[0].text, 'painted ' + pt.length);
+    await close(A); await openPdf(); const pt2 = await A.evaluate(() => [...(CSS.highlights.get('folio-hl-green') || [])].length); assert(pt2 === 1, 'not repainted after reopening: ' + pt2);
+    const xy = await A.evaluate(() => { const r = [...CSS.highlights.get('folio-hl-green')][0]; const b = r.getClientRects()[0]; return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+    await A.mouse.click(xy.x, xy.y); await A.waitForSelector('#an-save', { timeout: 4000 }); await click(A, '#an-save'); await sleep(300);
+    await click(A, '#r-notes'); await A.waitForSelector('#an-list .an-item'); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'list'); await A.evaluate(() => window.__folioBack()); await sleep(200); await close(A);
+  });
   /* ---------------- sync between two devices + backup ---------------- */
   const P1 = await mk(await browser.createBrowserContext(), { login: true }), P2 = await mk(await browser.createBrowserContext(), { login: true });
   const sync = (p, o = {}) => p.evaluate(async (o) => { const g = await import('./js/google.js'); const r = await g.syncNow(o); await new Promise((x) => setTimeout(x, 200)); return r; }, o);

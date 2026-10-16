@@ -34,7 +34,28 @@ export function paint(contents, list, host) {
 }
 export async function repaintAll(host) {
   if (!host) return; const list = await A.forBook(host.book());
-  for (const c of host.contents()) paint(c, list, host);
+  for (const c of host.contents()) (host.pdf ? paintPdf : paint)(c, list, host);
+}
+
+/** PDF Text (reflow) view: ranges are located by page + block index + character offset (the blocks of a page are stable for a given PDF). */
+export function paintPdf(contents, list, host) {
+  const w = contents.window; contents.__hl = []; const by = new Map(); const noted = [];
+  for (const a of list) {
+    if (a.fmt !== 'pdf' || !a.loc) continue; const s = host.locate(a.loc.sp), e = host.locate(a.loc.ep); if (!s || !e) continue;
+    try { const r = document.createRange(); r.setStart(s.n, s.o); r.setEnd(e.n, e.o); if (r.collapsed) continue; contents.__hl.push({ a, r }); (by.get(a.color) || by.set(a.color, []).get(a.color)).push(r); if (a.note) noted.push(r); } catch { /* ignore */ }
+  }
+  ensureTopCss();
+  if (!highlightSupported(w)) return;
+  for (const c of A.COLORS) { try { w.CSS.highlights.delete(nameOf(c.id)); } catch { /* ignore */ } if (by.has(c.id)) w.CSS.highlights.set(nameOf(c.id), new w.Highlight(...by.get(c.id))); }
+  try { w.CSS.highlights.delete('folio-hl-noted'); } catch { /* ignore */ } if (noted.length) w.CSS.highlights.set('folio-hl-noted', new w.Highlight(...noted));
+}
+function ensureTopCss() { if (document.getElementById('an-top-css')) return; const st = document.createElement('style'); st.id = 'an-top-css'; st.textContent = hlCss(); document.head.append(st); }
+/** Wire selection + tap-a-highlight for a PDF text view (the viewer lives in the app document, so the contents object is the app window). */
+export function attachPdf(host, viewer) {
+  const contents = host.contents()[0]; let t = 0;
+  document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); else if (ui && ui.contents === contents && !(s && s.rangeCount && !s.isCollapsed)) onSelectionChange(host, contents); }, 220); });
+  viewer.addEventListener('click', (e) => { if (!host.ready()) return; const s = window.getSelection(); if (s && !s.isCollapsed && s.toString().trim()) return; const a = hitTest(contents, e.clientX, e.clientY); if (a) { e.stopPropagation(); e.preventDefault(); openEditor(host, a, {}); } }, true);
+  repaintAll(host);
 }
 
 /* ------------------------------------------------------------------ geometry */

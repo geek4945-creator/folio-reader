@@ -12,6 +12,7 @@ import { makeFooter, applyFooterSettings, paintFooter, footerToggles, applyScrub
 import { registerOpenCheck } from './positions.js';
 import { attachWordHold, closeBubble } from './wordbubble.js';
 import { openGlossary, openTermEditor } from './glossaryui.js';
+import * as AN from './annotui.js';
 
 let cur = null;
 registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
@@ -33,6 +34,7 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'pdf-zout', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
     h('button', { class: 'btn-icon', id: 'pdf-zin', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
     h('button', { class: 'btn-icon', id: 'pdf-fit', 'aria-label': 'Fit width', title: 'Fit width', onclick: () => setZoom(1) }, '⤢'),
+    h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', hidden: true, onclick: showPdfNotes }, '✎'),
     tocBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
@@ -43,7 +45,8 @@ export async function openPdf(book, blob, opts = {}) {
   const c = cur;
   const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
   attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.textMode && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage'))?.dataset.page || 0),
-    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words') } });   // word lookup works in the Text (reflow) view
+    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), select: (range) => { if (cur && cur.textMode) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
+  AN.attachPdf(pdfAnnotHost(), viewer);
   c.glossaryCtx = gctx;
   try {
     loading.stage('Reading the file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (cur !== c) return;
@@ -114,6 +117,46 @@ function drawText(c) {
   const target = c.pages[c.page - 1]; if (target) { fillText(c, target); c.viewer.scrollTop = target.offsetTop - 4; }
   syncUI();
 }
+/* ----- highlights & notes in the Text (reflow) view (v0.5.8) ----- */
+const BLOCKS = ':scope > p, :scope > h3';
+const pseudo = { document, window, __pdf: true };
+function pdfAnnotHost() {
+  const c = cur; if (!c) return null; if (c.__ah) return c.__ah;
+  const blocksOf = (slot) => [...slot.querySelectorAll(BLOCKS)].filter((x) => !x.classList.contains('pdf-empty'));
+  const pos = (node, off, end) => {   // a boundary point of the selection → { page, idx, off } inside a text block
+    let el = node.nodeType === 1 ? node : node.parentElement; let blk = el && el.closest('.pdf-tpage > p, .pdf-tpage > h3');
+    if (blk) { const r = document.createRange(); r.selectNodeContents(blk); r.setEnd(node, off); const slot = blk.parentElement; return { page: +slot.dataset.page, idx: blocksOf(slot).indexOf(blk), off: r.toString().length }; }
+    const slotOf = (x) => x.closest && x.closest('.pdf-tpage'); const sl = slotOf(el);
+    if (sl && el === sl) { const bs = blocksOf(sl); const kids = [...sl.children]; const cand = end ? kids.slice(0, off).filter((k) => bs.includes(k)).pop() : kids.slice(off).find((k) => bs.includes(k)); if (cand) return { page: +sl.dataset.page, idx: bs.indexOf(cand), off: end ? cand.textContent.length : 0 }; }
+    if (el.classList && el.classList.contains('pdf-tstage')) { const slot = el.children[Math.max(0, end ? off - 1 : off)]; if (slot) { const bs = blocksOf(slot); const b = end ? bs[bs.length - 1] : bs[0]; if (b) return { page: +slot.dataset.page, idx: bs.indexOf(b), off: end ? b.textContent.length : 0 }; } }
+    return null;
+  };
+  c.__ah = {
+    pdf: true, book: () => c.book, ready: () => cur === c && c.textMode && c.ready, root: () => c.el, annotations: null, contents: () => [pseudo], viewerRect: () => c.viewer.getBoundingClientRect(),
+    paginated: () => false, pageInfo: () => null, next() {}, prev() {}, scroller: () => c.viewer, viewer: c.viewer,
+    describe: (contents, range) => {
+      const sp = pos(range.startContainer, range.startOffset, false), ep = pos(range.endContainer, range.endOffset, true); if (!sp || !ep) throw new Error('select text inside the page text');
+      return { fmt: 'pdf', cfiRange: '', loc: { sp, ep }, chapter: '', sec: sp.page, off: sp.idx * 100000 + sp.off, progress: c.n ? (sp.page - 1) / c.n : 0 };
+    },
+    locate: ({ page, idx, off }) => {
+      const slot = c.pages[page - 1]; if (!slot || !slot.dataset.filled) return null; const blk = blocksOf(slot)[idx]; if (!blk) return null;
+      const w = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT); let n, acc = 0, last = null; while ((n = w.nextNode())) { last = n; if (off <= acc + n.data.length) return { n, o: off - acc }; acc += n.data.length; }
+      return last ? { n: last, o: last.data.length } : null;
+    },
+    jump: async (a) => {
+      if (!c.textMode) { goTo(a.loc.sp.page); return; } goTo(a.loc.sp.page);
+      for (let i = 0; i < 30; i++) { const l = pdfAnnotHost().locate(a.loc.sp); if (l) { const el = l.n.parentElement; c.viewer.scrollTo({ top: Math.max(0, el.offsetTop + (el.offsetParent ? el.offsetParent.offsetTop : 0) - c.viewer.clientHeight * 0.3) }); return; } await new Promise((r) => setTimeout(r, 100)); }
+    },
+    define: (word, text, rect) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book }, { editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
+  };
+  return c.__ah;
+}
+window.addEventListener('folio-annots', () => { if (cur && cur.textMode) AN.repaintAll(pdfAnnotHost()); });
+function showPdfNotes() {
+  const c = cur; if (!c) return; const host = pdfAnnotHost(); let w;
+  const rebuild = async () => { w.body.replaceChildren(await AN.listTab(host, rebuild, () => w.close())); };
+  w = sheet('Highlights & Notes', () => h('div', { id: 'an-pane' }), { tall: true }); rebuild();
+}
 async function fillText(c, slot) {
   if (slot._filled) return; slot._filled = true; const n = +slot.dataset.page;
   try {
@@ -121,7 +164,7 @@ async function fillText(c, slot) {
     if (cur !== c) return;
     if (!blocks.length) slot.append(h('p', { class: 'pdf-empty' }, 'No selectable text on this page (a scanned image?). Switch to Original pages to see it.'));
     else slot.append(...blocks.map((b) => h(b.k === 'h' ? 'h3' : 'p', null, b.text)));
-    slot.dataset.filled = '1';
+    slot.dataset.filled = '1'; if (c.__ah) AN.repaintAll(c.__ah);
   } catch (e) { slot._filled = false; console.warn('text', n, e); }
 }
 /** Write one style value like the EPUB Aa panel does: to this book if it has its own, else to the global setting. */
@@ -219,7 +262,7 @@ export function setZoom(z) { const c = cur; if (!c || c.textMode) return; z = Ma
   draw(); if (c.mode === 'scroll') { const p = c.pages[c.page - 1]; if (p) c.viewer.scrollTop = p.offsetTop + keep * p.offsetHeight; }
   updateZoomUI(); saveSoon(); }
 const zoomBy = (f) => setZoom((cur?.zoom || 1) * f);
-function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
+function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; for (const id of ['pdf-zout', 'pdf-zin', 'pdf-fit']) { const e = $('#' + id); if (e) e.hidden = tm; } const nb = $('#r-notes'); if (nb) nb.hidden = !tm; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
 function setupTouch(c) {
   const v = c.viewer; let p0 = null, sx = 0, sy = 0, st = 0, swiping = false;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -316,7 +359,7 @@ settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.text
 
 /* ---------- close ---------- */
 export async function closePdf() {
-  const c = cur; if (!c) return; closeBubble();
+  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true);
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
   cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }
