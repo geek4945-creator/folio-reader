@@ -9,6 +9,9 @@ import { attachPinch } from './pinch.js';
 import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
 import { makeLoading, withTimeout, patchBook } from './openguard.js';
 import { beforeOpen, registerOpenCheck } from './positions.js';
+import { attachWordHold, applyHighlights, closeBubble, wordBubbleOpen } from './wordbubble.js';
+import * as G from './glossary.js';
+import { openGlossary, openTermEditor } from './glossaryui.js';
 
 let cur = null;   // active reading session
 registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
@@ -100,6 +103,7 @@ async function startRendition(cfi) {
   const r = c.epub.renderTo(c.viewer, { width: '100%', height: '100%', flow: scrolled ? 'scrolled' : 'paginated', manager: scrolled ? 'continuous' : 'default', spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
   c.rendition = r;
   r.hooks.content.register((contents) => injectStyle(contents));
+  r.hooks.content.register((contents) => wordSetup(contents));
   r.on('relocated', (loc) => { if (c.rendition !== r) return; c.loc = loc; updateProgress(loc); c.pager && c.pager.update(loc); });
   r.on('click', onTap);
   let tx = null;
@@ -123,6 +127,28 @@ async function startRendition(cfi) {
 let swipedAt = 0;
 const onResize = () => { if (cur && cur.pager) cur.pager.settle(500); };
 
+/* ----- word lookup + glossary (v0.5.6) ----- */
+function glossaryCtx() {
+  const c = cur; return { book: c.book, epub: c.epub, toc: c.toc, goto: (x) => { if (x.cfi) c.rendition.display(x.cfi); },
+    getSelection: () => { try { for (const k of c.rendition.getContents()) { const t = k.window.getSelection().toString(); if (t.trim()) return t; } } catch { /* ignore */ } return ''; } };
+}
+const wordActions = () => ({
+  editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def, onDone: () => {} }),
+  openWords: () => openGlossary(glossaryCtx(), 'words'),
+});
+function wordSetup(contents) {
+  if (!cur) return;
+  attachWordHold(contents.document, { book: () => (cur && cur.book), ready: () => !!(cur && cur.ready) && !justPinched(), cfi: (range) => contents.cfiFromRange(range), actions: wordActions() });
+  refreshHighlights(contents);
+}
+async function refreshHighlights(contents) {
+  const c = cur; if (!c) return;
+  try { const f = await G.forBook(c.book); if (cur !== c) return; applyHighlights(contents.document, f.terms, !!settings.get('glossaryHighlight') && !c.fixed); } catch { /* ignore */ }
+}
+const refreshAllHighlights = () => { const c = cur; if (c && c.rendition) try { c.rendition.getContents().forEach(refreshHighlights); } catch { /* ignore */ } };
+window.addEventListener('folio-glossary', refreshAllHighlights);
+settings.onChange((p) => { if ('glossaryHighlight' in p) refreshAllHighlights(); });
+
 /* ----- tap zones ----- */
 function onTap(e) {
   if (Date.now() - swipedAt < 400) return;
@@ -144,7 +170,7 @@ function toggleChrome(force) {
   c.el.classList.toggle('chrome-hidden', !c.chrome);
 }
 function keyNav(e) {
-  if (!cur || !cur.rendition || $('#overlay').children.length) return;
+  if (!cur || !cur.rendition || $('#overlay').children.length || wordBubbleOpen()) return;
   if (e.key === 'ArrowRight') cur.rendition.next(); else if (e.key === 'ArrowLeft') cur.rendition.prev(); else if (e.key === 'Escape') closeReader();
 }
 function onHide() { if (document.hidden && cur) savePosition(true); }
@@ -155,7 +181,8 @@ const BOOST = ':not(#_):not(#_)';
 const SPECIAL = 'h1,h2,h3,h4,h5,h6,small,big,sub,sup,pre,code,kbd,samp,font,svg,svg *,math,math *,rt,rp,img,video,audio';
 function buildCss() {
   const c = cur; const st = { ...S.effectiveStyle(c.book) }; if (c.previewPt != null) st.fontSizePt = c.previewPt; const t = THEMES[settings.get('theme')] || THEMES.light;
-  if (c.fixed) return 'html, body { touch-action: manipulation; }\n::selection { background: ' + t.accent + '55; }\n';   // fixed-layout books keep the publisher's design (absolute positions, px sizes)
+  const HL = `::highlight(folio-word) { background-color: ${t.accent}55; color: inherit; }\n::highlight(folio-gl) { text-decoration: underline dotted ${t.accent}; text-decoration-thickness: 2px; text-underline-offset: 3px; }\n`;
+  if (c.fixed) return 'html, body { touch-action: manipulation; }\n::selection { background: ' + t.accent + '55; }\n' + HL;   // fixed-layout books keep the publisher's design (absolute positions, px sizes)
   const ff = FONTS[st.font]?.css || ''; const B = 'html body'; const ALL = `${B} ${BOOST}:not(${SPECIAL})`;
   return `
 html, body { touch-action: manipulation; }
@@ -175,7 +202,7 @@ body *${BOOST}:not(img):not(svg):not(a) { color: ${t.fg} !important; background-
 a${BOOST}, a${BOOST} * { color: ${t.accent} !important; }
 ::selection { background: ${t.accent}55; }
 img, svg, video { max-width: 100% !important; height: auto; ${t.dark ? 'opacity:.92;' : ''} }
-`;
+${HL}`;
 }
 /** Pinch → text size: the same value the Aa panel would set (this book's own size if it has one, else the global size). */
 const pinchHost = {
@@ -289,7 +316,7 @@ function showToc() {
   const w = sheet('Contents', () => build(), { tall: true });
   function build() {
     const wrap = h('div');
-    wrap.append(h('div', { class: 'seg wide' }, ['toc', 'bookmarks'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; w.body.replaceChildren(build()); } }, t === 'toc' ? 'Chapters' : 'Bookmarks (' + c.bookmarks.length + ')'))));
+    wrap.append(h('div', { class: 'seg wide' }, ['toc', 'bookmarks'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; w.body.replaceChildren(build()); } }, t === 'toc' ? 'Chapters' : 'Bookmarks (' + c.bookmarks.length + ')')).concat(h('button', { id: 'toc-words', 'data-tab': 'words', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words'))));
     if (tab === 'toc') wrap.append(h('div', { class: 'list' }, flat(c.toc).length ? flat(c.toc).map(({ it, depth }) => h('button', { class: 'list-item toc-item', style: { paddingLeft: (14 + depth * 16) + 'px' }, onclick: async () => { w.close(); await c.rendition.display(it.href); } }, (it.label || '').trim())) : h('p', { class: 'muted pad' }, 'This book has no table of contents.')));
     else wrap.append(h('div', { class: 'list' }, c.bookmarks.length ? [...c.bookmarks].sort((a, b) => a.progress - b.progress).map((bm) => h('div', { class: 'list-item' },
       h('span', { class: 'grow', onclick: async () => { w.close(); await c.rendition.display(bm.cfi); } }, bm.label, h('small', { class: 'muted' }, ' · ' + fmtPct(bm.progress))),
@@ -348,6 +375,7 @@ export function showSettings() {
       h('div', { class: 'row-ctl' }, h('label', null, 'Tap zones')),
       h('div', { class: 'seg wide' }, [['on', 'Left = back'], ['inverted', 'Left = next'], ['off', 'Off']].map(([v, n]) => h('button', { class: settings.get('tapZones') === v ? 'on' : '', onclick: () => { settings.set({ tapZones: v }); w.body.replaceChildren(build()); } }, n))));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles());
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Word lookup')), h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'aa-wordlookup', checked: !!settings.get('wordLookup'), onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, 'Press and hold a word for its definition')), h('button', { class: 'btn block', id: 'aa-glossary', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words & glossary'));
     ui.reset = h('button', { class: 'btn block', id: 'reset-book', hidden: !S.hasOverrides(c.book), onclick: async () => { c.book = await S.resetOverrides(c.book.id); scope = 'global'; applyAppearance(); w.body.replaceChildren(build()); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults');
     wrap.append(ui.reset);
     return wrap;
@@ -358,7 +386,7 @@ export function showSettings() {
 /* ----- close ----- */
 export async function closeReader() {
   if (pdfCurrent()) return closePdf();
-  const c = cur; if (!c) return; cur = null;
+  const c = cur; if (!c) return; cur = null; closeBubble();
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   c.closed = true; c.pager && c.pager.stop();
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;
