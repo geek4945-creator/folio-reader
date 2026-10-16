@@ -1,7 +1,10 @@
 :root { --bg:#fff; --fg:#1b1b1f; --card:#f2f2f6; --muted:#6b6b76; --border:#d9d9e0; --accent:#2f6df6; --bar:#f8f8fb;
   --sat: env(safe-area-inset-top); --sab: env(safe-area-inset-bottom); --sal: env(safe-area-inset-left); --sar: env(safe-area-inset-right); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; overscroll-behavior:none; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; overscroll-behavior:none; overflow:hidden; -webkit-text-size-adjust:100%; text-size-adjust:100%; touch-action:manipulation; }   /* the body never scrolls or rubber-bands: #view and the sheets scroll inside the fixed #app */
+/* iOS zooms the page when a field with a font under 16px gets focus; keep every text control at 16px+ (the reader's own text-size setting is separate) and turn off double-tap zoom everywhere */
+input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]), select, textarea { font-size:16px !important; }
+button, a, label, select, summary, [role=button], .tile, .chip, .list-item, #view, .sheet, .r-bar, #viewer, #audioplayer { touch-action:manipulation; }
 body.dragging-now, .tiles.sorting { user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
 #app { position:fixed; inset:0; display:flex; flex-direction:column; }
 #view { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-top:var(--sat); padding-bottom:1rem; }
@@ -70,13 +73,17 @@ body.reading #tabbar { display:none; }
 .list-item:last-child { border-bottom:0; } .list-item.danger-text { color:#d33; } .check { color:var(--accent); margin-left:auto; } .chev { color:var(--muted); }
 .sep { padding:.4rem 1rem; font-size:.75rem; text-transform:uppercase; color:var(--muted); background:var(--bg); }
 #overlay { position:fixed; inset:0; z-index:100; pointer-events:none; } #overlay > * { pointer-events:auto; }
-.sheet-wrap { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-end; justify-content:center; }
+.sheet-wrap { position:fixed; inset:0; background:rgba(0,0,0,.4); display:flex; align-items:flex-end; justify-content:center; padding-left:var(--sal); padding-right:var(--sar); box-sizing:border-box; }
 .sheet-wrap.nodim { background:transparent; pointer-events:none; } .sheet-wrap.nodim .sheet { pointer-events:auto; box-shadow:0 -4px 24px rgba(0,0,0,.3); }
-.sheet { background:var(--bg); color:var(--fg); width:100%; max-width:40rem; max-height:78vh; border-radius:1rem 1rem 0 0; display:flex; flex-direction:column; padding-bottom:var(--sab); animation:up .18s ease-out; }
-.sheet.tall { max-height:90vh; } @keyframes up { from { transform:translateY(30%); opacity:.5; } }
-.sheet-head { display:flex; justify-content:space-between; align-items:center; padding:.8rem 1rem .4rem; gap:1rem; } .sheet-head strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sheet-body { overflow-y:auto; padding:.2rem 1rem 1rem; -webkit-overflow-scrolling:touch; } .sheet-body label { display:block; font-size:.85rem; color:var(--muted); margin-top:.5rem; }
+/* never taller than the visible area minus the notch / status bar (100% = the fixed wrapper, not 100vh which on iOS includes the hidden toolbar), so the ✕ can't slide under it */
+.sheet { background:var(--bg); color:var(--fg); width:100%; max-width:40rem; max-height:min(78%, calc(100% - var(--sat) - .75rem)); border-radius:1rem 1rem 0 0; display:flex; flex-direction:column; padding-bottom:var(--sab); animation:up .18s ease-out; box-sizing:border-box; }
+.sheet.tall { max-height:calc(100% - var(--sat) - .75rem); } @keyframes up { from { transform:translateY(30%); opacity:.5; } }
+.sheet-head { flex:none; display:flex; justify-content:space-between; align-items:center; padding:.8rem 1rem .4rem; gap:1rem; } .sheet-head strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sheet-x { flex:none; width:2.6rem; height:2.6rem; margin:-.5rem -.5rem -.5rem 0; border:0; border-radius:50%; background:var(--card, rgba(127,127,127,.15)); color:var(--fg); font-size:1.15rem; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.sheet-body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:.2rem 1rem 1rem; -webkit-overflow-scrolling:touch; } .sheet-body label { display:block; font-size:.85rem; color:var(--muted); margin-top:.5rem; }
 .sheet-body .pad { padding-left:0; padding-right:0; }
+.sheet-foot { flex:none; padding:.4rem 1rem .6rem; border-top:1px solid var(--border); }
+.sheet-done { width:100%; min-height:2.8rem; border-radius:.7rem; background:var(--card, rgba(127,127,127,.15)); font-weight:600; }
 #toast { position:fixed; left:50%; bottom:calc(5rem + var(--sab)); transform:translateX(-50%); background:rgba(20,20,24,.92); color:#fff; padding:.6rem 1rem; border-radius:1rem; z-index:300; max-width:90vw; font-size:.9rem; text-align:center; }
 .spinner { width:1.2rem; height:1.2rem; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; } @keyframes spin { to { transform:rotate(360deg); } }
 .spinner-row { display:flex; gap:.6rem; align-items:center; justify-content:center; padding:2rem; color:var(--muted); }

@@ -4,6 +4,7 @@ import { settings, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from 
 import * as S from './store.js';
 import { fsButton } from './fullscreen.js';
 import { openPdf, closePdf, pdfCurrent } from './pdfreader.js';
+import { blockZoom } from './viewport.js';
 import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
 
 let cur = null;   // active reading session
@@ -132,6 +133,7 @@ function buildCss() {
   const c = cur; const st = S.effectiveStyle(c.book); const t = THEMES[settings.get('theme')] || THEMES.light;
   const ff = FONTS[st.font]?.css || '';
   return `
+html, body { touch-action: manipulation; }
 html { font-size: ${st.fontSizePt}pt !important; background: ${t.bg} !important; }
 body { font-size: 1em !important; color: ${t.fg} !important; background: ${t.bg} !important; ${ff ? `font-family: ${ff} !important;` : ''} -webkit-text-size-adjust: 100% !important; }
 p, li, dd, dt, blockquote, td, th, div, span, section, article, figcaption, cite, em, i, b, strong, small, sup, sub { font-size: inherit !important; ${ff ? 'font-family: inherit !important;' : ''} }
@@ -146,6 +148,7 @@ pre, code, kbd, samp { font-family: Menlo, Consolas, monospace !important; font-
 `;
 }
 function injectStyle(contents) {
+  try { blockZoom(contents.document); } catch { /* ignore */ }
   try {
     const d = contents.document; let el = d.getElementById('folio-user-style');
     if (!el) { el = d.createElement('style'); el.id = 'folio-user-style'; d.head.appendChild(el); }

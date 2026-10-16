@@ -16,6 +16,7 @@ import { isInstalledApp } from './env.js';
 import { normalizeUrl } from './net.js';
 import { enrichSettingsSection, openFixMissing } from './enrich.js';
 import { footerToggles } from './pages.js';
+import { initViewport } from './viewport.js';
 
 applyUI();
 let tab = localStorage.getItem('folio.tab') || 'library';
@@ -137,6 +138,7 @@ window.addEventListener('drop', async (e) => {
 });
 
 /* ---------- boot ---------- */
+initViewport();
 G.initSync();
 show(tab);
 initInstall(); initFullscreen(); initPlayerUI();

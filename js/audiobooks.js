@@ -20,6 +20,7 @@ const forgetCovers = (ids) => { for (const [k, u] of [...covers]) if (ids.some((
 
 export async function renderAudiobooks(v) {
   view = v || view;
+  if (!view) return;   // an import finished before this tab was ever shown
   const [books, shelves] = await Promise.all([A.getAudiobooks(), S.getShelves()]);
   const scroll = view.scrollTop; view.replaceChildren();
   view.classList.toggle('selecting', !!local.sel);

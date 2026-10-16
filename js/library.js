@@ -25,6 +25,7 @@ const norm = (s) => (s || '').toLowerCase().replace(/^(the|a|an)\s+/, '');
 
 export async function renderLibrary(v) {
   view = v || view;
+  if (!view) return;   // an import finished before this tab was ever shown
   const [books, sets, shelves] = await Promise.all([S.getBooks(), S.getSets(), S.getShelves()]);
   const scroll = view.scrollTop;
   view.replaceChildren();

@@ -40,17 +40,29 @@ export function hashHue(s) {
 
 export function fmtPct(p) { return Math.round((p || 0) * 100) + '%'; }
 
-/** Show a bottom sheet. build(close) returns an element/array. Returns {close}. */
+/* Open sheets, topmost last. Escape closes the topmost one (capture phase, so readers underneath don't also react). */
+const sheetStack = [];
+let escBound = false;
+function bindEscape() {
+  if (escBound) return; escBound = true;
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !sheetStack.length) return; e.preventDefault(); e.stopPropagation(); sheetStack[sheetStack.length - 1].close(); }, true);
+}
+/** Show a bottom sheet. build(close) returns an element/array. Returns {close}.
+ *  Every sheet has a ✕ at the top, a Done / Back button at the bottom (opts.closeLabel; opts.noFooter hides it for dialogs that carry their own buttons),
+ *  closes on a tap outside (unless opts.noDim) and on Escape, keeps clear of the iOS notch / home indicator and scrolls inside when long. */
 export function sheet(title, build, opts = {}) {
-  const ov = $('#overlay');
+  const ov = $('#overlay'); bindEscape();
   const wrap = h('div', { class: 'sheet-wrap' + (opts.noDim ? ' nodim' : ''), onclick: (e) => { if (e.target === wrap) close(); } });
-  const box = h('div', { class: 'sheet' + (opts.tall ? ' tall' : '') , role: 'dialog', 'aria-label': title });
-  const close = () => { wrap.remove(); if (!ov.children.length) ov.hidden = true; opts.onClose && opts.onClose(); };
+  const box = h('div', { class: 'sheet' + (opts.tall ? ' tall' : ''), role: 'dialog', 'aria-modal': opts.noDim ? 'false' : 'true', 'aria-label': title });
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; const k = sheetStack.findIndex((x) => x.close === close); if (k >= 0) sheetStack.splice(k, 1); wrap.remove(); if (!ov.children.length) ov.hidden = true; opts.onClose && opts.onClose(); };
   box.append(h('div', { class: 'sheet-head' },
-    h('strong', null, title), h('button', { class: 'btn-text', onclick: close }, opts.closeLabel || 'Done')));
+    h('strong', null, title), h('button', { class: 'sheet-x', 'aria-label': 'Close', title: 'Close', onclick: close }, '✕')));
   const body = h('div', { class: 'sheet-body' });
   body.append(...[].concat(build(close)));
-  box.append(body); wrap.append(box); ov.append(wrap); ov.hidden = false;
+  box.append(body);
+  if (!opts.noFooter) box.append(h('div', { class: 'sheet-foot' }, h('button', { class: 'btn-text sheet-done', onclick: close }, opts.closeLabel || 'Done')));
+  wrap.append(box); ov.append(wrap); ov.hidden = false; sheetStack.push({ close });
   return { close, body };
 }
 
@@ -62,7 +74,7 @@ export function confirmDlg(title, message, okLabel = 'OK', danger = false) {
       h('div', { class: 'row-actions' },
         h('button', { class: 'btn', onclick: () => { done = true; close(); resolve(false); } }, 'Cancel'),
         h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => { done = true; close(); resolve(true); } }, okLabel)),
-    ], { closeLabel: 'Cancel', onClose: () => { if (!done) resolve(false); } });
+    ], { closeLabel: 'Cancel', noFooter: true, onClose: () => { if (!done) resolve(false); } });
     return s;
   });
 }
@@ -76,7 +88,7 @@ export function promptDlg(title, value = '', placeholder = '', okLabel = 'Save')
       h('div', { class: 'row-actions' },
         h('button', { class: 'btn', onclick: () => { done = true; close(); resolve(null); } }, 'Cancel'),
         h('button', { class: 'btn primary', onclick: () => { done = true; close(); resolve(input.value.trim() || null); } }, okLabel)),
-    ], { closeLabel: 'Cancel', onClose: () => { if (!done) resolve(null); } });
+    ], { closeLabel: 'Cancel', noFooter: true, onClose: () => { if (!done) resolve(null); } });
     setTimeout(() => input.focus(), 50);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { done = true; $('#overlay .sheet-wrap:last-child')?.remove(); if (!$('#overlay').children.length) $('#overlay').hidden = true; resolve(input.value.trim() || null); } });
   });

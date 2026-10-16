@@ -262,6 +262,7 @@ export function renderMini() {
 let miniT = 0;
 export function initPlayerUI() {
   initMediaSession();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui && !$('#overlay').children.length) closePlayer(); });   // Escape closes the full-screen player (sheets on top close first)
   onPlayer('state', renderMini);
   onPlayer('tick', () => { const p = $('#mini-prog'); if (p && cur) p.style.width = Math.round((cur.total ? gpos() / cur.total : 0) * 100) + '%'; });
 }
