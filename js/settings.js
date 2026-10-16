@@ -31,6 +31,9 @@ export const DEFAULTS = {
   pdfInvert: true,      // PDF: invert page colors in dark themes
   tapZones: 'on',       // 'on' | 'off' | 'inverted'
   pinchSens: 'slow',    // reader pinch text-size sensitivity: 'slow' | 'normal' | 'fast' (device-only)
+  wordLookup: true,     // press and hold a word in the reader → definition bubble (v0.5.6)
+  wordHoldSec: 0.7,     // how long to hold on a word (0.3–3 s)
+  glossaryHighlight: false,   // underline glossary terms of the open book in the text (needs a browser with the CSS Custom Highlight API)
   holdSec: 4,           // press-and-hold on a Library / Audiobooks tile opens its ⋯ menu after this many seconds (0.5–5; device-only)
   autoPair: true,       // link audiobooks with their ebooks automatically when the match is very confident (≥ 85%)
   autoEnrich: false,    // fill in missing metadata / covers on import (Open Library + Google Books, high-confidence matches only)
@@ -53,14 +56,14 @@ export const DEFAULTS = {
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };
 
-export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair'];
+export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'];
 /* ---------- cross-device sync of settings (v0.5.5): every preference is synced with its own last-write-wins stamp ---------- */
 /** Never synced: they describe this device / this moment rather than a preference. */
 export const DEVICE_ONLY = ['flowChosen', 'chip', 'audioChip', 'proxyUrl', 'proxyMode', 'fullscreen'];
 /** Groups the user can keep device-specific in Settings → Sync (e.g. different page flow or pinch speed on a phone and a tablet). */
 export const SETTING_GROUPS = [
   { id: 'appearance', name: 'Appearance', hint: 'theme, font, text size, line spacing, margins', keys: ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'pdfInvert'] },
-  { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'pinchSens', 'holdSec'] },
+  { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'pinchSens', 'holdSec', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'] },
   { id: 'library', name: 'Library view & sorting', hint: 'grid / list, sort orders, group by, series sets', keys: ['view', 'sort', 'lastAutoSort', 'defaultSort', 'sorts', 'groupBy', 'groupSets', 'showFinished', 'setSort'] },
   { id: 'audio', name: 'Audiobooks', hint: 'playback speed', keys: ['audioSpeed'] },
   { id: 'other', name: 'Other', hint: 'public library, auto-link, auto-enrich', keys: ['publicLibrary', 'autoEnrich', 'autoPair'] },
