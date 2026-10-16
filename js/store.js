@@ -87,9 +87,13 @@ export async function deleteBooks(ids, opts = {}) {
   const deadSets = [];
   for (const sid of setIds) if (!remaining.some((b) => b.setId === sid)) { const set = await DB.get('sets', sid); if (set) { snap.sets.push(set); deadSets.push(sid); } }
   const dropKeys = new Set([...[...gone].map((id) => 'b:' + id), ...deadSets.map((id) => 's:' + id)]);
-  const placeholder = new Map(snap.books.map((b) => ['b:' + b.id, 'k:' + bookSyncKey(b)]));   // a book deleted here keeps its slot as a placeholder, so importing it again puts it back in place
+  const keyOfDel = new Map(snap.books.map((b) => ['b:' + b.id, 'k:' + bookSyncKey(b)])); const allKeyOf = new Map(all.map((b) => ['b:' + b.id, 'k:' + bookSyncKey(b)]));
   for (const o of await DB.all('orders')) {
-    if (o.ids.some((x) => dropKeys.has(x))) { snap.orders.push(structuredClone(o)); o.ids = o.ids.map((x) => (dropKeys.has(x) ? (opts.tomb !== false && placeholder.get(x)) || null : x)).filter(Boolean); await DB.put('orders', o); }
+    if (o.ids.some((x) => dropKeys.has(x))) {
+      snap.orders.push(structuredClone(o));
+      if (opts.tomb !== false) rememberSlots(o.key, o.ids.map((x) => allKeyOf.get(x) || keyOfDel.get(x) || x));   // so that importing the book again can put it back where it was
+      o.ids = o.ids.filter((x) => !dropKeys.has(x)); await DB.put('orders', o);
+    }
   }
   for (const sid of deadSets) { await rememberSet(snap.sets.find((x) => x.id === sid), snap.books); await DB.del('sets', sid); const so = await DB.get('orders', 'set:' + sid); if (so) { snap.orders.push(structuredClone(so)); await DB.del('orders', 'set:' + sid); } if (opts.tomb !== false) addTomb('set', sid); }
   if (opts.tomb !== false) for (const k of snap.keys) addTomb('book', k);
@@ -273,7 +277,29 @@ export const getTombs = () => { try { return JSON.parse(localStorage.getItem('fo
 export const addTomb = (t, id) => { const x = getTombs(); x.push({ t, id, at: Date.now() }); localStorage.setItem('folio.tombs', JSON.stringify(x.slice(-5000))); };
 
 /** Manual orders synced from another device may reference books that weren't here yet ('k:<syncKey>'). Bind them on import. */
+const SLOTS = 'folio.slotmem';
+function rememberSlots(key, ks) {
+  let mem; try { mem = JSON.parse(localStorage.getItem(SLOTS) || '{}') || {}; } catch { mem = {}; }
+  const prev = mem[key]; const merged = prev && Date.now() - prev.at < 30 * 864e5 ? [...ks, ...prev.ids.filter((x) => !ks.includes(x))] : ks;   // keep slots of books deleted earlier too
+  mem[key] = { ids: merged.slice(0, 600), at: Date.now() };
+  const keep = Object.entries(mem).sort((a, b) => b[1].at - a[1].at).slice(0, 60); try { localStorage.setItem(SLOTS, JSON.stringify(Object.fromEntries(keep))); } catch { /* quota */ }
+}
+/** A book that was deleted on this device and is imported again goes back to its old place in every manual order that listed it. */
+async function restoreSlots(book) {
+  let mem; try { mem = JSON.parse(localStorage.getItem(SLOTS) || '{}') || {}; } catch { return; } const me = 'k:' + bookSyncKey(book); let ch = false;
+  const books = await getBooks(); const idOf = new Map(books.map((b) => ['k:' + bookSyncKey(b), 'b:' + b.id]));
+  for (const [key, m] of Object.entries(mem)) {
+    const i = m.ids.indexOf(me); if (i < 0) continue;
+    const o = await DB.get('orders', key); if (o && !o.ids.includes('b:' + book.id) && !o.ids.includes(me)) {
+      let at = 0; for (let j = i - 1; j >= 0; j--) { const id = idOf.get(m.ids[j]) || m.ids[j]; const p = o.ids.indexOf(id); if (p >= 0) { at = p + 1; break; } }
+      o.ids = [...o.ids.slice(0, at), 'b:' + book.id, ...o.ids.slice(at)]; await DB.put('orders', o);
+    }
+    m.ids = m.ids.filter((x) => x !== me); if (!m.ids.length) delete mem[key]; ch = true;
+  }
+  if (ch) try { localStorage.setItem(SLOTS, JSON.stringify(mem)); } catch { /* quota */ }
+}
 async function resolveOrderPlaceholders(book) {
+  await restoreSlots(book);
   const ph = 'k:' + bookSyncKey(book);
   for (const o of await DB.all('orders')) {
     if (o.ids.includes(ph)) { o.ids = o.ids.map((x) => (x === ph ? 'b:' + book.id : x)); o._noTouch = true; await DB.put('orders', o); }
