@@ -1,6 +1,6 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
-import { settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups } from './settings.js';
+import { settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups, NESTED } from './settings.js';
 import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS } from './db.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
@@ -214,7 +214,7 @@ export function buildSettingsPart() {
   const all = settings.all(), stamps = settingStamps(), flat = {}, legacy = 0;
   for (const k of syncedKeys()) {
     if (k === 'flow' && !all.flowChosen) continue;   // the default (not a choice) must not overwrite another device's explicit Pages / Scroll setting
-    if (k === 'sorts') { const o = all.sorts || {}; for (const c of new Set([...Object.keys(o), ...Object.keys(stamps).filter((x) => x.startsWith('sorts/')).map((x) => x.slice(6))])) { const at = stamps['sorts/' + c] ?? legacy; flat['sorts/' + c] = o[c] === undefined ? { v: null, at, d: 1 } : { v: o[c], at }; } }
+    if (NESTED.includes(k)) { const o = all[k] || {}; for (const c of new Set([...Object.keys(o), ...Object.keys(stamps).filter((x) => x.startsWith(k + '/')).map((x) => x.slice(k.length + 1))])) { const at = stamps[k + '/' + c] ?? legacy; flat[k + '/' + c] = o[c] === undefined ? { v: null, at, d: 1 } : { v: o[c], at }; } }
     else flat[k] = { v: all[k], at: stamps[k] ?? legacy };
   }
   return { flat, updatedAt: legacy };
@@ -222,7 +222,7 @@ export function buildSettingsPart() {
 /** Older snapshots / backups carry { values, updatedAt }: one stamp for all keys. */
 export function settingsFlat(s) {
   if (!s) return {}; if (s.flat) return s.flat;
-  const flat = {}; for (const [k, v] of Object.entries(s.values || {})) { if (k === 'sorts' && v) { for (const [c, x] of Object.entries(v)) flat['sorts/' + c] = { v: x, at: s.updatedAt || 0 }; } else flat[k] = { v, at: s.updatedAt || 0 }; }
+  const flat = {}; for (const [k, v] of Object.entries(s.values || {})) { if (NESTED.includes(k) && v) { for (const [c, x] of Object.entries(v)) flat[k + '/' + c] = { v: x, at: s.updatedAt || 0 }; } else flat[k] = { v, at: s.updatedAt || 0 }; }
   return flat;
 }
 function mergeSettingsPart(L, R) {
@@ -233,15 +233,15 @@ function mergeSettingsPart(L, R) {
 /** Write merged settings into this device (per key: only where the merged stamp is newer, or always with force). */
 function applySettingsPart(part, ctx) {
   const flat = settingsFlat(part), stamps = settingStamps(), legacy = 0, allowed = new Set(syncedKeys());
-  const patch = {}, newStamps = { ...stamps }; let sorts = null; let n = 0;
+  const patch = {}, newStamps = { ...stamps }; const nested = {}; let n = 0;
   for (const [k, e] of Object.entries(flat)) {
     const base = k.split('/')[0]; if (!allowed.has(base)) continue;
     if (!ctx.force && (e.at || 0) <= (stamps[k] ?? legacy)) continue;
-    if (k.startsWith('sorts/')) { sorts = sorts || { ...(settings.get('sorts') || {}) }; const c = k.slice(6); if (e.d || e.v == null) delete sorts[c]; else sorts[c] = e.v; }
+    if (NESTED.includes(base) && k.includes('/')) { nested[base] = nested[base] || { ...(settings.get(base) || {}) }; const c = k.slice(base.length + 1); if (e.d || e.v == null) delete nested[base][c]; else nested[base][c] = e.v; }
     else patch[k] = e.v;
     newStamps[k] = e.at || 0; n++;
   }
-  if (sorts) patch.sorts = sorts;
+  Object.assign(patch, nested);
   if (Object.keys(patch).length) { if (patch.flow && !settings.get('flowChosen')) patch.flowChosen = true; settings.set(patch, { remote: true }); }
   if (n) { localStorage.setItem('folio.settings.keyAt', JSON.stringify(newStamps)); localStorage.setItem('folio.settings.at', String(ctx.force ? Math.max(part.updatedAt || 0, 1) : Math.max(settings.updatedAt(), ...Object.values(flat).map((e) => e.at || 0)))); }
   return n;
@@ -283,8 +283,8 @@ function canonicalize(snap, idmap) {   // unify duplicate sets/shelves with the 
   for (const st of Object.values(snap.audioState || {})) st.shelves = (st.shelves || []).map(m);
   if (snap.settings) {   // per-set / per-shelf sort modes are keyed by id: a set that two devices made independently must keep its Custom mode when the ids are unified
     const rk = (ctx) => { const i = ctx.indexOf(':'); const kind = ctx.slice(0, i); return kind === 'set' || kind === 'shelf' ? kind + ':' + m(ctx.slice(i + 1)) : ctx; };
-    if (snap.settings.flat) { const out = {}; for (const [k, e] of Object.entries(snap.settings.flat)) { const nk = k.startsWith('sorts/') ? 'sorts/' + rk(k.slice(6)) : k; out[nk] = out[nk] && (out[nk].at || 0) >= (e.at || 0) ? out[nk] : e; } snap.settings.flat = out; }
-    const so = snap.settings.values && snap.settings.values.sorts; if (so) { const out = {}; for (const [c, v] of Object.entries(so)) out[rk(c)] = v; snap.settings.values.sorts = out; }
+    if (snap.settings.flat) { const out = {}; for (const [k, e] of Object.entries(snap.settings.flat)) { const nb = NESTED.find((b) => k.startsWith(b + '/')); const nk = nb ? nb + '/' + rk(k.slice(nb.length + 1)) : k; out[nk] = out[nk] && (out[nk].at || 0) >= (e.at || 0) ? out[nk] : e; } snap.settings.flat = out; }
+    for (const nb of NESTED) { const so = snap.settings.values && snap.settings.values[nb]; if (so) { const out = {}; for (const [c, v] of Object.entries(so)) out[rk(c)] = v; snap.settings.values[nb] = out; } }
   }
   snap.orders = snap.orders.map((o) => { const [kind, id] = [o.key.split(':')[0], o.key.slice(o.key.indexOf(':') + 1)]; return { ...o, key: kind === 'set' || kind === 'shelf' ? kind + ':' + m(id) : o.key, ids: o.ids.map((x) => (x.startsWith('s:') ? 's:' + m(x.slice(2)) : x)) }; });
   return snap;
@@ -426,9 +426,9 @@ export async function applySnapshot(m, ctx = {}) {
   }
   for (const o of orders) if (!liveKeys.has(o.key) && (((o.key.startsWith('set:') || o.key.startsWith('shelf:')) && !m.sets.concat(m.shelves).some((x) => o.key.endsWith(':' + x.id))) || (ctx.force && !ctx.sync))) await DB.del('orders', o.key);
   if (idmap.size) {   // sort modes of sets / shelves that were merged into a canonical duplicate now live under the canonical id (the merged settings carry them)
-    const so = { ...(settings.get('sorts') || {}) }; const at = settingStamps(); let ch = false;
-    for (const [from] of idmap) for (const kind of ['set', 'shelf']) { const k = kind + ':' + from; if (k in so) { delete so[k]; ch = true; } delete at['sorts/' + k]; }
-    if (ch) { settings.set({ sorts: so }, { remote: true }); } localStorage.setItem('folio.settings.keyAt', JSON.stringify(at));
+    const at = settingStamps(); const patch = {};
+    for (const nb of NESTED) { const so = { ...(settings.get(nb) || {}) }; let ch = false; for (const [from] of idmap) for (const kind of ['set', 'shelf']) { const k = kind + ':' + from; if (k in so) { delete so[k]; ch = true; } delete at[nb + '/' + k]; } if (ch) patch[nb] = so; }
+    if (Object.keys(patch).length) settings.set(patch, { remote: true }); localStorage.setItem('folio.settings.keyAt', JSON.stringify(at));
   }
   localStorage.setItem('folio.tombs', JSON.stringify(m.tombstones || []));
   return { appliedBooks, deletedBooks, posApplied: posApplied + audioRes.posApplied, posConflicts: posConflicts + audioRes.posConflicts, pending: Object.keys(pending).length, ...metaRes };

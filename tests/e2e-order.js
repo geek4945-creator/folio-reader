@@ -131,6 +131,11 @@ const SAGA = ['Saga Alpha', 'Saga Beta', 'Saga Gamma', 'Saga Delta'];
     eq(info.merged, info.revTitles, 'merge keeps the newer local order'); eq(info.replaced, SAVED, 'replace restores the backup order'); assert(info.mode === 'custom', 'mode ' + info.mode);
     await reload(A); await openSet(A, 'Saga'); eq(await setPageOrder(A), SAVED, 'after reload'); return SAVED.join('|');
   });
+  await step('Per-view series grouping (v0.5.8) follows the merged set ids and syncs per view', async () => {
+    await settingsSet(B, { setGroups: {} }); await B.evaluate(async () => { (await import('./js/settings.js')).setSetsGrouped('shelf:finished', false); });
+    await sync(B); await sync(A); const a = await A.evaluate(async () => (await import('./js/settings.js')).settings.get('setGroups')); eq(a, { 'shelf:finished': false }, 'phone got the tablet view choice');
+    await A.evaluate(async () => { (await import('./js/settings.js')).setSetsGrouped('shelf:finished', null); }); await sleep(20); await sync(A); await sync(B); const b = await B.evaluate(async () => (await import('./js/settings.js')).settings.get('setGroups')); eq(b, {}, 'removal syncs');
+  });
   await step('No page errors', async () => { const e = [...A.errs, ...B.errs]; assert(!e.length, e.join(' | ')); });
   await browser.close();
   const bad = results.filter((r) => !r[0]); console.log(`\n${results.length - bad.length}/${results.length} passed`); process.exit(bad.length ? 1 : 0);

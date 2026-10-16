@@ -1,6 +1,6 @@
 // Library tab: shelves, sets (series), grid/list, sort incl. custom drag order, search, import.
 import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, fmtPct, hashHue, $, put } from './util.js';
-import { settings, GROUP_OPTIONS, SORT_FIELDS, SET_SORT_FIELDS, getSort, setSort, clearSort, dirWord, DEFAULT_DIR } from './settings.js';
+import { settings, GROUP_OPTIONS, SORT_FIELDS, SET_SORT_FIELDS, getSort, setSort, clearSort, dirWord, DEFAULT_DIR, setsGrouped, setSetsGrouped } from './settings.js';
 import * as S from './store.js';
 import { enableDragSort } from './dragsort.js';
 import { registerBack } from './nav.js';
@@ -47,7 +47,8 @@ async function renderMain(ctx) {
   const { shelves } = ctx; sortCtx = ctx;
   const allBooks = ctx.books; const books = Loans.owned(allBooks), borrowedBooks = Loans.borrowedOf(allBooks);   // Borrowed (library loans) stay out of the owned library, its chips and its counts
   let chip = settings.get('chip'); if (chip === 'borrowed' && !borrowedBooks.length) chip = 'all'; const sortKey = 'shelf:' + chip; const gb = chip === 'all' ? (settings.get('groupBy') || 'status') : null;
-  const orderKey = sortKey + (gb === 'none' ? ':flat' : '');   // the flat list keeps its own custom order
+  const grouped = setsGrouped(sortKey);   // v0.5.8: series sets per view (its own choice, else the global default)
+  const orderKey = sortKey + (gb === 'none' || !grouped ? ':flat' : '');   // the flat list keeps its own custom order
   const spec = getSort(sortKey); const sort = spec.field; const viewMode = settings.get('view');
   const search = h('input', { type: 'search', class: 'field search', placeholder: 'Search title, author or series', value: local.q, enterkeyhint: 'search' });
   search.addEventListener('input', () => { local.q = search.value; drawBody(); });
@@ -69,6 +70,7 @@ async function renderMain(ctx) {
         SORT_FIELDS.map(([v, n]) => h('option', { value: v, selected: v === sort }, n)))),
       gb ? h('label', { class: 'sort' }, 'Group ', h('select', { id: 'group-sel', onchange: (e) => { settings.set({ groupBy: e.target.value }); rerender(); } }, GROUP_OPTIONS.map(([v, n]) => h('option', { value: v, selected: v === gb }, n.replace(/ \(.*/, ''))))) : null,
       sort !== 'custom' ? dirButton(spec, () => { setSort(sortKey, { dir: spec.dir === 'asc' ? 'desc' : 'asc' }); rerender(); }) : null,
+      ctx.sets.length ? h('button', { class: 'btn small', id: 'sets-mode', 'data-grouped': grouped ? '1' : '0', title: 'Series in this view', onclick: () => setsModeSheet(sortKey, chips.find((c) => c.id === chip)?.name || 'this view') }, grouped ? '▤ Sets' : '▥ Books') : null,
       sort === 'custom' ? h('button', { class: 'btn small', id: 'reset-order', onclick: () => resetOrder(orderKey, false, sortKey) }, 'Reset to automatic') : null,
       h('span', { class: 'grow' }),
       h('div', { class: 'seg' },
@@ -98,7 +100,7 @@ async function renderMain(ctx) {
     else if (gb === 'none') sections = [{ id: 'flat', title: null, books: pool }];
     else sections = groupSections(gb, pool, ctx);
     const flatTiles = !!q || ['series', 'author', 'type'].includes(gb);   // one book can only sit in one group, so no set tiles there
-    sections = sections.map((s) => ({ ...s, tiles: sortTiles(buildTiles(s.books, ctx, flatTiles), sort, saved, spec.dir) }));
+    sections = sections.map((s) => ({ ...s, tiles: sortTiles(buildTiles(s.books, ctx, flatTiles || !grouped), sort, saved, spec.dir) }));
     for (const sec of sections) {
       if (!sec.tiles.length) continue;
       const ck = 'folio.collapse.' + (sec.ckey || gb + ':' + sec.id);
@@ -204,7 +206,7 @@ function emptyState() {
 function groupable(set, ctx) { return set && (!set.auto || ctx.books.filter((b) => b.setId === set.id).length >= 2); }
 
 function buildTiles(bs, ctx, flat) {
-  if (flat || !settings.get('groupSets')) return bs.map((b) => ({ type: 'book', key: 'b:' + b.id, book: b }));
+  if (flat) return bs.map((b) => ({ type: 'book', key: 'b:' + b.id, book: b }));
   const out = []; const seen = new Map();
   for (const b of bs) {
     const set = b.setId && ctx.setMap.get(b.setId);
@@ -331,10 +333,32 @@ function setMenu(set, ctx) {
     { label: 'Delete set (keeps books)', danger: true, onClick: async () => { if (await confirmDlg('Delete set?', 'Books stay in your library but are no longer grouped.', 'Delete', true)) { await S.deleteSet(set.id); local.setId = null; rerender(); } } },
   ]);
 }
+/** Per-view choice: series grouped into set tiles, or every book on its own — with the global default one tap away. */
+function setsModeSheet(sortKey, name) {
+  const own = (settings.get('setGroups') || {})[sortKey]; const def = !!settings.get('groupSets');
+  const sh = actionSheet('Series in “' + name + '”', [
+    { label: 'Group series into sets', id: 'sets-grouped', checked: own === true, onClick: () => { setSetsGrouped(sortKey, true); rerender(); } },
+    { label: 'Show books individually', id: 'sets-individual', checked: own === false, onClick: () => { setSetsGrouped(sortKey, false); rerender(); } },
+    { label: 'Use the default (' + (def ? 'grouped' : 'individual') + ')', id: 'sets-default', checked: own == null, onClick: () => { setSetsGrouped(sortKey, null); rerender(); } },
+    { label: 'Default for all views: ' + (def ? 'grouped' : 'individual') + ' — tap to switch', id: 'sets-global', keepOpen: true, onClick: () => { settings.set({ groupSets: !def }); sh.close(); rerender(); } },
+  ]);
+}
+const byName = (a, b) => norm(a.name).localeCompare(norm(b.name)) || a.name.localeCompare(b.name);
+/** Sets for pickers and lists: alphabetical, the ones that have books before the empty ones. */
+const sortedSets = (sets, books) => { const n = (s) => books.filter((b) => b.setId === s.id).length; return [...sets].sort((a, b) => (n(b) > 0) - (n(a) > 0) || byName(a, b)); };
 function addBooksToSet(set, ctx) {
   const others = ctx.books.filter((b) => b.setId !== set.id).sort((a, b) => norm(a.title).localeCompare(norm(b.title)));
-  sheet('Add books to ' + set.name, (close) => h('div', { class: 'list' }, others.length ? others.map((b) => h('button', { class: 'list-item', onclick: async () => { await S.assignSet(b.id, set.id, b.seriesIndex ?? (ctx.books.filter((x) => x.setId === set.id).length + 1)); close(); rerender(); } },
-    h('span', null, b.title, h('small', { class: 'muted' }, ' — ' + b.author)))) : h('p', { class: 'muted pad' }, 'All books are already in this set.')), { tall: true });
+  const q = h('input', { type: 'search', class: 'field search', id: 'set-add-q', placeholder: 'Search title, author or series', enterkeyhint: 'search', autocomplete: 'off' });
+  const list = h('div', { class: 'list', id: 'set-add-list' });
+  const fill = () => {
+    const t = norm(q.value).trim(); const words = t.split(/\s+/).filter(Boolean);
+    const hit = (b) => { const hay = norm([b.title, b.author, ctx.setMap.get(b.setId)?.name || ''].join(' ')); return words.every((w) => hay.includes(w)); };
+    const rows = others.filter(hit);
+    list.replaceChildren(...(rows.length ? rows.map((b) => h('button', { class: 'list-item', onclick: async () => { await S.assignSet(b.id, set.id, b.seriesIndex ?? (ctx.books.filter((x) => x.setId === set.id).length + 1)); w.close(); rerender(); } },
+      h('span', null, b.title, h('small', { class: 'muted' }, ' — ' + b.author + (b.setId && ctx.setMap.get(b.setId) ? ' · in ' + ctx.setMap.get(b.setId).name : ''))))) : [h('p', { class: 'muted pad' }, others.length ? 'No books match “' + q.value.trim() + '”.' : 'All books are already in this set.')]));
+  };
+  q.addEventListener('input', fill); fill();
+  const w = sheet('Add books to ' + set.name, () => [q, list], { tall: true });
 }
 
 /* ---------- menus & dialogs ---------- */
@@ -370,7 +394,7 @@ function manageShelves(ctx) {
     h('button', { class: 'btn primary block', onclick: async () => { close(); newShelf(); } }, 'New shelf')]);
 }
 function manageSets(ctx) {
-  sheet('Sets (series)', (close) => [h('div', { class: 'list' }, ctx.sets.length ? ctx.sets.map((s) => h('div', { class: 'list-item' },
+  sheet('Sets (series)', (close) => [h('div', { class: 'list' }, ctx.sets.length ? sortedSets(ctx.sets, ctx.books).map((s) => h('div', { class: 'list-item' },
     h('span', { class: 'grow', onclick: () => { close(); local.setId = s.id; rerender(); } }, s.name, h('small', { class: 'muted' }, ' · ' + ctx.books.filter((b) => b.setId === s.id).length + (s.auto ? ' · auto' : ''))),
     h('button', { class: 'btn small', onclick: async () => { const n = await promptDlg('Rename set', s.name); if (n) { await S.renameSet(s.id, n); close(); rerender(); } } }, 'Rename'),
     h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete set?', 'Books stay in your library.', 'Delete', true)) { await S.deleteSet(s.id); close(); rerender(); } } }, 'Delete'))) : h('p', { class: 'muted' }, 'No sets yet. Books with series metadata are grouped automatically.')),
@@ -400,7 +424,7 @@ function shelfSheet(b, ctx) {
 }
 function editBook(b, ctx) {
   const title = h('input', { class: 'field', value: b.title }); const author = h('input', { class: 'field', value: b.author });
-  const sel = h('select', { class: 'field' }, h('option', { value: '' }, '— No set —'), ...ctx.sets.map((s) => h('option', { value: s.id, selected: s.id === b.setId }, s.name)), h('option', { value: '__new' }, '＋ New set…'));
+  const sel = h('select', { class: 'field' }, h('option', { value: '' }, '— No set —'), ...sortedSets(ctx.sets, ctx.books).map((s) => h('option', { value: s.id, selected: s.id === b.setId }, s.name)), h('option', { value: '__new' }, '＋ New set…'));
   const vol = h('input', { class: 'field', type: 'number', step: '0.5', min: '0', placeholder: 'Volume # (optional)', value: b.seriesIndex ?? '' });
   const newName = h('input', { class: 'field', placeholder: 'New set name', hidden: true });
   sel.addEventListener('change', () => { newName.hidden = sel.value !== '__new'; });
