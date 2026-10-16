@@ -17,6 +17,9 @@ import { normalizeUrl } from './net.js';
 import { enrichSettingsSection, openFixMissing } from './enrich.js';
 import { footerToggles } from './pages.js';
 import { initViewport } from './viewport.js';
+import { pairSettingsSection, pairNotify } from './findplace.js';
+import { startAutoPair } from './links.js';
+import { handleSharedCover } from './covers.js';
 
 applyUI();
 let tab = localStorage.getItem('folio.tab') || 'library';
@@ -82,6 +85,7 @@ function renderSettings() {
           h('button', { class: 'btn', id: 'default-sort-dir', 'data-dir': s.defaultSort.dir, onclick: () => { setDefaultSort({ dir: s.defaultSort.dir === 'asc' ? 'desc' : 'asc' }); renderSettings(); } }, (s.defaultSort.dir === 'asc' ? '↑ ' : '↓ ') + dirWord(s.defaultSort.field, s.defaultSort.dir)))),
       h('button', { class: 'btn', id: 'reset-all-sorts', onclick: async () => { if (await confirmDlg('Reset all shelves?', 'Every shelf and set will use the default sort again. Custom drag orders are kept for when you switch back to Custom order.', 'Reset', false)) { resetAllSorts(); toast('All shelves use the default sort'); renderSettings(); } } }, 'Reset all shelves to default sort')),
     enrichSettingsSection(() => openFixMissing()),
+    pairSettingsSection(),
     h('section', { class: 'pad card-sec', id: 'sec-library' }, h('h3', null, 'Library'),
       h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
       h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),
@@ -141,7 +145,8 @@ window.addEventListener('drop', async (e) => {
 initViewport();
 G.initSync();
 show(tab);
-initInstall(); initFullscreen(); initPlayerUI();
+initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
+if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));

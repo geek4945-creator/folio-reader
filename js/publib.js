@@ -34,6 +34,7 @@ export function openPublicLibraryGuide() {
         step(4, 'Open it in Libby to borrow or place a hold', h('p', { class: 'muted small' }, 'Tap “Open in Libby” on a result. Install Libby from your app store if you haven’t, sign in once with your library card, then tap Borrow or Place Hold. You can read in Libby or, for US libraries, send the book to Kindle.')),
         step(5, 'Important: library books stay inside Libby', h('p', { class: 'plib-warn small' }, 'Borrowed library books are protected by DRM and expire at the end of the loan, so they can’t be imported into Folio, and Folio does not try to get around that. Folio is for DRM-free books: your own files, free public-domain books, and catalogs below.')),
         step(6, 'Does your library have its own catalog feed?', h('p', { class: 'muted small' }, 'A few libraries, and personal servers such as Calibre-Web, publish an OPDS catalog that Folio can browse and download DRM-free books from.'),
+          h('p', { class: 'muted small', id: 'plib-borrowed-note' }, h('strong', null, 'Where do loans land? '), 'Open the catalog’s ⋯ menu in Catalogs and choose “This is a public library”: everything you download from it goes to the ',  h('strong', null, 'Borrowed'), ' filter on the Library and Audiobooks tabs, separate from the books you own and from your library counts. If the feed publishes a loan end date (OPDS availability), Folio shows “Due in N days” and reminds you when it is close or expired, with a one-tap Remove (and “Remove all expired”). Otherwise set the date yourself from a book’s ⋯ menu, which also lets you mark any book or audiobook as Borrowed. Folio only imports DRM-free files: DRM-protected loans are still refused.'),
           h('button', { class: 'btn small', id: 'plib-catalogs-btn', onclick: () => { close(); openLibraryCatalogHelp(); } }, 'Add a library OPDS / Calibre-Web catalog'))),
       h('div', { class: 'row-actions' }, h('button', { class: 'btn', id: 'plib-drmfree-btn', onclick: () => { close(); openDrmFreeHelp(); } }, 'Where to get DRM-free books')),
     ];
@@ -150,6 +151,7 @@ export function openLibraryCatalogHelp() {
         h('li', null, h('strong', null, 'Koha, Evergreen and other library catalogs: '), 'a few offer an OPDS or Atom feed; ask your librarian for “the OPDS catalog address”. Folio will check whatever you paste and tell you what it found.')),
       h('div', { class: 'row-actions' }, h('button', { class: 'btn primary', id: 'plib-add-source', onclick: async () => { close(); const { addSourceSheet } = await import('./catalogs.js'); addSourceSheet(); } }, 'Add a catalog by address')),
       h('p', { class: 'muted small' }, 'Only add catalogs you have the right to download from. Borrowed (DRM-protected) books can’t be imported.'),
+      h('p', { class: 'muted small', id: 'libcat-borrowed-note' }, h('strong', null, 'DRM-free loans '), 'Anything you download from a catalog marked “This is a public library” (⋯ menu in Catalogs) is filed under ', h('strong', null, 'Borrowed'), ' with an optional due date and a reminder to remove it. Loans that are protected with Adobe DRM or LCP are still refused.'),
     ];
   }, { tall: true });
 }

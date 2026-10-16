@@ -8,7 +8,9 @@ import * as A from './audiostore.js';
 import { parseEpub } from './epubmeta.js';
 import { isPdf, parsePdf } from './pdf.js';
 import { readAudioMeta } from './audiotags.js';
-import { findCoverCandidates } from './enrich.js';
+import { hasAuthor } from './enrich.js';
+import { coverSearch, searchLinks, fromClipboardItems, fromPasteEvent } from './coversearch.js';
+import { isIOS, isAndroid } from './env.js';
 
 export const COVER_W = 400;
 const isImg = (b) => b && /^image\//.test(b.type);
@@ -77,14 +79,14 @@ export async function revertCover(kind, id, { at = Date.now(), quiet = false } =
 export const hasCustomCover = (it) => !!(it.userSet?.cover || (it.coverSource && it.coverSource !== 'file'));
 
 /* ---------- the "Change cover" sheet ---------- */
-export async function openCoverEditor(kind, id, { onDone } = {}) {
+export async function openCoverEditor(kind, id, { onDone, initialBlob = null, initialSource = 'shared' } = {}) {
   const a = adapt(kind); const it = await a.get(id); if (!it) return;
-  const w = sheet('Change cover', () => []); const body = w.body; let stage = 'menu';
+  const w = sheet('Change cover', () => [], { onClose: () => { for (const f of w.cleanups) f(); } }); w.cleanups = []; const body = w.body; let stage = 'menu';
   const done = async (msg) => { w.close(); toast(msg); onDone && onDone(); };
   const finish = async (blob, source) => {   // blob → crop step → save
     stage = 'crop'; await cropStep(blob, source);
   };
-  menu();
+  if (initialBlob) finish(initialBlob, initialSource).catch((e) => { toast(e.message, 5000); menu(); }); else menu();
 
   function menu() {
     stage = 'menu';
@@ -97,7 +99,9 @@ export async function openCoverEditor(kind, id, { onDone } = {}) {
         h('button', { class: 'list-item', id: 'cover-opt-device', onclick: () => file.click() }, h('span', null, '📷  Choose from this device (photos / files)')),
         h('button', { class: 'list-item', id: 'cover-opt-drive', onclick: pickDrive }, h('span', null, '☁️  Choose from Google Drive')),
         h('button', { class: 'list-item', id: 'cover-opt-url', onclick: urlStep }, h('span', null, '🔗  Paste an image address')),
-        h('button', { class: 'list-item', id: 'cover-opt-search', onclick: searchStep }, h('span', null, '🔎  Search covers (Open Library, Google Books)')),
+        h('button', { class: 'list-item', id: 'cover-opt-search', onclick: searchStep }, h('span', null, '🔎  Search covers (Open Library, Google Books, Internet Archive, Apple Books)')),
+        h('button', { class: 'list-item', id: 'cover-opt-paste', onclick: pasteStep }, h('span', null, '📋  Paste an image (or its address)')),
+        h('button', { class: 'list-item', id: 'cover-opt-browser', onclick: browserStep }, h('span', null, '🌐  Search in my browser (Google Images…), then paste')),
         hasCustomCover(it) || it.coverBlob ? h('button', { class: 'list-item', id: 'cover-opt-revert', onclick: async () => { const r = await revertCover(kind, id); await done(r?.coverBlob ? 'Back to the automatic cover' : 'Removed the custom cover'); } }, h('span', null, '↩︎  Revert to automatic cover')) : null),
       status, file);
   }
@@ -114,18 +118,101 @@ export async function openCoverEditor(kind, id, { onDone } = {}) {
     body.replaceChildren(h('button', { class: 'btn-text', onclick: menu }, '‹ Back'), h('label', null, 'Image address (URL)', input), err, go, h('p', { class: 'muted small' }, 'Tip: in your browser, right-click a picture → “Copy image address”. If the site blocks direct downloads Folio retries through your proxy.'));
     setTimeout(() => input.focus(), 40);
   }
+  /** ---- search: editable query, many sources, size filter / sort, load more ---- */
   async function searchStep() {
-    stage = 'search'; const grid = h('div', { class: 'cover-grid', id: 'cover-results' }); const note = h('p', { class: 'muted small', id: 'cover-search-note' }, 'Searching…');
-    const q = `${it.title} ${it.author && !/^unknown/i.test(it.author) ? it.author : ''} book cover`.replace(/\s+/g, ' ').trim();
-    const gi = h('a', { class: 'btn block', id: 'cover-google-images', href: 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q), target: '_blank', rel: 'noopener', onclick: (e) => { e.preventDefault(); window.open('https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q), '_blank', 'noopener'); } }, '🖼️  Open Google Images in a new tab');
-    const pasteBtn = h('button', { class: 'btn block', id: 'cover-search-paste', onclick: urlStep }, 'Paste the image address you copied');
-    body.replaceChildren(h('button', { class: 'btn-text', onclick: menu }, '‹ Back'), note, grid, h('div', { class: 'muted small' }, 'Not here? Search Google Images for “' + q + '”, copy the image address, then paste it.'), gi, pasteBtn);
-    try {
-      const cands = await findCoverCandidates(it.title, it.author, it.isbn);
-      note.textContent = cands.length ? 'Tap a cover to preview it.' : 'No covers found for this title.';
-      for (const c of cands) grid.append(h('button', { class: 'cover-cand', 'data-src': c.source, title: c.label || c.source, onclick: async (e) => { const b = e.currentTarget; b.classList.add('busy'); try { await finish(await fetchImage(c.full || c.url), c.source); } catch (err) { b.classList.remove('busy'); toast(err.message, 5000); } } },
-        h('img', { src: c.thumb || c.url, alt: '', loading: 'lazy', onerror: (e) => e.target.closest('.cover-cand').remove() }), h('small', null, c.label || c.source)));
-    } catch (e) { note.textContent = 'Couldn’t search right now (' + (e.message || 'network') + '). You can still paste an image address.'; }
+    stage = 'search'; const kindName = kind === 'audio' ? 'audio' : 'book';
+    const f = { title: h('input', { class: 'field', id: 'cover-q-title', value: it.title || '', placeholder: 'Title' }), author: h('input', { class: 'field', id: 'cover-q-author', value: hasAuthor(it.author) ? it.author : '', placeholder: 'Author' }), isbn: h('input', { class: 'field', id: 'cover-q-isbn', value: it.isbn || '', placeholder: 'ISBN (optional)', inputmode: 'numeric' }) };
+    const grid = h('div', { class: 'cover-grid', id: 'cover-results' }); const note = h('p', { class: 'muted small', id: 'cover-search-note' }, 'Searching…');
+    const sort = h('select', { class: 'field', id: 'cover-sort', onchange: () => paint() }, [['size', 'Largest first'], ['match', 'Best match first']].map(([v, n]) => h('option', { value: v }, n)));
+    const minSel = h('select', { class: 'field', id: 'cover-minsize', onchange: () => paint() }, [[0, 'Any size'], [200, 'Hide small (< 200 px tall)'], [400, 'Only ≥ 400 px tall'], [700, 'Only ≥ 700 px tall']].map(([v, n]) => h('option', { value: v, selected: v === 200 }, n)));
+    const moreBtn = h('button', { class: 'btn block', id: 'cover-more', hidden: true, onclick: () => loadMore() }, 'Load more covers');
+    let session = null, cands = [], busy = false; const nodes = new Map();
+    const q = () => `${f.title.value} ${f.author.value}`.replace(/\s+/g, ' ').trim();
+    const tile = (c) => {
+      const dim = h('small', { class: 'cover-dim' }, '…');
+      const img = h('img', { alt: '', decoding: 'async', src: c.thumb || c.full, onload: (e) => { c.w = e.target.naturalWidth; c.h = e.target.naturalHeight; dim.textContent = `${c.w}×${c.h}`; if (c.w < 5 || c.h < 5) { drop(c); return; } schedule(); }, onerror: () => drop(c) });
+      return h('button', { class: 'cover-cand', 'data-src': c.source, 'data-id': c.id, title: (c.label || c.source) + ' — tap to use', onclick: async (e) => { const b = e.currentTarget; b.classList.add('busy'); try { await finish(await fetchImage(c.full || c.url), c.source); } catch (err) { b.classList.remove('busy'); toast(err.message, 5000); } } },
+        img, h('small', { class: 'cover-lbl' }, c.label || c.source), dim, h('span', { class: 'cover-use' }, 'Use this'));
+    };
+    const drop = (c) => { cands = cands.filter((x) => x !== c); nodes.get(c)?.remove(); nodes.delete(c); note.textContent = summary(); };
+    let timer = null; const schedule = () => { clearTimeout(timer); timer = setTimeout(paint, 150); };
+    const summary = () => { const shown = [...nodes.values()].filter((n) => !n.hidden).length; return cands.length ? `${shown} cover${shown === 1 ? '' : 's'} shown${shown < nodes.size ? ` (${nodes.size - shown} hidden by the size filter)` : ''}. Tap one to preview it.` : 'No covers found for this search. Change the title / author / ISBN, or use Search in browser below.'; };
+    function paint() {
+      const min = +minSel.value; const order = [...cands].sort((a, b) => sort.value === 'size' ? ((b.h || 0) * (b.w || 0)) - ((a.h || 0) * (a.w || 0)) || (b.conf || 0) - (a.conf || 0) : (b.conf || 0) - (a.conf || 0));
+      for (const c of order) { let n = nodes.get(c); if (!n) { n = tile(c); nodes.set(c, n); } n.hidden = !!(c.h && min && c.h < min); grid.append(n); }
+      note.textContent = summary();
+    }
+    async function loadMore() {
+      if (busy || !session) return; busy = true; moreBtn.disabled = true; moreBtn.textContent = 'Loading…';
+      try { const batch = await session.next(); cands.push(...batch); paint(); } catch (e) { note.textContent = 'Couldn’t search right now (' + (e.message || 'network') + ').'; }
+      busy = false; moreBtn.disabled = false; moreBtn.textContent = 'Load more covers'; moreBtn.hidden = !session.more;
+    }
+    async function run() {
+      clearTimeout(timer); grid.replaceChildren(); nodes.clear(); cands = []; note.textContent = 'Searching…'; moreBtn.hidden = true;
+      session = coverSearch({ title: f.title.value.trim(), author: f.author.value.trim(), isbn: f.isbn.value.trim(), kind: kindName }); await loadMore();
+    }
+    for (const e of Object.values(f)) e.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') run(); });
+    const go = h('button', { class: 'btn primary', id: 'cover-q-go', onclick: run }, 'Search');
+    const gq = q().length ? q() + ' book cover' : 'book cover'; const links = searchLinks(gq);
+    const gi = h('a', { class: 'btn block', id: 'cover-google-images', href: links.google, target: '_blank', rel: 'noopener', onclick: (e) => { e.preventDefault(); window.open(links.google, '_blank', 'noopener'); } }, '🔎  Search Google Images for “' + gq + '”');
+    body.replaceChildren(h('button', { class: 'btn-text', id: 'cover-search-back', onclick: menu }, '‹ Back'),
+      h('div', { class: 'cover-q' }, f.title, f.author, f.isbn, go),
+      h('div', { class: 'cover-filters' }, h('label', null, 'Sort', sort), h('label', null, 'Size', minSel)), note, grid, moreBtn,
+      h('div', { class: 'muted small' }, 'Sources: Open Library (all editions), Google Books, Internet Archive, Apple Books. Not here? Look on the web:'), gi,
+      h('button', { class: 'btn block', id: 'cover-open-browser', onclick: browserStep }, '🌐  More ways to search in your browser…'),
+      h('button', { class: 'btn block', id: 'cover-search-paste', onclick: pasteStep }, 'Paste the image or address you copied'));
+    await run();
+  }
+  /** ---- search in the system browser, then come back with a copied / saved image ---- */
+  function browserStep() {
+    stage = 'browser'; const q0 = `${it.title} ${hasAuthor(it.author) ? it.author : ''} book cover`.replace(/\s+/g, ' ').trim(); const q = h('input', { class: 'field', id: 'cover-browser-q', value: q0 });
+    const open = (u) => { window.open(u, '_blank', 'noopener'); };
+    const L = () => searchLinks(q.value.trim() || q0);
+    const ios = isIOS(), andr = isAndroid();
+    const btn = (id, label, getUrl, cls = 'btn block') => h('a', { class: cls, id, href: getUrl(), target: '_blank', rel: 'noopener', onclick: (e) => { e.preventDefault(); const u = getUrl(); if (/^(googlechromes?|intent):/.test(u)) { location.href = u; } else open(u); } }, label);
+    const clip = h('div', { id: 'cover-clip-slot' });
+    body.replaceChildren(h('button', { class: 'btn-text', id: 'cover-browser-back', onclick: searchStep }, '‹ Back to results'),
+      h('label', null, 'What to search for', q),
+      btn('cover-google-images', ios ? '🔎  Google Images — open in Safari' : '🔎  Google Images', () => L().google, 'btn primary block'),
+      ios ? btn('cover-chrome-ios', '🔎  Google Images — open in Chrome', () => L().chromeIOS) : null,
+      andr ? btn('cover-chrome-android', '🔎  Google Images — open in Chrome', () => L().chromeAndroid) : null,
+      h('div', { class: 'row-actions' }, btn('cover-bing', 'Bing Images', () => L().bing, 'btn small'), btn('cover-ddg', 'DuckDuckGo Images', () => L().ddg, 'btn small')),
+      h('ol', { class: 'cover-steps', id: 'cover-steps' },
+        h('li', null, h('strong', null, 'Find the picture. '), 'Tap an image in the results and open it full size.'),
+        h('li', null, h('strong', null, 'Copy or save it. '), 'Touch and hold the image, then choose ', h('em', null, ios ? 'Copy' : 'Copy image'), ' or ', h('em', null, ios ? 'Save to Photos' : 'Download image'), '.'),
+        h('li', null, h('strong', null, 'Come back to this app '), '(switch back, or open it from the Home Screen).'),
+        h('li', null, h('strong', null, 'Use it: '), 'tap ', h('em', null, 'Paste image'), ' if you copied it, or ', h('em', null, 'Choose from Photos / Files'), ' if you saved it.')),
+      clip, h('button', { class: 'btn primary block', id: 'cover-paste-image', onclick: () => pasteFromClipboard() }, '📋  Paste image'),
+      h('button', { class: 'btn block', id: 'cover-choose-file', onclick: () => document.querySelector('#cover-file-2').click() }, '🖼️  Choose from Photos / Files'),
+      pasteBox(), h('p', { class: 'muted small' }, 'You can also share an image to this app from Safari or Chrome (Share → this app) once it is installed on your Home Screen / Android.'), fileInput());
+    watchClipboard(clip);
+  }
+  function fileInput() { const file = h('input', { type: 'file', accept: 'image/*', id: 'cover-file-2', hidden: true }); file.addEventListener('change', async () => { const f = file.files[0]; file.value = ''; if (f) { try { await finish(f, 'device'); } catch (e) { toast(e.message, 5000); } } }); return file; }
+  /** A field you can long-press → Paste into (iOS Safari only allows pasting images that way); also catches Cmd/Ctrl-V anywhere on the sheet. */
+  function pasteBox() {
+    const box = h('div', { id: 'cover-paste-box', class: 'cover-paste-box', contenteditable: 'true', role: 'textbox', 'aria-label': 'Paste an image here', 'data-ph': 'Or touch and hold here, then choose Paste' });
+    box.addEventListener('paste', (e) => { e.preventDefault(); useClip(fromPasteEvent(e)); }); box.addEventListener('input', () => { box.textContent = ''; }); return box;
+  }
+  async function useClip(c) {
+    if (!c) { toast('Nothing usable was copied: copy an image (or its address) first.', 4500); return; }
+    try { await finish(c.blob || await fetchImage(c.url), c.blob ? 'clipboard' : 'url'); } catch (e) { toast(e.message, 5000); }
+  }
+  async function readClipboard() { if (!navigator.clipboard?.read) throw new Error('This browser can’t read the clipboard directly: touch and hold the box below and choose Paste, or use Choose from Photos / Files.'); return fromClipboardItems(await navigator.clipboard.read()); }
+  async function pasteFromClipboard() { try { await useClip(await readClipboard()); } catch (e) { toast(e.name === 'NotAllowedError' ? 'Allow pasting when asked, or touch and hold the box below and choose Paste.' : e.message, 6000); } }
+  /** Back from the browser: if the clipboard (already permitted) holds an image / address, offer it in one tap. */
+  function watchClipboard(slot) {
+    const check = async () => {
+      if (document.hidden || stage !== 'browser' || !navigator.clipboard?.read) return;
+      try { const p = await navigator.permissions?.query({ name: 'clipboard-read' }); if (p && p.state !== 'granted') return; const c = await readClipboard(); if (!c) return;
+        slot.replaceChildren(h('button', { class: 'btn primary block', id: 'cover-clip-found', onclick: () => useClip(c) }, c.blob ? '📋  Use the image you copied' : '📋  Use the copied picture address')); } catch { /* not permitted: the Paste button still works */ }
+    };
+    const on = () => check(); document.addEventListener('visibilitychange', on); window.addEventListener('focus', on); w.cleanups.push(() => { document.removeEventListener('visibilitychange', on); window.removeEventListener('focus', on); }); check();
+  }
+  async function pasteStep() {
+    stage = 'paste'; const input = h('input', { class: 'field', id: 'cover-url', type: 'text', inputmode: 'url', placeholder: 'https://example.com/cover.jpg', autocapitalize: 'none', spellcheck: 'false' }); const err = h('p', { class: 'err small', id: 'cover-url-err' });
+    const go = h('button', { class: 'btn primary block', id: 'cover-url-go', onclick: async () => { err.textContent = ''; let u = input.value.trim(); if (!u) return; if (!/^https?:\/\//i.test(u)) u = 'https://' + u; go.disabled = true; go.textContent = 'Fetching…'; try { await finish(await fetchImage(u), 'url'); } catch (e) { err.textContent = e.message; go.disabled = false; go.textContent = 'Fetch image'; } } }, 'Fetch image');
+    body.replaceChildren(h('button', { class: 'btn-text', onclick: menu }, '‹ Back'), h('button', { class: 'btn primary block', id: 'cover-paste-image', onclick: () => pasteFromClipboard() }, '📋  Paste image'), pasteBox(), h('label', null, 'or an image address (URL)', input), err, go,
+      h('p', { class: 'muted small' }, 'Tip: in your browser touch and hold a picture → Copy (or Copy image address). If a site blocks direct downloads the app retries through your proxy.'));
   }
   async function cropStep(blob, source) {
     let bmp; try { bmp = await createImageBitmap(blob); } catch { throw new Error('Couldn’t read that image. Try a JPEG or PNG.'); }
@@ -154,4 +241,25 @@ export async function openCoverEditor(kind, id, { onDone } = {}) {
     lay();
   }
   return w;
+}
+
+/* ---------- Web Share Target: an image shared from Safari / Chrome to this app ---------- */
+export async function takeShared() {
+  const base = document.baseURI; const meta = await caches.match(new URL('__shared__/meta', base).href); if (!meta) return null;
+  const info = await meta.json(); let blob = null; const img = await caches.match(new URL('__shared__/cover', base).href); if (img) blob = await img.blob();
+  for (const k of await caches.keys()) { const c = await caches.open(k); await c.delete(new URL('__shared__/cover', base).href); await c.delete(new URL('__shared__/meta', base).href); }
+  return blob || info.url ? { blob, url: info.url } : null;
+}
+/** Asks which book / audiobook the shared image is for, then goes straight to the crop preview. */
+export async function handleSharedCover() {
+  let sh = null; try { sh = await takeShared(); } catch { /* ignore */ }
+  try { const u = new URL(location.href); if (u.searchParams.has('share')) { u.searchParams.delete('share'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch { /* ignore */ }
+  if (!sh) return false;
+  let blob = sh.blob; if (!blob) { try { blob = await fetchImage(sh.url); } catch (e) { toast('Couldn’t download the shared picture: ' + e.message, 6000); return false; } }
+  const [books, audios] = await Promise.all([S.getBooks(), A.getAudiobooks()]);
+  const items = [...books.map((b) => ({ kind: 'book', b })), ...audios.map((b) => ({ kind: 'audio', b }))].sort((x, y) => x.b.title.localeCompare(y.b.title));
+  const url = URL.createObjectURL(blob); const q = h('input', { class: 'field', id: 'share-q', type: 'search', placeholder: 'Find a book or audiobook' }); const list = h('div', { class: 'list', id: 'share-targets' });
+  const w = sheet('Use this picture as a cover', () => [h('div', { class: 'center' }, h('img', { src: url, alt: '', id: 'share-preview', style: { maxHeight: '9rem', maxWidth: '100%', borderRadius: '6px' } })), h('p', { class: 'muted small' }, 'Which one is it for?'), q, list], { tall: true, onClose: () => URL.revokeObjectURL(url) });
+  const paint = () => { const t = q.value.trim().toLowerCase(); list.replaceChildren(...items.filter((x) => !t || (x.b.title + ' ' + x.b.author).toLowerCase().includes(t)).slice(0, 60).map((x) => h('button', { class: 'list-item share-target', dataset: { kind: x.kind, id: x.b.id }, onclick: () => { w.close(); openCoverEditor(x.kind, x.b.id, { initialBlob: blob, initialSource: 'shared' }); } }, h('span', { class: 'grow' }, (x.kind === 'audio' ? '🎧 ' : '📖 ') + x.b.title, h('small', { class: 'muted' }, x.b.author ? ' · ' + x.b.author : ''))))); if (!list.children.length) list.append(h('p', { class: 'muted small' }, 'No match.')); };
+  q.addEventListener('input', paint); paint(); return true;
 }

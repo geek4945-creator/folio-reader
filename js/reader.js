@@ -26,6 +26,7 @@ export async function openReader(id) {
   const top = h('div', { class: 'r-bar top' },
     h('button', { class: 'btn-icon', id: 'r-back', 'aria-label': 'Close book', onclick: closeReader }, '‹'),
     h('div', { class: 'grow r-titlewrap' }, title, ovr),
+    h('button', { class: 'btn-icon', id: 'r-link', 'aria-label': 'Find my place (audiobook)', title: 'Find my place (audiobook)', hidden: true, onclick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: book.id })) }, '🎧'),
     h('button', { class: 'btn-icon', id: 'r-toc', 'aria-label': 'Table of contents', onclick: showToc }, '☰'),
     bmBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
@@ -35,6 +36,7 @@ export async function openReader(id) {
   const foot = makeFooter();
   el.replaceChildren(top, viewer, bottom, foot, loading); applyFooterSettings(); paintFooter({});
 
+  import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { const b = document.getElementById('r-link'); if (b && l.length) b.hidden = false; }).catch(() => {});   // the 🎧 button only appears once there is an audiobook to link
   cur = { book, viewer, slider, label, bmBtn, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
   try {
     cur.epub = ePub(await blob.arrayBuffer());

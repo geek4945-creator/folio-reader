@@ -10,6 +10,7 @@ import { markEdits } from './metasync.js';
 import { openCoverEditor } from './covers.js';
 import { openFixMissing } from './enrich.js';
 import { openAudioSources } from './audiosources.js';
+import * as Loans from './loans.js';
 
 let view; const covers = new Map();
 let local = { q: '', sel: null, visible: [] };
@@ -18,8 +19,9 @@ const recent = (b) => b.lastOpened || b.addedAt || 0;
 const coverUrl = (b) => { if (!b.coverBlob) return null; const k = b.id + ':' + b.coverBlob.size; if (!covers.has(k)) covers.set(k, URL.createObjectURL(b.coverBlob)); return covers.get(k); };
 const forgetCovers = (ids) => { for (const [k, u] of [...covers]) if (ids.some((id) => k.startsWith(id + ':'))) { URL.revokeObjectURL(u); covers.delete(k); } };
 
-export async function renderAudiobooks(v) {
-  view = v || view;
+let renderChain = Promise.resolve();   // queued renders: overlapping ones used to interleave and draw tiles twice
+export function renderAudiobooks(v) { if (v) view = v; const run = renderChain.then(() => drawAudiobooks()); renderChain = run.catch((e) => console.warn('render failed', e)); return run; }
+async function drawAudiobooks() {
   if (!view) return;   // an import finished before this tab was ever shown
   const [books, shelves] = await Promise.all([A.getAudiobooks(), S.getShelves()]);
   const scroll = view.scrollTop; view.replaceChildren();
@@ -31,20 +33,21 @@ export async function renderAudiobooks(v) {
 const rerender = () => renderAudiobooks();
 
 async function renderMain(ctx) {
-  const { books, shelves } = ctx;
-  let chip = settings.get('audioChip') || 'all'; if (chip !== 'all' && !A.AUDIO_STATUSES.some((s) => s.id === chip) && !shelves.some((s) => s.id === chip)) chip = 'all';
+  const { shelves } = ctx; const allBooks = ctx.books; const books = Loans.owned(allBooks), borrowedBooks = Loans.borrowedOf(allBooks);   // library loans stay out of the owned list and its counts
+  let chip = settings.get('audioChip') || 'all'; if (chip !== 'all' && !(chip === 'borrowed' && borrowedBooks.length) && !A.AUDIO_STATUSES.some((s) => s.id === chip) && !shelves.some((s) => s.id === chip)) chip = 'all';
   const sortKey = 'audio:' + chip; const spec = getSort(sortKey); const sort = spec.field; const viewMode = settings.get('view');
   const search = h('input', { type: 'search', class: 'field search', id: 'audio-search', placeholder: 'Search title or author', value: local.q, enterkeyhint: 'search' });
   search.addEventListener('input', () => { local.q = search.value; drawBody(); });
-  const chips = [{ id: 'all', name: 'All' }, ...A.AUDIO_STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true }))];
-  const count = (c) => c.id === 'all' ? null : A.AUDIO_STATUSES.some((s) => s.id === c.id) ? books.filter((b) => b.status === c.id).length : books.filter((b) => b.shelves?.includes(c.id)).length;
+  const chips = [{ id: 'all', name: 'All' }, ...A.AUDIO_STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true })), ...(borrowedBooks.length ? [{ id: 'borrowed', name: 'Borrowed' }] : [])];
+  const banner = await Loans.loanBanner('audio', rerender);
+  const count = (c) => c.id === 'all' ? null : c.id === 'borrowed' ? borrowedBooks.length : A.AUDIO_STATUSES.some((s) => s.id === c.id) ? books.filter((b) => b.status === c.id).length : books.filter((b) => b.shelves?.includes(c.id)).length;
   put(view,
     h('header', { class: 'topbar' }, h('h1', null, 'Audiobooks'),
       h('div', { class: 'top-actions' },
-        books.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'audio-select', onclick: () => { local.sel = local.sel ? null : new Set(); rerender(); } }, local.sel ? 'Done' : 'Select') : null,
+        allBooks.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'audio-select', onclick: () => { local.sel = local.sel ? null : new Set(); rerender(); } }, local.sel ? 'Done' : 'Select') : null,
         h('button', { class: 'btn-icon', id: 'audio-add', 'aria-label': 'Add audiobooks', title: 'Import audio files', onclick: pickAudio }, '＋'),
         h('button', { class: 'btn-icon', id: 'audio-menu', 'aria-label': 'Audiobooks menu', onclick: () => audioMenu(ctx) }, '⋯'))),
-    h('div', { class: 'pad' }, search),
+    h('div', { class: 'pad' }, search), banner,
     h('div', { class: 'chips', role: 'tablist' }, chips.map((c) => h('button', { class: 'chip' + (chip === c.id ? ' on' : ''), role: 'tab', 'data-chip': c.id, onclick: () => { settings.set({ audioChip: c.id }); rerender(); } }, c.name, count(c) != null ? h('small', null, ' ' + count(c)) : null)),
       h('button', { class: 'chip add', onclick: newShelf, 'aria-label': 'New shelf' }, '＋ Shelf')),
     h('div', { class: 'toolbar pad' },
@@ -56,14 +59,15 @@ async function renderMain(ctx) {
         h('button', { class: viewMode === 'list' ? 'on' : '', 'aria-label': 'List view', id: 'audio-view-list', onclick: () => { settings.set({ view: 'list' }); rerender(); } }, '☰'))),
     sort === 'custom' ? h('p', { class: 'hint pad' }, 'Press and hold an audiobook, then drag to reorder.') : null);
   const body = h('div', { id: 'audio-body' }); put(view, body);
-  if (local.sel) put(view, selectBar());
+  if (local.sel) { put(view, selectBar()); refreshSelection(); }
 
   async function drawBody() {
     body.replaceChildren(); const q = local.q.trim().toLowerCase();
-    const ofChip = (b) => chip === 'all' ? true : A.AUDIO_STATUSES.some((s) => s.id === chip) ? b.status === chip : !!b.shelves?.includes(chip);
-    let pool = books.filter((b) => ofChip(b) && (!q || [b.title, b.author].some((x) => (x || '').toLowerCase().includes(q))));
+    const src = chip === 'borrowed' ? borrowedBooks : books;
+    const ofChip = (b) => chip === 'all' ? true : chip === 'borrowed' ? !!b.borrowed : A.AUDIO_STATUSES.some((s) => s.id === chip) ? b.status === chip : !!b.shelves?.includes(chip);
+    let pool = src.filter((b) => ofChip(b) && (!q || [b.title, b.author].some((x) => (x || '').toLowerCase().includes(q))));
     local.visible = pool.map((b) => b.id);
-    if (!books.length) { body.append(emptyState()); return; }
+    if (!allBooks.length) { body.append(emptyState()); return; }
     if (!pool.length) { body.append(h('p', { class: 'muted pad center' }, q ? 'No matches.' : 'Nothing on this shelf yet.')); return; }
     const m = spec.dir === 'desc' ? -1 : 1; const byTitle = (a, b) => norm(a.title).localeCompare(norm(b.title)); const prog = (b) => (b.status === 'finished' ? 1 : b.progress || 0);
     if (sort === 'title') pool.sort((a, b) => m * byTitle(a, b));
@@ -95,7 +99,7 @@ function tileEl(b, ctx, mode) {
   return h('div', { class: 'tile book audio' + (local.sel && local.sel.has(b.id) ? ' sel' : ''), dataset: { key: 'b:' + b.id, id: b.id }, tabindex: 0, role: 'button', onclick: act, onkeydown: (e) => { if (e.key === 'Enter') act(); } },
     h('div', { class: 'cover' },
       h('div', { class: 'cover-ph', style: { background: `linear-gradient(135deg,hsl(${hue} 45% 38%),hsl(${(hue + 40) % 360} 45% 28%))` } }, h('span', null, b.title), h('small', null, b.author)),
-      u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, badge(b), cloud, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null),
+      u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, badge(b), b.borrowed ? Loans.dueBadge(b) : null, cloud, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null),
     h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, b.title), h('div', { class: 'a ellipsis muted' }, b.author || 'Unknown author'),
       h('div', { class: 'muted small ellipsis' }, fmtLong(b.duration) + (b.tracks.length > 1 ? ` · ${b.tracks.length} files` : '')), mode === 'list' ? bar : null),
     mode === 'list' ? more : null);
@@ -165,6 +169,7 @@ function audioMenu(ctx) {
     { label: 'Import audio files…', id: 'audio-menu-files', onClick: pickAudio },
     { label: 'Import a folder…', id: 'audio-menu-folder', onClick: () => $('#audio-folder-input').click() },
     { label: 'Import from Google Drive…', id: 'audio-menu-drive', onClick: () => openDriveBrowser({ audio: true }) },
+    { label: '📖  Audiobook ↔ ebook pairs…', id: 'audio-menu-pairs', onClick: () => import('./findplace.js').then((m) => m.openPairs()) },
     ctx.books.length ? { label: '✨  Fix missing info…', id: 'audio-menu-fix-missing', onClick: () => openFixMissing({ kind: 'audio' }) } : null,
     { label: 'Manage shelves…', onClick: () => manageShelves(ctx) },
     ctx.books.length ? { label: 'Select audiobooks…', id: 'audio-menu-select', onClick: () => { local.sel = new Set(); rerender(); } } : null,
@@ -184,6 +189,8 @@ export function audioBookMenu(b, ctx) {
     { label: 'Edit details…', id: 'audio-menu-edit', onClick: () => editBook(b) },
     { label: 'Change cover…', id: 'audio-menu-cover', onClick: () => openCoverEditor('audio', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', id: 'audio-menu-shelf', onClick: () => shelfSheet(b, ctx) },
+    { label: '📖  Find my place (ebook)…', id: 'audio-menu-findplace', onClick: () => import('./findplace.js').then((m) => m.openFindPlace({ audioId: b.id })) },
+    ...Loans.loanMenuItems('audio', b, rerender),
     A.hasUrls(b) ? (A.isDownloaded(b) ? { label: 'Remove offline copy', id: 'audio-menu-rmdl', onClick: async () => { await A.removeDownload(b.id); toast('Offline copy removed'); rerender(); } } : { label: 'Download for offline', id: 'audio-menu-dl', onClick: async () => { await downloadWithToast(b.id); rerender(); } }) : null,
     { label: 'Delete audiobook', danger: true, id: 'audio-menu-delete', onClick: () => deleteFlow([b.id]) },
   ].filter(Boolean));

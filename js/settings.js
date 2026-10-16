@@ -29,6 +29,7 @@ export const DEFAULTS = {
   flow: 'paginated',    // 'paginated' | 'scrolled'
   pdfInvert: true,      // PDF: invert page colors in dark themes
   tapZones: 'on',       // 'on' | 'off' | 'inverted'
+  autoPair: true,       // link audiobooks with their ebooks automatically when the match is very confident (≥ 85%)
   autoEnrich: false,    // fill in missing metadata / covers on import (Open Library + Google Books, high-confidence matches only)
   view: 'grid',         // library view: grid | list
   sort: 'recent',       // legacy global sort (kept for old synced data; see sorts/defaultSort)
@@ -49,7 +50,7 @@ export const DEFAULTS = {
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };
 
-export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich'];
+export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair'];
 let state = { ...DEFAULTS };
 try { Object.assign(state, JSON.parse(localStorage.getItem('folio.settings') || '{}')); } catch { /* ignore */ }
 const listeners = new Set();

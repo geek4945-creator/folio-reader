@@ -63,6 +63,7 @@ function parseAtom(doc, base) {
     const img = ls.find((l) => l.rel === 'http://opds-spec.org/image') || ls.find((l) => /image/.test(l.rel) && !/thumbnail/.test(l.rel)) || ls.find((l) => /image\/thumbnail|thumbnail/.test(l.rel));
     const thumb = ls.find((l) => /thumbnail/.test(l.rel)) || img;
     const entry = { id, title, author, summary, cover: (img || thumb)?.href || null, thumb: thumb?.href || null, downloads, series: '', seriesIndex: null };
+    { const av = [...e.getElementsByTagNameNS('*', 'availability')].find((x) => x.getAttribute('until')); if (av && downloads.length) { entry.dueAt = Date.parse(av.getAttribute('until')) || null; entry.loan = true; } }   // OPDS 1.2 <opds:availability until=…> on a downloadable copy = the loan end date
     // Series: Calibre / schema.org / opds extensions
     const ns = (name) => [...e.getElementsByTagNameNS('*', name)];
     const own = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
@@ -95,7 +96,7 @@ function formatLabel(type, url) {
 
 /* ---------------- OPDS 2 JSON ---------------- */
 function parseJson(json, base) {
-  const L = (links) => (links || []).map((l) => ({ rel: [].concat(l.rel || []).join(' '), href: abs(l.href || '', base), type: l.type || '', title: l.title || '', templated: !!l.templated }));
+  const L = (links) => (links || []).map((l) => ({ rel: [].concat(l.rel || []).join(' '), href: abs(l.href || '', base), type: l.type || '', title: l.title || '', templated: !!l.templated, until: l.properties?.availability?.until || '' }));
   const fl = L(json.links);
   const find = (rel) => fl.find((l) => l.rel.split(' ').includes(rel))?.href || null;
   const feed = { title: json.metadata?.title || 'Catalog', next: find('next'), prev: find('previous'), start: find('start'), entries: [], search: null, total: json.metadata?.numberOfItems || null };
@@ -112,6 +113,7 @@ function parseJson(json, base) {
     const e = { id: m.identifier || m.title + names(m.author), title: typeof m.title === 'string' ? m.title : (m.title && Object.values(m.title)[0]) || 'Untitled', author: names(m.author),
       summary: stripHtml(m.description || ''), cover: cov, thumb: small || cov, downloads, kind: 'book', series: ser ? (ser.name || ser) : '', seriesIndex: ser && ser.position != null ? parseFloat(ser.position) : null, lang: [].concat(m.language || [])[0] };
     if (m.numberOfPages) e.pages = m.numberOfPages;
+    { const av = pl.find((l) => l.rel.startsWith(REL_ACQ) && l.until); if (av && downloads.length) { e.dueAt = Date.parse(av.until) || null; e.loan = true; } }   // OPDS 2 properties.availability.until
     return e;
   };
   const navs = [...(json.navigation || [])];

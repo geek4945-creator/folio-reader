@@ -198,7 +198,7 @@ export function openPlayer() {
         h('button', { id: 'ap-back', class: 'ap-skip', 'aria-label': 'Back 15 seconds', onclick: () => skip(-15) }, h('b', null, '↺'), h('small', null, '15')), el_.play,
         h('button', { id: 'ap-fwd', class: 'ap-skip', 'aria-label': 'Forward 15 seconds', onclick: () => skip(15) }, h('b', null, '↻'), h('small', null, '15')),
         h('button', { id: 'ap-next', 'aria-label': 'Next chapter', onclick: () => nextChapter(), html: ICON.next })),
-      h('div', { class: 'ap-row' }, el_.speed, el_.sleepB, h('button', { id: 'ap-chapters', class: 'btn small', onclick: chaptersSheet }, '☰ Chapters')),
+      h('div', { class: 'ap-row' }, el_.speed, el_.sleepB, h('button', { id: 'ap-chapters', class: 'btn small', onclick: chaptersSheet }, '☰ Chapters'), h('button', { id: 'ap-findplace', class: 'btn small', 'aria-label': 'Find my place in the ebook', onclick: () => { const s = getState(); if (s) import('./findplace.js').then((m) => m.openFindPlace({ audioId: s.id })); } }, '📖 Find my place')),
       h('div', { class: 'bar ap-bar' }, el_.prog), el_.progText));
   function paint() {
     const s = getState(); if (!s) return; const c = s.chapter; const cd = c.end - c.start; const rel = Math.max(0, Math.min(cd, s.pos - c.start));

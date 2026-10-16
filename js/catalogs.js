@@ -93,9 +93,10 @@ const hostOf = (u) => { try { return new URL(u).hostname; } catch { return u; } 
 function sourceMenu(s) {
   actionSheet(s.name, [
     { label: 'Rename', onClick: async () => { const n = await promptDlg('Rename source', s.name); if (n) { s.name = n; await addSource({ ...s, order: s.order }); renderCatalogs(root); } } },
+    s.kind === 'opds' ? { label: s.borrowed ? '🏛️  Public library: ON — books go to Borrowed (tap to turn off)' : '🏛️  This is a public library (downloads go to Borrowed)', id: 'src-borrowed', onClick: async () => { s.borrowed = !s.borrowed; await addSource({ ...s, order: s.order }); toast(s.borrowed ? 'Downloads from “' + s.name + '” now go to Borrowed' : '“' + s.name + '” is a regular source again'); renderCatalogs(root); } } : null,
     { label: 'Remove', danger: true, onClick: async () => { if (await confirmDlg('Remove source?', s.name, 'Remove', true)) { await removeSource(s.id); renderCatalogs(root); } } },
     { label: 'Restore built-in sources', onClick: async () => { await restoreSeeds(); renderCatalogs(root); } },
-  ]);
+  ].filter(Boolean));
 }
 
 async function open(src) { st = { src, stack: [], searchTpl: null, query: '' }; st.feed = null; st.error = null; await renderBrowse(true); }
@@ -208,8 +209,8 @@ async function doDownload(entry, btn) {
     const buf = await blob.arrayBuffer();
     const sig = new Uint8Array(buf.slice(0, 2));
     if ((sig[0] !== 0x50 || sig[1] !== 0x4b) && !detectKindle(buf) && !isPdf(buf)) throw new Error('The server did not return an EPUB, MOBI or PDF file (it may require a login or a different link).');
-    await addBookFromBuffer(buf, { filename: dl.url.split('?')[0].split('/').pop(), sourceKey: entry.id, source: st.src?.name, title: e.title, author: e.author, summary: e.summary, series: e.series, seriesIndex: e.seriesIndex, coverUrl: e.cover });
-    setOwned(btn); toast('Added “' + e.title + '” to your library');
+    await addBookFromBuffer(buf, { filename: dl.url.split('?')[0].split('/').pop(), sourceKey: entry.id, source: st.src?.name, title: e.title, author: e.author, summary: e.summary, series: e.series, seriesIndex: e.seriesIndex, coverUrl: e.cover, borrowed: !!(st.src?.borrowed || e.loan || entry.loan), dueAt: e.dueAt || entry.dueAt || null });
+    setOwned(btn); toast(st.src?.borrowed || e.loan || entry.loan ? 'Added “' + e.title + '” to Borrowed' + (e.dueAt || entry.dueAt ? ' (due ' + new Date(e.dueAt || entry.dueAt).toLocaleDateString() + ')' : '') : 'Added “' + e.title + '” to your library');
   } catch (err) {
     btn.disabled = false; btn.textContent = /Already/.test(err.message) ? '✓ In library' : label; if (/Already/.test(err.message)) setOwned(btn);
     toast(err.message || 'Download failed', 5200);

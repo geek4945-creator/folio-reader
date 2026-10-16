@@ -9,6 +9,7 @@ import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
 import { markEdits } from './metasync.js';
 import { openCoverEditor, hasCustomCover } from './covers.js';
 import { openFixMissing } from './enrich.js';
+import * as Loans from './loans.js';
 import { installMode, installLabel, startInstall } from './install.js';
 
 let view; const covers = new Map();
@@ -23,8 +24,10 @@ function coverUrl(b) {
 const recent = (b) => b.lastOpened || b.addedAt || 0;
 const norm = (s) => (s || '').toLowerCase().replace(/^(the|a|an)\s+/, '');
 
-export async function renderLibrary(v) {
-  view = v || view;
+/** Renders are queued one after another: two overlapping renders (typing in search, an import finishing) used to interleave and draw tiles twice. */
+let renderChain = Promise.resolve();
+export function renderLibrary(v) { if (v) view = v; const run = renderChain.then(() => drawLibrary()); renderChain = run.catch((e) => console.warn('render failed', e)); return run; }
+async function drawLibrary() {
   if (!view) return;   // an import finished before this tab was ever shown
   const [books, sets, shelves] = await Promise.all([S.getBooks(), S.getSets(), S.getShelves()]);
   const scroll = view.scrollTop;
@@ -40,23 +43,25 @@ const rerender = () => renderLibrary();
 
 /* ---------- main ---------- */
 async function renderMain(ctx) {
-  const { books, shelves } = ctx; sortCtx = ctx;
-  const chip = settings.get('chip'); const sortKey = 'shelf:' + chip; const gb = chip === 'all' ? (settings.get('groupBy') || 'status') : null;
+  const { shelves } = ctx; sortCtx = ctx;
+  const allBooks = ctx.books; const books = Loans.owned(allBooks), borrowedBooks = Loans.borrowedOf(allBooks);   // Borrowed (library loans) stay out of the owned library, its chips and its counts
+  let chip = settings.get('chip'); if (chip === 'borrowed' && !borrowedBooks.length) chip = 'all'; const sortKey = 'shelf:' + chip; const gb = chip === 'all' ? (settings.get('groupBy') || 'status') : null;
   const orderKey = sortKey + (gb === 'none' ? ':flat' : '');   // the flat list keeps its own custom order
   const spec = getSort(sortKey); const sort = spec.field; const viewMode = settings.get('view');
   const search = h('input', { type: 'search', class: 'field search', placeholder: 'Search title, author or series', value: local.q, enterkeyhint: 'search' });
   search.addEventListener('input', () => { local.q = search.value; drawBody(); });
 
-  const chips = [{ id: 'all', name: 'All' }, ...S.STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true }))];
+  const chips = [{ id: 'all', name: 'All' }, ...S.STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true })), ...(borrowedBooks.length ? [{ id: 'borrowed', name: 'Borrowed', borrowed: true }] : [])];
+  const banner = await Loans.loanBanner('book', rerender);
   put(view, 
     h('header', { class: 'topbar' }, h('h1', null, 'Library'),
       h('div', { class: 'top-actions' },
-        books.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'btn-select', 'aria-label': local.sel ? 'Done selecting' : 'Select books', onclick: toggleSelect }, local.sel ? 'Done' : 'Select') : null,
+        allBooks.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'btn-select', 'aria-label': local.sel ? 'Done selecting' : 'Select books', onclick: toggleSelect }, local.sel ? 'Done' : 'Select') : null,
         h('button', { class: 'btn-icon', 'aria-label': 'Import books', title: 'Import books (EPUB, MOBI, AZW3, PDF)', onclick: pickFiles }, '＋'),
         h('button', { class: 'btn-icon', 'aria-label': 'Library menu', id: 'lib-menu', onclick: () => libMenu(ctx) }, '⋯'))),
-    h('div', { class: 'pad' }, search),
+    h('div', { class: 'pad' }, search), banner,
     h('div', { class: 'chips', role: 'tablist' }, chips.map((c) => h('button', { class: 'chip' + (chip === c.id ? ' on' : ''), role: 'tab', 'data-chip': c.id, onclick: () => { settings.set({ chip: c.id }); rerender(); } }, c.name,
-      c.id !== 'all' && !c.custom ? h('small', null, ' ' + books.filter((b) => b.status === c.id).length) : (c.custom ? h('small', null, ' ' + books.filter((b) => b.shelves?.includes(c.id)).length) : null))),
+      c.borrowed ? h('small', null, ' ' + borrowedBooks.length) : c.id !== 'all' && !c.custom ? h('small', null, ' ' + books.filter((b) => b.status === c.id).length) : (c.custom ? h('small', null, ' ' + books.filter((b) => b.shelves?.includes(c.id)).length) : null))),
       h('button', { class: 'chip add', onclick: newShelf, 'aria-label': 'New shelf' }, '＋ Shelf')),
     h('div', { class: 'toolbar pad' },
       h('label', { class: 'sort' }, 'Sort ', h('select', { id: 'sort-sel', onchange: (e) => { setSort(sortKey, { field: e.target.value }); rerender(); } },
@@ -76,12 +81,15 @@ async function renderMain(ctx) {
     body.replaceChildren();
     const q = local.q.trim().toLowerCase();
     const match = (b) => !q || [b.title, b.author, ctx.setMap.get(b.setId)?.name].some((x) => (x || '').toLowerCase().includes(q));
-    const ofChip = (b) => chip === 'all' ? true : S.STATUSES.some((s) => s.id === chip) ? b.status === chip : !!b.shelves?.includes(chip);
-    let pool = books.filter((b) => ofChip(b) && match(b));
+    const src = chip === 'borrowed' ? borrowedBooks : books;
+    const ofChip = (b) => chip === 'all' ? true : chip === 'borrowed' ? !!b.borrowed : S.STATUSES.some((s) => s.id === chip) ? b.status === chip : !!b.shelves?.includes(chip);
+    let pool = src.filter((b) => ofChip(b) && match(b));
     if (chip === 'all' && !settings.get('showFinished')) pool = pool.filter((b) => b.status !== 'finished');   // toggle off: finished books are hidden from All
     local.visible = pool.map((b) => b.id);
-    if (!books.length) { body.append(emptyState()); return; }
-    if (!pool.length) { body.append(h('p', { class: 'muted pad center' }, q ? 'No matches.' : 'Nothing on this shelf yet.')); return; }
+    const scopeN = src.filter(ofChip).length;
+    const footer = () => h('div', { class: 'lib-count', id: 'lib-count', dataset: { shown: String(pool.length), total: String(scopeN) } }, `${pool.length}${pool.length !== scopeN ? ' of ' + scopeN : ''} book${(pool.length !== scopeN ? scopeN : pool.length) === 1 ? '' : 's'}`);   // "N books", or "N of M books" when a search / hidden Finished narrows the shelf
+    if (!allBooks.length) { body.append(emptyState()); return; }
+    if (!pool.length) { body.append(h('p', { class: 'muted pad center' }, q ? 'No matches.' : chip === 'all' && borrowedBooks.length ? 'Nothing here — your library only has borrowed books (see the Borrowed filter).' : 'Nothing on this shelf yet.'), footer()); return; }
     const saved = sort === 'custom' ? await S.getOrder(orderKey) : [];
     let sections;
     if (chip !== 'all') sections = [{ id: chip, title: null, books: pool }];
@@ -100,6 +108,7 @@ async function renderMain(ctx) {
       body.append(grid);
       if (sort === 'custom' && !q && !collapsed && !local.sel) enableDragSort(grid, { itemSel: '.tile', vertical: viewMode === 'list', onDrop: (keys) => persistOrder(orderKey, fullKeys, keys) });
     }
+    body.append(footer());
   }
   await drawBody();
 }
@@ -274,7 +283,7 @@ function tileEl(t, ctx, mode) {
   const bar = h('div', { class: 'bar' }, h('i', { style: { width: Math.round((b.status === 'finished' ? 1 : b.progress) * 100) + '%' } }));
   const act = () => (local.sel ? toggleSel([b.id]) : openReader(b.id));
   const el = h('div', { class: 'tile book' + (local.sel && local.sel.has(b.id) ? ' sel' : ''), dataset: { key: t.key, id: b.id }, tabindex: 0, role: 'button', onclick: act, onkeydown: (e) => { if (e.key === 'Enter') act(); } },
-    coverEl(b, [badge(b), ov, vol, b.format === 'pdf' ? h('span', { class: 'pill-pdf' }, 'PDF') : null, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null]),
+    coverEl(b, [badge(b), ov, vol, b.borrowed ? Loans.dueBadge(b) : null, b.format === 'pdf' ? h('span', { class: 'pill-pdf' }, 'PDF') : null, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null]),
     h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, b.title), h('div', { class: 'a ellipsis muted' }, b.author),
       mode === 'list' ? [b.setId && ctx.setMap.get(b.setId) ? h('div', { class: 'muted small ellipsis' }, ctx.setMap.get(b.setId).name + (b.seriesIndex != null ? ' · #' + b.seriesIndex : '')) : null, bar] : null),
     mode === 'list' ? more : null);
@@ -333,6 +342,7 @@ function libMenu(ctx) {
   const sheetObj = actionSheet('Library', [
     { label: '🏛️  Public library (borrow with Libby)…', onClick: () => openPublicLibraryGuide(), primary: true, id: 'menu-public-library' },
     { label: 'Import EPUB / MOBI / AZW3 / PDF files (Files app)…', onClick: pickFiles },
+    { label: '🎧  Audiobook ↔ ebook pairs…', id: 'menu-pairs', onClick: () => import('./findplace.js').then((m) => m.openPairs()) },
     { label: 'Import from Google Drive…', onClick: openDriveBrowser },
     { label: 'Group series into sets', checked: settings.get('groupSets'), keepOpen: true, onClick: () => { settings.set({ groupSets: !settings.get('groupSets') }); sheetObj.close(); rerender(); } },
     { label: 'Group by: ' + (GROUP_OPTIONS.find(([v]) => v === (settings.get('groupBy') || 'status'))?.[1].replace(/ \(.*/, '')) + '…', id: 'menu-group', onClick: () => groupSheet() },
@@ -373,6 +383,8 @@ export function bookMenu(b, ctx) {
     { label: 'Edit details & set…', onClick: () => editBook(b, ctx) },
     { label: 'Change cover…', id: 'menu-change-cover', onClick: () => openCoverEditor('book', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', onClick: () => shelfSheet(b, ctx) },
+    b.format !== 'pdf' ? { label: '🎧  Find my place (audiobook)…', id: 'menu-findplace', onClick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: b.id })) } : null,
+    ...Loans.loanMenuItems('book', b, rerender),
     b.format !== 'pdf' && S.hasOverrides(b) ? { label: 'Reset this book’s reading settings', onClick: async () => { await S.resetOverrides(b.id); toast('Using global reading settings'); rerender(); } } : null,
     { label: 'Delete from library', danger: true, id: 'menu-delete-book', onClick: () => deleteBooksFlow([b.id]) },
   ].filter(Boolean));

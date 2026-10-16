@@ -54,6 +54,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
     syncKey: meta.identifier ? 'id:' + meta.identifier : 'ti:' + (meta.title + '|' + meta.author).toLowerCase(),
     sourceKey: hints.sourceKey || null, source: hints.source || 'import', origFormat, overrides: null, locations: null,
   };
+  if (hints.borrowed) Object.assign(book, { borrowed: true, dueAt: hints.dueAt || null, loanAt: Date.now(), loanSource: hints.source || '' });   // library loan: lands in the Borrowed filter
   applyPending(book);
   await DB.put('files', { id: book.id, blob: new Blob([buffer], { type: pdfMeta ? 'application/pdf' : 'application/epub+zip' }) });
   // A fresh import is not a user edit (keeps cross-device merge fair), unless the book was deleted before: then it must outrank the deletion tombstone.

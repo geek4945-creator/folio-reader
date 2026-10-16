@@ -107,10 +107,37 @@ const AUDIO_Q = "(mimeType='application/vnd.google-apps.folder' or mimeType cont
 export async function listDriveFiles({ folderId = 'root', search = '', pageToken = '', audio = false, images = false } = {}) {
   const EPUB_Q = images ? IMAGE_Q : audio ? AUDIO_Q : EBOOK_Q;
   const q = search ? `trashed=false and name contains '${search.replace(/['\\]/g, ' ')}' and ${EPUB_Q}` : `trashed=false and '${folderId}' in parents and ${EPUB_Q}`;
-  const u = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, orderBy: 'folder,name', pageSize: '50', fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)', spaces: 'drive', ...(pageToken ? { pageToken } : {}) });
+  const u = 'https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, orderBy: 'folder,name', pageSize: '50', fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)', spaces: 'drive', ...(pageToken ? { pageToken } : {}) });
   const r = await drive(u); return r.json();
 }
-export async function downloadDriveFile(id) { return (await drive(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).blob(); }
+export async function downloadDriveFile(id, { retries = 0 } = {}) { return (await drive(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, { retries })).blob(); }
+/** Name of a Drive folder (cached): used to title audiobooks made from several files of one folder. */
+const folderNames = new Map();
+export async function driveFolderName(id) { if (!id) return ''; if (folderNames.has(id)) return folderNames.get(id); let n = ''; try { n = (await (await drive(`https://www.googleapis.com/drive/v3/files/${id}?fields=name`, { retries: 2 })).json()).name || ''; } catch { /* ignore */ } folderNames.set(id, n); return n; }
+
+/* ---------- batch scan: every book / audio file in a folder (optionally with subfolders) or in the whole Drive ---------- */
+const BOOK_T = "(mimeType='application/epub+zip' or mimeType='application/pdf' or mimeType='application/x-mobipocket-ebook' or mimeType='application/vnd.amazon.ebook' or name contains '.epub' or name contains '.pdf' or name contains '.mobi' or name contains '.azw')";
+const AUDIO_T = "(mimeType contains 'audio/' or name contains '.mp3' or name contains '.m4a' or name contains '.m4b' or name contains '.aac' or name contains '.ogg' or name contains '.opus' or name contains '.flac' or name contains '.wav')";
+const FOLDER = "mimeType='application/vnd.google-apps.folder'";
+export const BOOK_EXT_RE = /\.(epub|pdf|mobi|azw3?|kf8)$/i, AUDIO_EXT_RE = /\.(mp3|m4a|m4b|aac|ogg|opus|flac|wav)$/i;
+/** folderId null = the whole Drive (search by mime type / extension). Follows nextPageToken; honours signal.cancelled; caps at maxFiles / maxFolders. */
+export async function scanDrive({ kind = 'book', folderId = null, folderName = '', recursive = false, signal = {}, onProgress = () => {}, maxFiles = 5000, maxFolders = 500 } = {}) {
+  const T = kind === 'audio' ? AUDIO_T : BOOK_T; const okName = kind === 'audio' ? AUDIO_EXT_RE : BOOK_EXT_RE; const files = []; const seen = new Set(); let truncated = false, folders = 0;
+  const fields = 'nextPageToken,files(id,name,mimeType,size,parents)';
+  const page = async (q, tok) => (await drive('https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({ q, pageSize: '200', fields, spaces: 'drive', orderBy: 'folder,name', ...(tok ? { pageToken: tok } : {}) }), { retries: 3 })).json();
+  const add = (f, folder) => { if (seen.has(f.id)) return; seen.add(f.id); if ((f.mimeType || '').startsWith('application/vnd.google-apps')) return; if (!(f.mimeType || '').startsWith(kind === 'audio' ? 'audio/' : 'application/') && !okName.test(f.name)) return; files.push({ id: f.id, name: f.name, size: +f.size || 0, mimeType: f.mimeType, parent: (f.parents || [])[0] || null, folder: folder || '' }); };
+  if (!folderId) {
+    let tok = '';
+    do { const d = await page(`trashed=false and ${FOLDER.replace('=', '!=')} and ${T}`, tok); for (const f of d.files || []) add(f, ''); tok = d.nextPageToken || ''; onProgress({ found: files.length, folders: 0 }); if (files.length >= maxFiles) { truncated = !!tok; break; } } while (tok && !signal.cancelled);
+  } else {
+    const queue = [{ id: folderId, name: folderName }];
+    while (queue.length && !signal.cancelled) {
+      const cur = queue.shift(); folders++; let tok = '';
+      do { const d = await page(`trashed=false and '${cur.id}' in parents and (${FOLDER} or ${T})`, tok); for (const f of d.files || []) { if (f.mimeType === 'application/vnd.google-apps.folder') { if (recursive) { if (folders + queue.length < maxFolders) queue.push({ id: f.id, name: f.name }); else truncated = true; } } else add(f, cur.name); } tok = d.nextPageToken || ''; onProgress({ found: files.length, folders }); if (files.length >= maxFiles) { truncated = true; queue.length = 0; break; } } while (tok && !signal.cancelled);
+    }
+  }
+  return { files, truncated, cancelled: !!signal.cancelled, folders };
+}
 
 export function signOut() {
   clearTimeout(renewTimer); localStorage.removeItem(AUTH_KEY); setStatus('signed-out');
@@ -123,11 +150,25 @@ export async function disconnect() {
 }
 
 /* ---------- Drive appDataFolder ---------- */
-async function drive(path, init = {}, retry = true) {
+/** Drive request pacing / retry (used by batch import; sync keeps the defaults: no gap, no retries). */
+export const driveRate = { gap: 0, backoff: 700 };
+let lastDriveAt = 0;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+export const isTransient = (e) => !!e && (e.status === 429 || e.status >= 500 || (e.status === 403 && e.rate) || e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || ''));
+async function drive(path, init = {}, retry = true, tried = 0) {
+  const { retries = 0, ...fi } = init;
+  if (driveRate.gap) { const w = lastDriveAt + driveRate.gap - Date.now(); if (w > 0) await wait(w); lastDriveAt = Date.now(); }
   const token = await getToken();
-  const r = await fetch(path, { ...init, headers: { ...(init.headers || {}), Authorization: 'Bearer ' + token } });
-  if (r.status === 401 && retry) { const a = load(); a.exp = 0; save(a); return drive(path, init, false); }
-  if (!r.ok) throw new Error('Google Drive error ' + r.status);
+  let r;
+  try { r = await fetch(path, { ...fi, headers: { ...(fi.headers || {}), Authorization: 'Bearer ' + token } }); }
+  catch (e) { if (tried < retries) { await wait(driveRate.backoff * 2 ** tried); return drive(path, init, retry, tried + 1); } throw e; }
+  if (r.status === 401 && retry) { const a = load(); a.exp = 0; save(a); return drive(path, init, false, tried); }
+  if (!r.ok) {
+    let rate = false; if (r.status === 403) { try { rate = /rateLimit|userRateLimit|quota/i.test(await r.clone().text()); } catch { /* ignore */ } }
+    const err = Object.assign(new Error('Google Drive error ' + r.status), { status: r.status, rate });
+    if (tried < retries && isTransient(err)) { const ra = +r.headers.get('retry-after') || 0; await wait(ra ? Math.min(ra * 1000, 20000) : driveRate.backoff * 2 ** tried); return drive(path, init, retry, tried + 1); }
+    throw err;
+  }
   return r;
 }
 async function findFile() {
@@ -152,7 +193,7 @@ async function writeRemote(id, data) {
 /* ---------- snapshot / merge / apply ---------- */
 const putQuiet = (store) => (it) => DB.put(store, { ...it, _noTouch: true });
 export async function buildSnapshot() {
-  const [books, sets, shelves, orders, bms, audio] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks()]);
+  const [books, sets, shelves, orders, bms, audio, links] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks(), DB.all('links')]);
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
@@ -163,7 +204,12 @@ export async function buildSnapshot() {
   const s = settings.all(); const sv = {}; for (const k of SYNCED) sv[k] = s[k];
   const meta = {}; for (const b of books) { const e = localMeta(b); if (e) meta[keyOf.get(b.id)] = e; }
   const audioMeta = {}; for (const a of audio) { const e = localMeta(a); if (e) audioMeta[a.syncKey || a.id] = e; }
-  return { meta, audioMeta, v: 1, savedAt: Date.now(), settings: { values: sv, updatedAt: settings.updatedAt() },
+  const loans = {};   // Borrowed flag + due date, last-writer-wins on loanAt: 'book:<key>' / 'audio:<key>'
+  for (const b of books) if (b.loanAt) loans['book:' + keyOf.get(b.id)] = { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt };
+  for (const a of audio) if (a.loanAt) loans['audio:' + (a.syncKey || a.id)] = { b: a.borrowed ? 1 : 0, due: a.dueAt || null, src: a.loanSource || '', at: a.loanAt };
+  return { meta, audioMeta, v: 1, loans,
+    links: links.map((x) => ({ id: x.id, bookKey: x.bookKey, audioKey: x.audioKey, state: x.state, by: x.by || 'user', score: x.score ?? null, bookTitle: x.bookTitle || '', audioTitle: x.audioTitle || '', createdAt: x.createdAt || 0, updatedAt: x.updatedAt || x.createdAt || 0 })),
+    savedAt: Date.now(), settings: { values: sv, updatedAt: settings.updatedAt() },
     shelves: shelves.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
     sets: sets.map((x) => ({ id: x.id, name: x.name, auto: !!x.auto, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
     orders: orders.map((o) => ({ key: o.key, ids: o.ids.map(mapOrderId), updatedAt: o.updatedAt || 0 })),
@@ -191,7 +237,7 @@ export function mergeSnapshots(local, remote) {
   const tombs = [...(L.tombstones || []), ...(R.tombstones || [])];
   const dead = (t, id, ts) => tombs.some((x) => x.t === t && x.id === id && x.at >= ts);
   const lww = (a, b) => (!a ? b : !b ? a : (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a);
-  const mergeList = (kind, keyf, t) => { const m = new Map(); for (const x of [...L[kind], ...R[kind]]) m.set(keyf(x), lww(m.get(keyf(x)), x)); return [...m.values()].filter((x) => !t || !dead(t, x.id, x.updatedAt || 0)); };
+  const mergeList = (kind, keyf, t) => { const m = new Map(); for (const x of [...(L[kind] || []), ...(R[kind] || [])]) m.set(keyf(x), lww(m.get(keyf(x)), x)); return [...m.values()].filter((x) => !t || !dead(t, x.id, x.updatedAt || 0)); };
   const out = { v: 1, savedAt: Date.now(), tombstones: tombs.filter((t) => Date.now() - t.at < 90 * 864e5) };
   out.settings = (R.settings.updatedAt || 0) > (L.settings.updatedAt || 0) ? R.settings : L.settings;
   out.shelves = mergeList('shelves', (x) => x.id, 'shelf');
@@ -211,6 +257,8 @@ export function mergeSnapshots(local, remote) {
   const deadMeta = (type) => (k, at) => dead(type, k, at);
   out.meta = mergeMetaMaps(L.meta, R.meta, (k, at) => deadBooks.has(k) || dead('book', k, at));
   out.audioMeta = mergeMetaMaps(L.audioMeta, R.audioMeta, deadMeta('audio'));
+  out.links = mergeList('links', (x) => x.id);   // audiobook ↔ ebook links + remembered rejections (older snapshots have none)
+  out.loans = {}; for (const k of new Set([...Object.keys(L.loans || {}), ...Object.keys(R.loans || {})])) { const a = (L.loans || {})[k], b = (R.loans || {})[k]; out.loans[k] = !a ? b : !b ? a : (b.at || 0) > (a.at || 0) ? b : a; }
   out.idmap = [...idmap.entries()];
   return out;
 }
@@ -240,6 +288,8 @@ export async function applySnapshot(m, ctx = {}) {
   for (const [k, st] of Object.entries(m.books)) if (!keyToId.has(k)) pending[k] = st;
   S.setPending(pending);
   const metaRes = await applyMeta(m, keyToId, ctx);
+  for (const x of m.links || []) { const cur = await DB.get('links', x.id); if (!cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) await DB.put('links', { ...x, _noTouch: true }); }
+  await applyLoans(m.loans || {});
   // bookmarks
   const have = new Map(bms.map((x) => [x.id, x]));
   const pendBm = {};
@@ -263,6 +313,17 @@ export async function applySnapshot(m, ctx = {}) {
   return { appliedBooks, deletedBooks, pending: Object.keys(pending).length, ...metaRes };
 }
 
+/** Borrowed flag + due date from another device (newest change wins). */
+async function applyLoans(loans) {
+  for (const kind of ['book', 'audio']) {
+    const items = kind === 'book' ? await S.getBooks() : await A.getAudiobooks(); const store = kind === 'book' ? 'books' : 'audiobooks';
+    for (const it of items) {
+      const e = loans[kind + ':' + (kind === 'book' ? S.bookSyncKey(it) : (it.syncKey || it.id))]; if (!e || (e.at || 0) <= (it.loanAt || 0)) continue;
+      it.borrowed = !!e.b; it.dueAt = e.due || null; it.loanAt = e.at; if (e.src) it.loanSource = e.src; else delete it.loanSource;
+      await DB.put(store, { ...it, _noTouch: true });
+    }
+  }
+}
 /** Enriched / hand-edited metadata + covers for books and audiobooks. ctx.getCover(id) → Blob | null (Drive download). */
 async function applyMeta(m, keyToId, ctx) {
   let metaApplied = 0, coversApplied = 0;

@@ -222,7 +222,7 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
   /* ---------------- library: shelves, sort, select, delete ---------------- */
   await step('Shelves: create (shared with ebooks), move selected audiobooks, chip counts, filter', async () => {
     await gotoAudio(page); await page.evaluate(async () => { const S = await import('/js/store.js'); const sh = await S.createShelf('Road trip'); window.__sh = sh.id; });
-    await click(page, '#audio-select'); await page.evaluate(() => [...document.querySelectorAll('#audio-body .tile')].filter((t) => /Long Tone|Tone Story/.test(t.innerText)).forEach((t) => t.click())); await sleep(200);
+    await click(page, '#audio-select'); await page.waitForSelector('#audio-select-bar'); await page.evaluate(() => [...document.querySelectorAll('#audio-body .tile')].filter((t) => /Long Tone|Tone Story/.test(t.innerText)).forEach((t) => t.click())); await sleep(200);
     assert(/2 selected/.test(await page.$eval('#audio-sel-count', (e) => e.innerText)), 'count'); await click(page, '#audio-sel-move'); await page.waitForSelector('[data-shelf]'); await click(page, '[data-shelf]'); await sleep(600);
     const bs = await books(page); assert(bs.filter((b) => b.shelves.length).length === 2, JSON.stringify(bs.map((b) => b.shelves)));
     await page.evaluate(() => window.__folio.show('audiobooks')); await sleep(400); const chip = await page.$$eval('.chip', (e) => e.find((c) => /Road trip/.test(c.innerText)).innerText.replace(/\s+/g, ' ')); assert(/Road trip 2/.test(chip), chip);
@@ -312,8 +312,8 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
   await O.close();
 
   /* ---------------- app shell / service worker ---------------- */
-  await step('Service worker: folio-v8 and every audiobook + metadata (covers, enrich, metasync) module is precached; all shell files exist', async () => {
-    const base = APP.replace(/index\.html.*$/, ''); const sw = await (await fetch(base + 'sw.js')).text(); assert(/VERSION = 'folio-v8'/.test(sw) && ['covers','enrich','metasync','viewport'].every((m) => sw.includes('js/' + m + '.js')), 'version');
+  await step('Service worker: folio-v9 and every audiobook + metadata (covers, enrich, metasync) module is precached; all shell files exist', async () => {
+    const base = APP.replace(/index\.html.*$/, ''); const sw = await (await fetch(base + 'sw.js')).text(); assert(/VERSION = 'folio-v9'/.test(sw) && ['covers','coversearch','viewport','enrich','metasync','drivebatch','pairing','links','align','loans','findplace'].every((m) => sw.includes('js/' + m + '.js')), 'version');
     const shell = JSON.parse(sw.match(/const SHELL = (\[[^;]*\]);/s)[1].replace(/'/g, '"')); for (const f of ['js/audiotags.js', 'js/audiostore.js', 'js/audioplayer.js', 'js/audiobooks.js', 'js/audiosources.js']) assert(shell.includes(f), f + ' missing from SHELL');
     for (const f of shell) { const r = await fetch(base + f.replace(/^\.\//, '')); assert(r.ok, f + ' → ' + r.status); } return shell.length + ' shell files';
   });
