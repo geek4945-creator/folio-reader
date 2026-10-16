@@ -74,7 +74,7 @@ const SAGA = ['Saga Alpha', 'Saga Beta', 'Saga Gamma', 'Saga Delta'];
   await step('Set page: Custom order, drag, reopen after reload → order and the Custom mode are kept', async () => {
     await openSet(A, 'Saga'); await A.select('#set-sort-sel', 'custom'); await sleep(400); const t0 = await setPageOrder(A); eq(t0, SAGA, 'start');
     await drag(A, 'Saga Delta', 'Saga Alpha'); const exp = ['Saga Delta', 'Saga Alpha', 'Saga Beta', 'Saga Gamma']; eq(await setPageOrder(A), exp, 'live');
-    await reload(A); await openSet(A, 'Saga'); eq(await setPageOrder(A), exp, 'reloaded'); assert((await sortOf(A, 'set:' + idA)) === 'custom', 'mode');
+    await reload(A); await openSet(A, 'Saga'); eq(await setPageOrder(A), exp, 'reloaded'); assert((await sortOf(A, 'set:' + await setOf(A, 'Saga'))) === 'custom', 'mode');
     return exp.join('|');
   });
   const ORDER1 = ['Saga Delta', 'Saga Alpha', 'Saga Beta', 'Saga Gamma'];
@@ -86,7 +86,7 @@ const SAGA = ['Saga Alpha', 'Saga Beta', 'Saga Gamma', 'Saga Delta'];
   });
   await step('Enrichment (series name, different letter case) adds a new volume: existing manual order is untouched, the new book goes last', async () => {
     await mkBook(A, 'Saga Epsilon'); await A.evaluate(async () => { const S = await import('./js/store.js'); const set = await S.ensureSet('SAGA', true); const b = (await S.getBooks()).find((x) => x.title === 'Saga Epsilon'); await S.assignSet(b.id, set.id, 5); });
-    await reload(A); await openSet(A, 'Saga'); eq(await setPageOrder(A), [...ORDER1, 'Saga Epsilon'], 'after enrich'); await sync(A); await sync(B); await openSet(B, 'Saga'); await B.evaluate(() => 0);
+    await reload(A); await openSet(A, 'Saga'); eq(await setPageOrder(A), [...ORDER1, 'Saga Epsilon'], 'after enrich'); await mkBook(B, 'Saga Epsilon'); await sync(A); await sync(B); await openSet(B, 'Saga'); await B.evaluate(() => 0);
     eq(await setPageOrder(B), [...ORDER1, 'Saga Epsilon'], 'tablet got the new volume at the end'); return 'ok';
   });
   await step('Two devices reorder the same set: the newest arrangement wins and no book is lost or duplicated by the merge', async () => {
@@ -94,7 +94,7 @@ const SAGA = ['Saga Alpha', 'Saga Beta', 'Saga Gamma', 'Saga Delta'];
     const { key, titleOf } = await ids(A); const full = ['Saga Delta', 'Saga Alpha', 'Saga Beta', 'Saga Gamma', 'Saga Epsilon'];
     // phone: epsilon first (older edit); tablet imports a 6th book that the phone doesn't have in its order and reorders later
     await A.evaluate(async (key, t) => { const S = await import('./js/store.js'); const bs = await S.getBooks(); await S.saveOrder(key, ['Saga Epsilon', ...t.filter((x) => x !== 'Saga Epsilon')].map((x) => 'b:' + bs.find((b) => b.title === x).id)); }, key, full);
-    await sleep(30); await mkBook(B, 'Saga Zeta'); await B.evaluate(async () => { const S = await import('./js/store.js'); const set = (await S.getSets()).find((s) => s.name === 'Saga'); const b = (await S.getBooks()).find((x) => x.title === 'Saga Zeta'); await S.assignSet(b.id, set.id, 6); });
+    await sleep(30); await mkBook(A, 'Saga Zeta'); await mkBook(B, 'Saga Zeta'); await B.evaluate(async () => { const S = await import('./js/store.js'); const set = (await S.getSets()).find((s) => s.name === 'Saga'); const b = (await S.getBooks()).find((x) => x.title === 'Saga Zeta'); await S.assignSet(b.id, set.id, 6); });
     await B.evaluate(async (key) => { const S = await import('./js/store.js'); const bs = await S.getBooks(); const names = ['Saga Beta', 'Saga Zeta', 'Saga Alpha', 'Saga Gamma', 'Saga Delta', 'Saga Epsilon']; await S.saveOrder(key, names.map((x) => 'b:' + bs.find((b) => b.title === x).id)); }, key);
     await sync(A); await sync(B); await sync(A);
     await openSet(A, 'Saga'); const a = await setPageOrder(A); await openSet(B, 'Saga'); const b = await setPageOrder(B); eq(a, b, 'devices agree');

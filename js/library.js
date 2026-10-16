@@ -99,7 +99,6 @@ async function renderMain(ctx) {
     else sections = groupSections(gb, pool, ctx);
     const flatTiles = !!q || ['series', 'author', 'type'].includes(gb);   // one book can only sit in one group, so no set tiles there
     sections = sections.map((s) => ({ ...s, tiles: sortTiles(buildTiles(s.books, ctx, flatTiles), sort, saved, spec.dir) }));
-    const fullKeys = applyFull(sections, saved, sort);
     for (const sec of sections) {
       if (!sec.tiles.length) continue;
       const ck = 'folio.collapse.' + (sec.ckey || gb + ':' + sec.id);
@@ -107,7 +106,7 @@ async function renderMain(ctx) {
       const grid = h('div', { class: 'tiles ' + viewMode, dataset: { ctx: orderKey, group: sec.id } }, collapsed ? null : sec.tiles.map((t) => tileEl(t, ctx, viewMode)));
       if (sec.title) body.append(h('h3', { class: 'sec-title group-hdr' + (sec.collapsible ? ' tap' : ''), dataset: { group: sec.id, collapsed: collapsed ? '1' : '0' }, onclick: sec.collapsible ? () => { localStorage.setItem(ck, collapsed ? '0' : '1'); drawBody(); } : null }, (sec.collapsible ? (collapsed ? '▸ ' : '▾ ') : '') + sec.title, h('small', null, ' ' + sec.books.length)));
       body.append(grid);
-      if (sort === 'custom' && !q && !collapsed && !local.sel) enableDragSort(grid, { itemSel: '.tile', vertical: viewMode === 'list', onDrop: (keys) => persistOrder(orderKey, fullKeys, keys) });
+      if (sort === 'custom' && !q && !collapsed && !local.sel) enableDragSort(grid, { itemSel: '.tile', vertical: viewMode === 'list', onDrop: () => persistOrder(orderKey) });
     }
     body.append(footer());
   }
@@ -246,17 +245,13 @@ function dirButton(spec, onClick) {
   return h('button', { class: 'btn small dir', id: 'sort-dir', 'data-dir': spec.dir, 'aria-label': 'Sort direction: ' + (asc ? 'ascending' : 'descending') + ' (' + dirWord(spec.field, spec.dir) + '). Tap to reverse.', title: dirWord(spec.field, spec.dir), onclick: onClick }, (asc ? '↑ ' : '↓ ') + dirWord(spec.field, spec.dir));
 }
 let sortCtx = null;
-function applyFull(sections, saved, sort) { return sort === 'custom' ? sections.flatMap((s) => s.tiles.map((t) => t.key)) : []; }
 
-async function persistOrder(ctxKey, fullKeys, newSection) {
-  // Re-use the slots the section's tiles occupied in the full list, in the new order.
-  const sectionSet = new Set(newSection); const out = []; let i = 0;
-  const merged = fullKeys.map((k) => (sectionSet.has(k) ? newSection[i++] : k));
-  // Include keys of tiles not in fullKeys (shouldn't happen) and keep previously saved but currently filtered-out keys.
-  const prev = await S.getOrder(ctxKey);
-  const rest = prev.filter((k) => !merged.includes(k));
-  out.push(...merged, ...rest);
-  await S.saveOrder(ctxKey, out);
+async function persistOrder(ctxKey) {
+  // Read the arrangement from what is on screen NOW (all grids of this context), never from the render that built the page: a second drag in another
+  // section would otherwise write the first section's old order back. Keys of tiles that are hidden (collapsed, filtered) keep their saved relative order, after.
+  const shown = [...view.querySelectorAll('.tiles')].filter((g) => g.dataset.ctx === ctxKey).flatMap((g) => [...g.querySelectorAll('.tile')].map((t) => t.dataset.key)).filter(Boolean);
+  const prev = await S.getOrder(ctxKey); const have = new Set(shown);
+  await S.saveOrder(ctxKey, [...shown, ...prev.filter((k) => !have.has(k))]);
 }
 async function resetOrder(ctxKey, setKind, sortKey = ctxKey) {
   await S.clearOrder(ctxKey);
@@ -327,7 +322,7 @@ async function renderSetPage(ctx) {
   if (!all.length) { put(view, h('p', { class: 'muted pad center' }, 'This set is empty. Use ⋯ → Add books, or assign a set when editing a book.')); return; }
   const grid = h('div', { class: 'tiles ' + viewMode, dataset: { ctx: key } }, tiles.map((t) => tileEl(t, ctx, viewMode)));
   put(view, grid);
-  if (sortMode === 'custom') enableDragSort(grid, { itemSel: '.tile', vertical: viewMode === 'list', onDrop: (keys) => S.saveOrder(key, keys) });
+  if (sortMode === 'custom') enableDragSort(grid, { itemSel: '.tile', vertical: viewMode === 'list', onDrop: () => persistOrder(key) });
 }
 function setMenu(set, ctx) {
   actionSheet(set.name, [

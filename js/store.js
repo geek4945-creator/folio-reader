@@ -1,7 +1,7 @@
 // Library data layer: books, sets (series), shelves, manual orders, per-book style overrides.
 import { DB, uid } from './db.js';
 import { parseEpub, shrinkCover } from './epubmeta.js';
-import { settings, clampPt } from './settings.js';
+import { settings, clampPt, clearSort } from './settings.js';
 import { fetchSmart, openLibraryCover } from './net.js';
 import { isPdf, parsePdf } from './pdf.js';
 import { applyPendingMeta, getPendingMeta, setPendingMeta, isbnFrom } from './metasync.js';
@@ -87,10 +87,11 @@ export async function deleteBooks(ids, opts = {}) {
   const deadSets = [];
   for (const sid of setIds) if (!remaining.some((b) => b.setId === sid)) { const set = await DB.get('sets', sid); if (set) { snap.sets.push(set); deadSets.push(sid); } }
   const dropKeys = new Set([...[...gone].map((id) => 'b:' + id), ...deadSets.map((id) => 's:' + id)]);
+  const placeholder = new Map(snap.books.map((b) => ['b:' + b.id, 'k:' + bookSyncKey(b)]));   // a book deleted here keeps its slot as a placeholder, so importing it again puts it back in place
   for (const o of await DB.all('orders')) {
-    if (o.ids.some((x) => dropKeys.has(x))) { snap.orders.push(structuredClone(o)); o.ids = o.ids.filter((x) => !dropKeys.has(x)); await DB.put('orders', o); }
+    if (o.ids.some((x) => dropKeys.has(x))) { snap.orders.push(structuredClone(o)); o.ids = o.ids.map((x) => (dropKeys.has(x) ? (opts.tomb !== false && placeholder.get(x)) || null : x)).filter(Boolean); await DB.put('orders', o); }
   }
-  for (const sid of deadSets) { await DB.del('sets', sid); const so = await DB.get('orders', 'set:' + sid); if (so) { snap.orders.push(structuredClone(so)); await DB.del('orders', 'set:' + sid); } if (opts.tomb !== false) addTomb('set', sid); }
+  for (const sid of deadSets) { await rememberSet(snap.sets.find((x) => x.id === sid), snap.books); await DB.del('sets', sid); const so = await DB.get('orders', 'set:' + sid); if (so) { snap.orders.push(structuredClone(so)); await DB.del('orders', 'set:' + sid); } if (opts.tomb !== false) addTomb('set', sid); }
   if (opts.tomb !== false) for (const k of snap.keys) addTomb('book', k);
   if (opts.emit !== false) emitChange();
   return snap;
@@ -139,12 +140,31 @@ export async function ensureSet(name, auto = false) {
   const hit = sets.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
   if (hit) return hit;
   const s = { id: uid(), name: name.trim(), auto, createdAt: Date.now() };
-  await DB.put('sets', s); return s;
+  await DB.put('sets', s); await adoptSetMemory(s); return s;
+}
+/* A set that is deleted, pruned (auto sets without books) or removed by a sync keeps its manual order and sort mode in a small device-local memory, keyed by name,
+   so making the set again (enrichment, regrouping, "New set…") brings the arrangement back instead of starting over. */
+const MEM = 'folio.setmem', memKey = (n) => String(n || '').trim().toLowerCase();
+const readMem = () => { try { return JSON.parse(localStorage.getItem(MEM) || '{}') || {}; } catch { return {}; } };
+export async function rememberSet(set, extraBooks = []) {
+  if (!set) return;
+  const o = await DB.get('orders', 'set:' + set.id); const sort = (settings.get('sorts') || {})['set:' + set.id]; if (!(o && o.ids.length) && !sort) return;
+  const books = [...(await getBooks()), ...extraBooks]; const keyOf = new Map(books.map((b) => ['b:' + b.id, 'k:' + bookSyncKey(b)]));
+  const mem = readMem(); mem[memKey(set.name)] = { ids: ((o && o.ids) || []).map((x) => keyOf.get(x) || x).filter((x) => x.startsWith('k:')), sort: sort || null, at: Date.now() };
+  const keep = Object.entries(mem).sort((a, b) => b[1].at - a[1].at).slice(0, 40); try { localStorage.setItem(MEM, JSON.stringify(Object.fromEntries(keep))); } catch { /* quota */ }
+}
+async function adoptSetMemory(set) {
+  const mem = readMem(), k = memKey(set.name), m = mem[k]; if (!m) return;
+  delete mem[k]; try { localStorage.setItem(MEM, JSON.stringify(mem)); } catch { /* quota */ }
+  const byKey = new Map((await getBooks()).map((b) => ['k:' + bookSyncKey(b), 'b:' + b.id]));
+  if (m.ids.length) await DB.put('orders', { key: 'set:' + set.id, ids: m.ids.map((x) => byKey.get(x) || x) });
+  if (m.sort && m.sort.field) settings.set({ sorts: { ...(settings.get('sorts') || {}), ['set:' + set.id]: m.sort } });
 }
 export async function renameSet(id, name) { const s = await DB.get('sets', id); s.name = name; s.auto = false; await DB.put('sets', s); emitChange(); }
 export async function deleteSet(id) {
+  await rememberSet(await DB.get('sets', id));
   for (const b of await getBooks()) if (b.setId === id) { b.setId = null; b.seriesIndex = null; await DB.put('books', b); }
-  await DB.del('sets', id); await DB.del('orders', 'set:' + id); addTomb('set', id); emitChange();
+  await DB.del('sets', id); await DB.del('orders', 'set:' + id); addTomb('set', id); clearSort('set:' + id); emitChange();
 }
 export async function createSet(name) { const s = await ensureSet(name, false); s.auto = false; await DB.put('sets', s); emitChange(); return s; }
 export async function assignSet(bookId, setId, index) {
@@ -154,7 +174,7 @@ export async function assignSet(bookId, setId, index) {
 /** Remove auto-created sets that no longer have books. */
 export async function pruneSets() {
   const [sets, books] = await Promise.all([getSets(), getBooks()]);
-  for (const s of sets) if (s.auto && !books.some((b) => b.setId === s.id)) await DB.del('sets', s.id);
+  for (const s of sets) if (s.auto && !books.some((b) => b.setId === s.id)) { await rememberSet(s); await DB.del('sets', s.id); }
 }
 
 /* ---------- shelves ---------- */

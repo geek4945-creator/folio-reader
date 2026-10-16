@@ -281,6 +281,11 @@ function canonicalize(snap, idmap) {   // unify duplicate sets/shelves with the 
   snap.sets = snap.sets.map((x) => ({ ...x, id: m(x.id) }));
   for (const st of Object.values(snap.books)) { if (st.setId) st.setId = m(st.setId); st.shelves = (st.shelves || []).map(m); }
   for (const st of Object.values(snap.audioState || {})) st.shelves = (st.shelves || []).map(m);
+  if (snap.settings) {   // per-set / per-shelf sort modes are keyed by id: a set that two devices made independently must keep its Custom mode when the ids are unified
+    const rk = (ctx) => { const i = ctx.indexOf(':'); const kind = ctx.slice(0, i); return kind === 'set' || kind === 'shelf' ? kind + ':' + m(ctx.slice(i + 1)) : ctx; };
+    if (snap.settings.flat) { const out = {}; for (const [k, e] of Object.entries(snap.settings.flat)) { const nk = k.startsWith('sorts/') ? 'sorts/' + rk(k.slice(6)) : k; out[nk] = out[nk] && (out[nk].at || 0) >= (e.at || 0) ? out[nk] : e; } snap.settings.flat = out; }
+    const so = snap.settings.values && snap.settings.values.sorts; if (so) { const out = {}; for (const [c, v] of Object.entries(so)) out[rk(c)] = v; snap.settings.values.sorts = out; }
+  }
   snap.orders = snap.orders.map((o) => { const [kind, id] = [o.key.split(':')[0], o.key.slice(o.key.indexOf(':') + 1)]; return { ...o, key: kind === 'set' || kind === 'shelf' ? kind + ':' + m(id) : o.key, ids: o.ids.map((x) => (x.startsWith('s:') ? 's:' + m(x.slice(2)) : x)) }; });
   return snap;
 }
@@ -307,6 +312,16 @@ function mergeState(a, b, posFields) {
   return st;
 }
 
+/** Manual orders: the newest arrangement decides the sequence; books the other side placed that it doesn't know yet (added or imported meanwhile) follow, in their own order. Nothing is lost or duplicated. */
+function mergeOrders(a, b) {
+  const by = new Map();
+  for (const o of [...a, ...b]) {
+    const cur = by.get(o.key); if (!cur) { by.set(o.key, o); continue; }
+    const ta = cur.updatedAt || 0, tb = o.updatedAt || 0; const newer = tb > ta || (tb === ta && JSON.stringify(o.ids) > JSON.stringify(cur.ids)) ? o : cur, older = newer === o ? cur : o;
+    const have = new Set(newer.ids); by.set(o.key, { ...newer, ids: [...newer.ids, ...older.ids.filter((x) => !have.has(x))], updatedAt: Math.max(ta, tb) });
+  }
+  return [...by.values()];
+}
 export function mergeSnapshots(local, remote) {
   if (!remote) return local;
   const idmap = new Map();
@@ -324,7 +339,7 @@ export function mergeSnapshots(local, remote) {
   out.settings = mergeSettingsPart(L.settings, R.settings);
   out.shelves = mergeList('shelves', (x) => x.id, 'shelf');
   out.sets = mergeList('sets', (x) => x.id, 'set');
-  out.orders = mergeList('orders', (x) => x.key);
+  out.orders = mergeOrders(L.orders || [], R.orders || []);
   out.books = {}; const deadBooks = new Set();
   for (const k of new Set([...Object.keys(L.books), ...Object.keys(R.books)])) { const st = mergeState(L.books[k], R.books[k], POS_STATE); if (dead('book', k, Math.max(st.updatedAt || 0, st.addedAt || 0))) deadBooks.add(k); else out.books[k] = st; }   // deleted on some device → gone everywhere
   out.audioState = {}; for (const k of new Set([...Object.keys(L.audioState || {}), ...Object.keys(R.audioState || {})])) out.audioState[k] = mergeState((L.audioState || {})[k], (R.audioState || {})[k], AUDIO_POS_STATE);
@@ -357,7 +372,7 @@ export async function applySnapshot(m, ctx = {}) {
   for (const x of [...sets, ...shelves]) if (idmap.has(x.id)) await DB.del(sets.includes(x) ? 'sets' : 'shelves', x.id);
   for (const x of m.sets) await DB.put('sets', { ...x, ...touch });
   for (const x of m.shelves) await DB.put('shelves', { ...x, ...touch });
-  for (const s of sets) if (!m.sets.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('sets', s.id);
+  for (const s of sets) if (!m.sets.some((x) => x.id === (idmap.get(s.id) || s.id))) { await S.rememberSet(s); await DB.del('sets', s.id); }
   for (const s of shelves) if (!m.shelves.some((x) => x.id === (idmap.get(s.id) || s.id))) await DB.del('shelves', s.id);
   const doms = { library: true, positions: true, settings: true, glossary: true, ...(ctx.domains || {}) };
   if (doms.settings) applySettingsPart(m.settings, ctx);
@@ -407,9 +422,14 @@ export async function applySnapshot(m, ctx = {}) {
   for (const o of m.orders) {
     const ids = o.ids.map(unmapOrder); liveKeys.add(o.key);
     const cur = orders.find((x) => x.key === o.key);
-    if (!cur || (o.updatedAt || 0) > (cur.updatedAt || 0)) await DB.put('orders', { key: o.key, ids, updatedAt: o.updatedAt, _noTouch: true });
+    if (!cur || ctx.force || (o.updatedAt || 0) > (cur.updatedAt || 0) || ((o.updatedAt || 0) === (cur.updatedAt || 0) && !jeq(ids, cur.ids))) await DB.put('orders', { key: o.key, ids, updatedAt: o.updatedAt, _noTouch: true });   // equal stamps with different content = a merge that added books: take the union
   }
-  for (const o of orders) if (!liveKeys.has(o.key) && (o.key.startsWith('set:') || o.key.startsWith('shelf:')) && !m.sets.concat(m.shelves).some((x) => o.key.endsWith(':' + x.id))) await DB.del('orders', o.key);
+  for (const o of orders) if (!liveKeys.has(o.key) && (((o.key.startsWith('set:') || o.key.startsWith('shelf:')) && !m.sets.concat(m.shelves).some((x) => o.key.endsWith(':' + x.id))) || (ctx.force && !ctx.sync))) await DB.del('orders', o.key);
+  if (idmap.size) {   // sort modes of sets / shelves that were merged into a canonical duplicate now live under the canonical id (the merged settings carry them)
+    const so = { ...(settings.get('sorts') || {}) }; const at = settingStamps(); let ch = false;
+    for (const [from] of idmap) for (const kind of ['set', 'shelf']) { const k = kind + ':' + from; if (k in so) { delete so[k]; ch = true; } delete at['sorts/' + k]; }
+    if (ch) { settings.set({ sorts: so }, { remote: true }); } localStorage.setItem('folio.settings.keyAt', JSON.stringify(at));
+  }
   localStorage.setItem('folio.tombs', JSON.stringify(m.tombstones || []));
   return { appliedBooks, deletedBooks, posApplied: posApplied + audioRes.posApplied, posConflicts: posConflicts + audioRes.posConflicts, pending: Object.keys(pending).length, ...metaRes };
 }
