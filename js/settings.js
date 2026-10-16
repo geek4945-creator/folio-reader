@@ -46,6 +46,7 @@ export const DEFAULTS = {
   groupBy: 'status',    // All view: 'status' | 'none' (flat) | 'series' | 'author' | 'type'
   footerPages: true,    // reader footer: "Page X of Y"
   footerLeft: true,     // reader footer: "N pages left in chapter"
+  hideScrub: false,     // hide the reading-progress slider at the bottom of the reader (percent, pages left and Page X of Y stay); per-book override like the other reading prefs (v0.5.8)
   groupSets: true,
   audioChip: 'all',     // Audiobooks tab: selected shelf chip (device-only)
   audioSpeed: 1,        // last playback speed (0.5-3x); each audiobook also remembers its own
@@ -56,14 +57,14 @@ export const DEFAULTS = {
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };
 
-export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'];
+export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'groupBy', 'footerPages', 'footerLeft', 'hideScrub', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'];
 /* ---------- cross-device sync of settings (v0.5.5): every preference is synced with its own last-write-wins stamp ---------- */
 /** Never synced: they describe this device / this moment rather than a preference. */
 export const DEVICE_ONLY = ['flowChosen', 'chip', 'audioChip', 'proxyUrl', 'proxyMode', 'fullscreen'];
 /** Groups the user can keep device-specific in Settings → Sync (e.g. different page flow or pinch speed on a phone and a tablet). */
 export const SETTING_GROUPS = [
   { id: 'appearance', name: 'Appearance', hint: 'theme, font, text size, line spacing, margins', keys: ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'pdfInvert'] },
-  { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'pinchSens', 'holdSec', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'] },
+  { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'hideScrub', 'pinchSens', 'holdSec', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'] },
   { id: 'library', name: 'Library view & sorting', hint: 'grid / list, sort orders, group by, series sets', keys: ['view', 'sort', 'lastAutoSort', 'defaultSort', 'sorts', 'groupBy', 'groupSets', 'showFinished', 'setSort'] },
   { id: 'audio', name: 'Audiobooks', hint: 'playback speed', keys: ['audioSpeed'] },
   { id: 'other', name: 'Other', hint: 'public library, auto-link, auto-enrich', keys: ['publicLibrary', 'autoEnrich', 'autoPair'] },

@@ -110,10 +110,11 @@ input[type=range] { width:100%; accent-color:var(--accent); margin:.3rem 0; }
 
 /* reader */
 #reader { position:fixed; inset:0; z-index:50; background:var(--bg); color:var(--fg); }
-#viewer { position:absolute; left:var(--sal); right:var(--sar); top:calc(3rem + var(--sat)); bottom:calc(3.6rem + var(--sab)); transition:top .2s, bottom .2s; }
+#reader { --bot-h:3.6rem; } #reader.no-scrub { --bot-h:2.1rem; }
+#viewer { position:absolute; left:var(--sal); right:var(--sar); top:calc(3rem + var(--sat)); bottom:calc(var(--bot-h) + var(--sab)); transition:top .2s, bottom .2s; }
 #reader.chrome-hidden #viewer { top:var(--sat); bottom:var(--sab); }
 .r-bar { position:absolute; left:0; right:0; display:flex; align-items:center; gap:.2rem; background:var(--bar); border:0 solid var(--border); z-index:3; transition:transform .2s, opacity .2s; padding:0 .4rem; }
-.r-bar.top { top:0; height:calc(3rem + var(--sat)); padding-top:var(--sat); border-bottom-width:1px; } .r-bar.bottom { bottom:0; height:calc(3.6rem + var(--sab)); padding-bottom:var(--sab); flex-direction:column; justify-content:center; align-items:stretch; padding-left:1rem; padding-right:1rem; border-top-width:1px; }
+.r-bar.top { top:0; height:calc(3rem + var(--sat)); padding-top:var(--sat); border-bottom-width:1px; } .r-bar.bottom { bottom:0; height:calc(var(--bot-h) + var(--sab)); padding-bottom:var(--sab); flex-direction:column; justify-content:center; align-items:stretch; padding-left:1rem; padding-right:1rem; border-top-width:1px; }
 #reader.chrome-hidden .r-bar.top { transform:translateY(-110%); } #reader.chrome-hidden .r-bar.bottom { transform:translateY(110%); }
 .r-titlewrap { display:flex; align-items:center; gap:.4rem; min-width:0; justify-content:center; } .r-title { font-weight:600; font-size:.95rem; }
 .ovr-dot { background:#f4b400; color:#222; font-size:.6rem; font-weight:700; padding:0 .3rem; border-radius:.3rem; flex:none; } .ovr-dot[hidden] { display:none; }
@@ -184,9 +185,10 @@ input[type=range] { width:100%; accent-color:var(--accent); margin:.3rem 0; }
 .r-foot > span { overflow:hidden; text-overflow:ellipsis; } .r-foot .ft-sep { opacity:.6; }
 #reader { --foot-h:0rem; } #reader.has-foot { --foot-h:1.5rem; } #reader.has-foot .r-foot { display:flex; }
 #reader:not(.chrome-hidden) .r-foot { background:var(--bar); }
-#reader.has-foot #viewer { bottom:calc(3.6rem + var(--foot-h) + var(--sab)); }
+#reader.has-foot #viewer { bottom:calc(var(--bot-h) + var(--foot-h) + var(--sab)); }
 #reader.has-foot.chrome-hidden #viewer { bottom:calc(var(--foot-h) + var(--sab)); }
-#reader.has-foot .r-bar.bottom { bottom:calc(var(--foot-h) + var(--sab)); height:3.6rem; padding-bottom:0; }
+#reader.has-foot .r-bar.bottom { bottom:calc(var(--foot-h) + var(--sab)); height:var(--bot-h); padding-bottom:0; }
+#reader.no-scrub #r-slider { display:none; } #reader.no-scrub .r-label { text-align:center; }
 #reader.has-foot.chrome-hidden .r-bar.bottom { transform:translateY(300%); }
 
 /* ===== Audiobooks ===== */

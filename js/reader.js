@@ -6,7 +6,7 @@ import { fsButton } from './fullscreen.js';
 import { openPdf, closePdf, pdfCurrent } from './pdfreader.js';
 import { blockZoom } from './viewport.js';
 import { attachPinch } from './pinch.js';
-import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles } from './pages.js';
+import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles, applyScrub, scrubToggle } from './pages.js';
 import { makeLoading, withTimeout, patchBook } from './openguard.js';
 import { beforeOpen, registerOpenCheck } from './positions.js';
 import { attachWordHold, applyHighlights, closeBubble, wordBubbleOpen } from './wordbubble.js';
@@ -42,7 +42,7 @@ export async function openReader(id, opts = {}) {
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
   const loading = makeLoading({ book, onBack: () => closeReader(), onRetry: async (safe) => { await closeReader(); openReader(id, { safe }); } });   // always has a Back button; after 15 s an error panel with Retry / Back / details
   const foot = makeFooter();
-  el.replaceChildren(top, viewer, bottom, foot, loading.el); applyFooterSettings(); paintFooter({});
+  el.replaceChildren(top, viewer, bottom, foot, loading.el); applyFooterSettings(); paintFooter({}); applyScrub(book);
 
   import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { const b = document.getElementById('r-link'); if (b && l.length) b.hidden = false; }).catch(() => {});   // the 🎧 button only appears once there is an audiobook to link
   cur = { book, viewer, slider, label, bmBtn, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
@@ -243,7 +243,7 @@ let reflowTimer;
 /** Re-apply appearance after any change, keeping the reading position. */
 export function applyAppearance() {
   const c = cur; if (!c || !c.rendition) return;
-  applyMargin();
+  applyScrub(c.book); applyMargin();
   c.rendition.getContents().forEach(injectStyle);
   c.ovr.hidden = !S.hasOverrides(c.book);
   c.pager && c.pager.settle(800);
@@ -374,7 +374,7 @@ export function showSettings() {
       h('div', { class: 'seg wide' }, ['paginated', 'scrolled'].map((f) => h('button', { class: settings.get('flow') === f ? 'on' : '', 'data-flow': f, onclick: async () => { settings.set({ flow: f }); w.body.replaceChildren(build()); const cfi = c.loc?.start?.cfi; await startRendition(cfi); } }, f === 'paginated' ? 'Pages' : 'Scroll'))),
       h('div', { class: 'row-ctl' }, h('label', null, 'Tap zones')),
       h('div', { class: 'seg wide' }, [['on', 'Left = back'], ['inverted', 'Left = next'], ['off', 'Off']].map(([v, n]) => h('button', { class: settings.get('tapZones') === v ? 'on' : '', onclick: () => { settings.set({ tapZones: v }); w.body.replaceChildren(build()); } }, n))));
-    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles());
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles(), scrubToggle({ book: c.book, onWrite: (v) => write('hideScrub', v), useGlobal: useGlobal('hideScrub', 'Use global') }));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Word lookup')), h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'aa-wordlookup', checked: !!settings.get('wordLookup'), onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, 'Press and hold a word for its definition')), h('button', { class: 'btn block', id: 'aa-glossary', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words & glossary'));
     ui.reset = h('button', { class: 'btn block', id: 'reset-book', hidden: !S.hasOverrides(c.book), onclick: async () => { c.book = await S.resetOverrides(c.book.id); scope = 'global'; applyAppearance(); w.body.replaceChildren(build()); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults');
     wrap.append(ui.reset);

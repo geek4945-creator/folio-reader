@@ -8,7 +8,7 @@ import * as S from './store.js';
 import { openPdfDocument } from './pdf.js';
 import { fsButton } from './fullscreen.js';
 import { makeLoading, withTimeout } from './openguard.js';
-import { makeFooter, applyFooterSettings, paintFooter, footerToggles } from './pages.js';
+import { makeFooter, applyFooterSettings, paintFooter, footerToggles, applyScrub, scrubToggle } from './pages.js';
 import { registerOpenCheck } from './positions.js';
 import { attachWordHold, closeBubble } from './wordbubble.js';
 import { openGlossary, openTermEditor } from './glossaryui.js';
@@ -38,7 +38,7 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
   const loading = makeLoading({ book: { ...book, format: 'pdf' }, onBack: () => closePdf(), onRetry: async () => { await closePdf(); const { openReader } = await import('./reader.js'); openReader(book.id); } });
-  el.replaceChildren(top, viewer, bottom, makeFooter(), loading.el); applyFooterSettings(); paintFooter({});
+  el.replaceChildren(top, viewer, bottom, makeFooter(), loading.el); applyFooterSettings(); paintFooter({}); applyScrub(book);
   cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, textMode: !!book.pdfText, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
   const c = cur;
   const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
@@ -129,6 +129,7 @@ async function writeStyle(k, v) {
   const c = cur; if (!c) return;
   if (c.scopeBook) c.book = await S.setOverride(c.book.id, { [k]: v }); else settings.set({ [k]: v });
   if (c.textMode) styleText(c);
+  applyScrub(c.book);
 }
 const pinchHost = {
   disabled: () => !(cur && cur.textMode),
@@ -305,7 +306,8 @@ export function showSettings() {
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Theme')),
       h('div', { class: 'themes' }, Object.entries(THEMES).map(([k, t]) => h('button', { class: 'swatch' + (settings.get('theme') === k ? ' on' : ''), 'data-theme-pick': k, style: { background: t.bg, color: t.fg, borderColor: t.accent }, onclick: () => { settings.set({ theme: k }); redo(); } }, 'Aa', h('small', null, t.name)))));
     if (!c.textMode && themeNow().dark) wrap.append(h('label', { class: 'row-ctl' }, h('span', null, 'Invert page colors (dark mode)'), h('input', { type: 'checkbox', id: 'pdf-invert', checked: settings.get('pdfInvert') !== false, onchange: (e) => { settings.set({ pdfInvert: e.target.checked }); styleViewer(c); } })));
-    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles());
+    const pdfScope = () => (c.scopeBook && c.textMode ? c.book : null);
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles(), scrubToggle({ book: pdfScope(), onWrite: async (v) => { if (pdfScope()) c.book = await S.setOverride(c.book.id, { hideScrub: v }); else settings.set({ hideScrub: v }); applyScrub(c.book); } }));
     return wrap;
   }
   return w;

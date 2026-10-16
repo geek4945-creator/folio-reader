@@ -210,7 +210,7 @@ export function applyOrder(items, saved) {
 }
 
 /* ---------- per-book style overrides ---------- */
-export const OVERRIDE_KEYS = ['fontSizePt', 'font', 'lineHeight', 'margin'];
+export const OVERRIDE_KEYS = ['fontSizePt', 'font', 'lineHeight', 'margin', 'hideScrub'];   // hideScrub (v0.5.8): true / false for this book, absent = follow the global setting
 export function effectiveStyle(book) {
   const g = settings.all(); const o = (book && book.overrides) || {};
   const out = {};

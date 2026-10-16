@@ -30,7 +30,18 @@ export function paintFooter(info = {}) {
   lf.textContent = info.left == null ? '' : info.left <= 0 ? `Last page of ${unit}` : `${info.left} page${info.left === 1 ? '' : 's'} left in ${unit}`;
   applyFooterSettings();
 }
-settings.onChange((p) => { if ('footerPages' in p || 'footerLeft' in p) applyFooterSettings(); });
+settings.onChange((p) => { if ('footerPages' in p || 'footerLeft' in p) applyFooterSettings(); if ('hideScrub' in p) applyScrub(); });
+/** v0.5.8: hide only the progress slider (the % read, pages left and Page X of Y stay). Per book override, else the global setting. */
+let scrubBook = null;
+export function applyScrub(book) {
+  if (book !== undefined) scrubBook = book; const el = $('#reader'); if (!el) return;
+  el.classList.toggle('no-scrub', !!(scrubBook ? S.effectiveStyle(scrubBook).hideScrub : settings.get('hideScrub')));
+}
+/** The "hide progress bar" row: global (Settings) or, with `book`, a per-book choice next to a "use global" link (reader Appearance). */
+export function scrubToggle({ book, onWrite, useGlobal } = {}) {
+  const on = book ? !!S.effectiveStyle(book).hideScrub : !!settings.get('hideScrub');
+  return h('label', { class: 'toggle-row', id: 'hide-scrub-row' }, h('input', { type: 'checkbox', id: 'hide-scrub', checked: on, onchange: (e) => { if (onWrite) onWrite(e.target.checked); else { settings.set({ hideScrub: e.target.checked }); applyScrub(); } } }), h('span', null, 'Hide the progress bar (slider)', h('small', { class: 'muted' }, ' — keeps % read, pages left and Page X of Y')), useGlobal || null);
+}
 
 /** Two checkboxes for the Appearance sheet / Settings page. */
 export function footerToggles(onChange) {

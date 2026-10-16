@@ -17,7 +17,7 @@ import { initFullscreen, fsButton } from './fullscreen.js';
 import { isInstalledApp } from './env.js';
 import { normalizeUrl } from './net.js';
 import { enrichSettingsSection, openFixMissing } from './enrich.js';
-import { footerToggles } from './pages.js';
+import { footerToggles, scrubToggle } from './pages.js';
 import { initViewport } from './viewport.js';
 import { initNav, noteTab } from './nav.js';
 import { PINCH_LABELS } from './pinch.js';
@@ -78,7 +78,7 @@ function renderSettings() {
       sample),
     h('section', { class: 'pad card-sec', id: 'sec-footer' }, h('h3', null, 'Reader footer'),
       h('p', { class: 'muted small' }, 'The line at the bottom of the reader. EPUB page counts follow your text size, margins and line spacing; PDFs use their real page numbers.'),
-      ...footerToggles()),
+      ...footerToggles(), scrubToggle()),
     h('section', { class: 'pad card-sec', id: 'sec-display' }, h('h3', null, 'App & display'),
       isInstalledApp() ? h('p', { class: 'muted small' }, 'You’re running Folio as an installed app, already full screen.') : h('p', { class: 'muted small' }, 'Put Folio on your Home Screen for an app icon and full-screen reading, or hide the browser bars with Full screen.'),
       h('div', { class: 'row-actions' },
