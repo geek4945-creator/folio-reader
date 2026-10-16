@@ -178,7 +178,7 @@ const FILES = { library: 'folio-sync.json', settings: 'folio-settings.json', pos
 export const SYNC_DOMAINS = [
   { id: 'positions', name: 'Reading positions', hint: 'where you are in every book and audiobook, finished / reading status' },
   { id: 'library', name: 'Library', hint: 'shelves, series, order, metadata & covers, per-book reading settings, Borrowed, audiobook ↔ ebook links' },
-  { id: 'glossary', name: 'Glossaries & saved words', hint: 'each book’s glossary entries, saved dictionary words and the series-sharing option' },
+  { id: 'glossary', name: 'Glossaries, saved words, highlights & notes', hint: 'each book’s glossary entries, saved dictionary words, highlights and notes, and the series-sharing option' },
   { id: 'settings', name: 'Settings', hint: 'theme, text size, margins, page flow, sorting and the rest (each one on its own)' },
 ];
 const lsj = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? d; } catch { return d; } };

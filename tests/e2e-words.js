@@ -196,9 +196,9 @@ S.dict = { calls: [], serendipityApiDown: true, reply(u) {
     const calls0 = C.calls.length; await sync(P1); await sync(P2); const extra = C.calls.slice(calls0).filter((c) => /patch|post/.test(c)); assert(extra.length === 0, 'idle syncs wrote: ' + extra.join());
     return 'converged: ' + names(a);
   });
-  await step('Settings → Sync lists “Glossaries & saved words”; switching it off stops syncing it', async () => {
+  await step('Settings → Sync lists “Glossaries, saved words, highlights & notes”; switching it off stops syncing it', async () => {
     await P1.evaluate(() => document.querySelector('[data-tab=settings]').click()); await P1.waitForSelector('#sec-sync, [id^=sync-dom]', { timeout: 8000 }).catch(() => {});
-    const txt = await P1.evaluate(() => document.body.textContent); assert(/Glossaries & saved words/.test(txt), 'toggle missing from Settings → Sync');
+    const txt = await P1.evaluate(() => document.body.textContent); assert(/Glossaries, saved words, highlights & notes/.test(txt), 'toggle missing from Settings → Sync');
     await P1.evaluate(async () => (await import('./js/google.js')).setDomainEnabled('glossary', false));
     await P1.evaluate(async () => { const G = await import('./js/glossary.js'); const S = await import('./js/store.js'); const b = (await S.getBooks()).find((x) => /Ash One/.test(x.title)); await G.addTerm(b, { term: 'Local only', def: 'x' }); }); await sync(P1);
     assert(!JSON.stringify(C.json(PFX + '-glossary.json')).includes('Local only'), 'synced although switched off'); await P1.evaluate(async () => (await import('./js/google.js')).setDomainEnabled('glossary', true)); await sync(P1);

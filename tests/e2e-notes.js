@@ -154,6 +154,44 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     assert(/^# Notes Book/.test(md) && /## Chapter One/.test(md) && /> Paragraph 1\.1 begins here/.test(md), md.slice(0, 200));
     assert(await A.$('#r-toc'), 'no reader toolbar: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#reader').className + ' | ' + document.querySelector('#reader').children.length)); await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-export'); assert(!(await A.$eval('#an-export', (e) => e.disabled)) && !(await A.$eval('#an-copy-all', (e) => e.disabled)), 'buttons disabled'); await A.evaluate(() => window.__folioBack());
   });
+  /* ---------------- sync between two devices + backup ---------------- */
+  const P1 = await mk(await browser.createBrowserContext(), { login: true }), P2 = await mk(await browser.createBrowserContext(), { login: true });
+  const sync = (p, o = {}) => p.evaluate(async (o) => { const g = await import('./js/google.js'); const r = await g.syncNow(o); await new Promise((x) => setTimeout(x, 200)); return r; }, o);
+  await step('Sync: highlights (CFI range, full text, colour, note) travel through the glossary Drive file; the other device paints them; library file stays free of them', async () => {
+    await importFiles(P1, BOOK); await importFiles(P2, BOOK); for (const p of [P1, P2]) await p.evaluate(async () => (await import('./js/google.js')).syncTuning.minGap = 3600e3);
+    await P1.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(P1); await rendered(P1); await toStart(P1);
+    await selectText(P1, 'Paragraph 1.1 begins', 'Paragraph 1.2 begins'); await menu(P1); await colorBtn(P1, 'green'); await noMenu(P1); await sleep(300);
+    await selectText(P1, 'Paragraph 1.2 ends', 'here'); await menu(P1); await click(P1, '#an-note'); await P1.waitForSelector('#an-note-text'); await sleep(250); await P1.type('#an-note-text', 'synced note'); await click(P1, '#an-save'); await sleep(300);
+    await close(P1); await sync(P1); const names = C.names(); assert(names.includes(PFX + '-glossary.json'), names.join());
+    const gf = C.json(PFX + '-glossary.json'); const hl = gf.glossary.filter((x) => x.kind === 'hl'); assert(hl.length === 2 && hl.some((x) => x.note === 'synced note' && x.cfiRange && x.text), JSON.stringify(gf).slice(0, 300));
+    assert(!JSON.stringify(C.json(PFX + '-sync.json')).includes('synced note'), 'highlights leaked into the library file');
+    await sync(P2); const r2 = await recs(P2); assert(r2.length === 2 && r2.some((x) => x.note === 'synced note' && x.color === 'purple' || x.note === 'synced note'), JSON.stringify(r2.map((x) => x.text.slice(0, 20))));
+    await P2.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(P2); await rendered(P2); await toStart(P2); await sleep(500);
+    const pt = await paintedText(P2, 'green'); assert(pt.length === 2 && /^Paragraph 1\.1 begins/.test(pt[0]) && /Paragraph 1\.2 begins/.test(pt[0]) && pt[1] === 'Paragraph 1.2 ends here', 'device 2 paints: ' + pt.map((x) => x.slice(0, 30)).join('|'));
+    return 'file: ' + hl.length + ' highlights';
+  });
+  await step('Sync conflicts: a colour/note edit on one device and a deletion on the other converge (newest edit wins, tombstone removes)', async () => {
+    await close(P2);
+    await P2.evaluate(async () => { const An = await import('./js/annots.js'); const x = (await (await import('./js/db.js')).DB.all('glossary')).find((r) => r.kind === 'hl' && r.note); await An.update(x.id, { note: 'edited on device 2', color: 'blue' }); });
+    await P1.evaluate(async () => { const An = await import('./js/annots.js'); const x = (await (await import('./js/db.js')).DB.all('glossary')).find((r) => r.kind === 'hl' && !r.note && !r.del); await An.remove(x.id); });
+    await sync(P2); await sync(P1); await sync(P2);
+    const a = await recs(P1), b = await recs(P2); assert(a.length === 1 && b.length === 1 && a[0].note === 'edited on device 2' && a[0].color === 'blue' && b[0].id === a[0].id, JSON.stringify([a.map((x) => [x.note, x.color]), b.length]));
+    const calls0 = C.calls.length; await sync(P1); await sync(P2); assert(C.calls.slice(calls0).filter((c) => /patch|post/.test(c)).length === 0, 'idle syncs wrote');
+  });
+  await step('Backup export includes highlights & notes (summary counts them); Merge restores a deleted one, Replace drops one added since', async () => {
+    const r = await P1.evaluate(async () => {
+      const B = await import('./js/backup.js'); const { DB } = await import('./js/db.js'); const An = await import('./js/annots.js'); const S = await import('./js/store.js');
+      const { manifest, stream } = await B.exportBackupStream({}); const parts = []; for await (const c of stream) parts.push(c); const file = new File([new Blob(parts, { type: 'application/zip' })], 'b.zip');
+      const inManifest = (manifest.snapshot.glossary || []).filter((x) => !x.del && x.kind === 'hl').length;
+      const book = (await S.getBooks())[0]; for (const x of await An.forBook(book)) await DB.del('glossary', x.id);   // lose it entirely (a plain loss, not a deletion)
+       const extra = await An.add(book, { text: 'Added after the backup', cfiRange: 'epubcfi(/6/2!/4/2,/1:0,/1:5)', color: 'pink', chapter: 'Chapter One' });
+      let P = await B.readBackup(file); const summary = P.summary.highlights; await B.importBackup(P, { mode: 'merge' }); const merged = (await An.forBook(book)).map((x) => x.text.slice(0, 15) + ':' + x.note);
+      P = await B.readBackup(file); await B.importBackup(P, { mode: 'replace' }); const replaced = (await An.forBook((await S.getBooks())[0])).map((x) => x.text.slice(0, 15));
+      return { inManifest, summary, merged, replaced, extra: extra.id };
+    });
+    assert(r.inManifest === 1 && r.summary === 1, JSON.stringify(r)); assert(r.merged.some((x) => /edited on device 2/.test(x)) && r.merged.some((x) => /Added after/.test(x)), 'merge: ' + r.merged.join('|')); assert(r.replaced.length === 1 && !r.replaced.some((x) => /Added after/.test(x)), 'replace: ' + r.replaced.join('|'));
+    return JSON.stringify(r.replaced);
+  });
   await step('No page errors', async () => { assert(!errs.length, errs.slice(0, 3).join(' | ')); });
   const bad = results.filter((r) => !r[0]); console.log(`\n${results.length - bad.length}/${results.length} passed`); await browser.close(); process.exit(bad.length ? 1 : 0);
 })();
