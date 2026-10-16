@@ -39,10 +39,11 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   const handlePos = (page, which) => page.evaluate((which) => { const e = document.querySelector('#an-h-' + which); if (!e || e.style.visibility === 'hidden') return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, which);
   const selLen = (page) => page.evaluate(() => window.__reader.rendition.getContents().map((k) => k.window.getSelection().toString().length).reduce((a, b) => a + b, 0));
   const click = (page, sel) => page.evaluate((s) => document.querySelector(s).click(), sel);
+  const toStart = async (page) => { await page.evaluate(() => window.__reader.rendition.display(window.__reader.epub.spine.get(0).href)); await sleep(700); };
   const pageNo = (page) => page.evaluate(() => window.__reader.rendition.currentLocation().start.displayed.page);
 
   let A = await mk(await browser.createBrowserContext());
-  await step('Import the test book and open it (paginated); selecting a phrase shows the menu with colours, Note, Define, Copy and two handles', async () => {
+  await step('Import the test book and open it (scroll mode, the default); selecting a phrase shows the menu with colours, Note, Define, Copy and two handles', async () => {
     await importFiles(A, BOOK); await open(A); await rendered(A);
     const n = await selectText(A, 'Paragraph 1.1 begins here', 'quiet'); assert(n > 20, 'selection ' + n);
     const m = await menu(A); assert(m.n === 5 && /Note/.test(m.text) && /Define/.test(m.text) && /Copy/.test(m.text), JSON.stringify(m));
@@ -58,6 +59,79 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     await selectText(A, 'Paragraph 1.2 begins', 'Paragraph 1.3 ends here'); await menu(A); await colorBtn(A, 'green'); await noMenu(A); await sleep(300);
     const r = (await recs(A)).find((x) => x.color === 'green'); assert(r && /Paragraph 1\.2 begins/.test(r.text) && /Paragraph 1\.2 ends here/.test(r.text) && /Paragraph 1\.3 begins/.test(r.text) && r.text.endsWith('Paragraph 1.3 ends here') && r.text.length > 500, r && r.text.length);
     const pt = await paintedText(A, 'green'); assert(pt.length === 1 && pt[0] === r.text, 'painted ' + pt.map((x) => x.length));
+  });
+  await step('Drag the end handle: the selection grows word by word on the page (touch handle, no native menu needed)', async () => {
+    await selectText(A, 'Paragraph 1.1 begins', 'Paragraph 1.1 begins'); await menu(A); const l0 = await selLen(A);
+    const h = await handlePos(A, 'end'); assert(h, 'no end handle');
+    await A.mouse.move(h.x, h.y); await A.mouse.down(); await A.mouse.move(h.x + 120, h.y + 4, { steps: 6 }); await A.mouse.move(h.x + 150, h.y + 40, { steps: 6 }); const during = await selLen(A); await A.mouse.up(); await sleep(250);
+    const l1 = await selLen(A); assert(l1 > l0 + 40 && during > l0, `${l0} -> ${during} -> ${l1}`); await menu(A);
+    // the start handle moves the other end
+    const hs = await handlePos(A, 'start'); await A.mouse.move(hs.x, hs.y); await A.mouse.down(); await A.mouse.move(hs.x - 30, hs.y, { steps: 4 }); await A.mouse.up(); await sleep(250);
+    return `${l0} → ${l1}`;
+  });
+  await step('Scroll mode: dragging a handle to the bottom edge auto-scrolls and keeps extending the selection past the visible text', async () => {
+    await selectText(A, 'Paragraph 1.4 begins', 'Paragraph 1.4 begins'); await menu(A); const sc = () => A.evaluate(() => window.__reader.rendition.manager.container.scrollTop); const t0 = await sc(); const l0 = await selLen(A);
+    const h = await handlePos(A, 'end'); await A.mouse.move(h.x, h.y); await A.mouse.down(); await A.mouse.move(h.x, 740, { steps: 8 }); await sleep(1600); const t1 = await sc(); await A.mouse.up(); await sleep(300);
+    const l1 = await selLen(A); assert(t1 > t0 + 80 && l1 > l0 + 300, `scroll ${t0}→${t1}, len ${l0}→${l1}`); await menu(A); await click(A, '#an-x'); await noMenu(A); assert((await selLen(A)) === 0, 'not cleared');
+    return `scrollTop ${t0}→${t1}`;
+  });
+  await step('Switch to Pages (paginated) and reopen', async () => {
+    await close(A); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(A); await rendered(A); await A.evaluate(() => window.__reader.rendition.display(window.__reader.epub.spine.get(0).href)); await sleep(700);
+    assert((await paintedText(A, 'yellow')).length >= 1, 'saved highlights are painted after reopening');
+  });
+  await step('Dragging a handle to the page edge turns the page and keeps extending: one range across the page boundary is saved and painted whole', async () => {
+    await selectText(A, 'Paragraph 1.1 begins', 'Paragraph 1.1 begins'); await menu(A); const p0 = await pageNo(A); const l0 = await selLen(A);
+    const h = await handlePos(A, 'end'); await A.mouse.move(h.x, h.y); await A.mouse.down(); await A.mouse.move(370, h.y, { steps: 8 });
+    await until(async () => (await pageNo(A)) > p0, 6000, 'auto page turn'); await sleep(900);
+    const p1 = await pageNo(A); const mid = 300; await A.mouse.move(150, mid, { steps: 6 }); await A.mouse.up(); await sleep(300);
+    const l1 = await selLen(A); assert(p1 > p0 && l1 > l0 + 400, `pages ${p0}→${p1}, len ${l0}→${l1}`); await menu(A);
+    await colorBtn(A, 'blue'); await noMenu(A); await sleep(300);
+    const r = (await recs(A)).find((x) => x.color === 'blue'); assert(r && r.text.startsWith('Paragraph 1.1 begins') && r.text.length > l0 + 400, JSON.stringify(r && r.text.length));
+    const pt = await paintedText(A, 'blue'); assert(pt.length === 1 && pt[0] === r.text, 'painted pieces: ' + pt.length + ' ' + (pt[0] || '').length + ' vs ' + r.text.length);
+    return `pages ${p0}→${p1}, ${r.text.length} characters`;
+  });
+  await step('Selection menu: Define opens the word bubble without a stale menu', async () => {
+    await toStart(A);
+    await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await click(A, '#an-define'); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await noMenu(A);
+    await A.evaluate(() => window.__folioBack()); await sleep(200); assert(!(await A.$('#wl-bubble')), 'bubble still open');
+  });
+  await step('Note: the ✎ Note button saves a highlight and opens the editor on the note; saving stores it and underlines the highlight', async () => {
+    await toStart(A); await selectText(A, 'Paragraph 1.2 ends', 'here'); await menu(A); await click(A, '#an-note'); await A.waitForSelector('#an-note-text', { timeout: 5000 }); await sleep(250);
+    assert(await A.evaluate(() => document.activeElement && document.activeElement.id === 'an-note-text'), 'note field not focused');
+    await A.type('#an-note-text', 'Remember this line'); await click(A, '#an-save'); await sleep(400);
+    const r = (await recs(A)).find((x) => x.note); assert(r && r.note === 'Remember this line' && r.text === 'Paragraph 1.2 ends here', JSON.stringify(r));
+    assert((await A.evaluate(() => window.__reader.rendition.getContents().some((k) => k.window.CSS.highlights.get('folio-hl-noted')))), 'noted underline missing');
+  });
+  await step('Tap a highlight: its editor opens (no page turn); change the colour and save; the painting follows', async () => {
+    const p0 = await pageNo(A);
+    const xy = await A.evaluate(() => { for (const k of window.__reader.rendition.getContents()) { const h = k.window.CSS.highlights.get('folio-hl-' + 'yellow'); const noted = k.window.CSS.highlights.get('folio-hl-noted'); if (noted) { const r = [...noted][0].getClientRects()[0]; const f = k.window.frameElement.getBoundingClientRect(); return { x: r.left + r.width / 2 + f.left, y: r.top + r.height / 2 + f.top }; } void h; } return null; });
+    assert(xy, 'no noted highlight on screen'); await A.mouse.click(xy.x, xy.y); await A.waitForSelector('#an-save', { timeout: 4000 });
+    assert((await pageNo(A)) === p0, 'the tap turned the page'); assert((await A.evaluate(() => document.querySelector('#an-note-text').value)) === 'Remember this line', 'note not shown');
+    await click(A, '.an-colors .an-dot[data-color=purple]'); await click(A, '#an-save'); await sleep(400);
+    const r = (await recs(A)).find((x) => x.note); assert(r.color === 'purple', r.color); assert((await paintedText(A, 'purple')).includes('Paragraph 1.2 ends here'), 'repaint missing');
+  });
+  await step('Contents → Highlights & Notes: tab count, excerpts (long ones truncated with Show more), colour stripe, note; filters', async () => {
+    await click(A, '#r-toc'); await A.waitForSelector('.seg [data-tab=notes]'); const lab = await A.evaluate(() => document.querySelector('[data-tab=notes]').textContent); assert(/Highlights & Notes/.test(lab), lab);
+    const tabs = await A.evaluate(() => [...document.querySelectorAll('.sheet .seg [data-tab]')].map((b) => b.dataset.tab)); assert(tabs.join() === 'toc,bookmarks,notes,words', tabs.join());
+    await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-list .an-item', { timeout: 5000 });
+    const items = await A.evaluate(() => [...document.querySelectorAll('#an-list .an-item')].map((e) => ({ t: e.querySelector('.an-text').textContent, c: e.dataset.color, n: e.querySelector('.an-notebox')?.textContent || '', more: !!e.querySelector('.an-more') })));
+    assert(items.length === 4, JSON.stringify(items.map((x) => x.t.slice(0, 30)))); const long = items.find((x) => x.more); assert(long && long.t.endsWith('…') && long.t.length < 260, 'long excerpt not truncated: ' + (long && long.t.length));
+    assert(items.some((x) => /Remember this line/.test(x.n) && x.c === 'purple'), JSON.stringify(items));
+    await click(A, '.an-more'); await sleep(250); const full = await A.evaluate(() => [...document.querySelectorAll('#an-list .an-text')].map((e) => e.textContent.length).sort((a, b) => b - a)[0]); assert(full > 1000, 'Show more did not expand: ' + full);
+    await click(A, '[data-filter=notes]'); await sleep(300); assert((await A.evaluate(() => document.querySelectorAll('#an-list .an-item').length)) === 1, 'notes filter'); await click(A, '[data-filter=all]'); await sleep(300); await A.evaluate(() => window.__folioBack()); await sleep(300);
+  });
+  await step('Tapping a list item jumps to the highlight (closes the sheet, reader at that place); edit and delete from the list', async () => {
+    await A.evaluate(() => { const rn = window.__reader.rendition; return rn.display(rn.book.spine.get(1).href); }); await sleep(600);
+    await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-list .an-item');
+    await A.evaluate(() => { const it = [...document.querySelectorAll('#an-list .an-item')].find((e) => /Remember/.test(e.textContent)); it.querySelector('.an-main').click(); }); await sleep(900);
+    assert(!(await A.$('.sheet')), 'sheet still open: ' + await A.evaluate(() => document.querySelector('#overlay').innerHTML.slice(0, 400))); const href = await A.evaluate(() => window.__reader.rendition.currentLocation().start.href); assert(/c1/.test(href), 'did not jump back to chapter 1: ' + href);
+    assert((await paintedText(A, 'purple')).length === 1, 'highlight not visible after jump');
+    await click(A, '#r-toc'); await A.waitForSelector('[data-tab=notes]'); await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-list .an-item');
+    await A.evaluate(() => { const it = [...document.querySelectorAll('#an-list .an-item')].find((e) => /Remember/.test(e.textContent)); it.querySelector('.an-edit').click(); }); await A.waitForSelector('#an-save'); await A.evaluate(() => { document.querySelector('#an-note-text').value = 'Edited from the list'; }); await click(A, '#an-save'); await sleep(400);
+    assert((await recs(A)).some((x) => x.note === 'Edited from the list'), 'edit lost');
+    await A.waitForSelector('#an-list .an-item'); await A.evaluate(() => { const it = [...document.querySelectorAll('#an-list .an-item')].find((e) => /Edited from/.test(e.textContent)); it.querySelector('.an-rm').click(); }); await sleep(500);
+    assert((await recs(A)).length === 3, 'delete failed: ' + (await recs(A)).length); assert((await paintedText(A, 'purple')).length === 0, 'deleted highlight still painted');
+    await A.evaluate(() => window.__folioBack());
   });
   await step('No page errors', async () => { assert(!errs.length, errs.slice(0, 3).join(' | ')); });
   const bad = results.filter((r) => !r[0]); console.log(`\n${results.length - bad.length}/${results.length} passed`); await browser.close(); process.exit(bad.length ? 1 : 0);
