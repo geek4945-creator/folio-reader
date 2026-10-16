@@ -331,3 +331,21 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .rn-cover { flex:0 0 3.6rem; aspect-ratio:2/3; border-radius:.35rem; overflow:hidden; background:var(--border); } .rn-cover img, .rn-cover .cover-ph { width:100%; height:100%; object-fit:cover; display:flex; align-items:center; justify-content:center; font-size:.6rem; color:#fff; text-align:center; padding:.2rem; }
 .rn-meta { flex:1; min-width:0; } .rn-title { font-weight:600; line-height:1.2; } .rn-author { font-size:.85rem; margin:.1rem 0 .4rem; } .rn-bar { height:.3rem; border-radius:.2rem; background:var(--border); overflow:hidden; } .rn-bar i { display:block; height:100%; background:var(--accent); }
 .rn-sub { margin-top:.3rem; font-size:.85rem; } .rn-pct { font-weight:600; }
+
+/* ---- highlights & notes (v0.5.8) ---- */
+.an-menu { position: absolute; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 5px 7px; background: var(--panel, #fff); color: var(--fg, #222); border: 1px solid var(--line, #0003); border-radius: 22px; box-shadow: 0 4px 18px #0004; max-width: calc(100% - 12px); flex-wrap: nowrap; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.an-menu .an-dot, .an-colors .an-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #0003; padding: 0; flex: none; }
+.an-colors { display: flex; gap: 10px; margin: 10px 0; } .an-colors .an-dot { width: 34px; height: 34px; } .an-dot.on { outline: 3px solid var(--accent, #36c); outline-offset: 1px; }
+.an-btn { background: none; border: 0; color: inherit; font: inherit; font-size: .86rem; padding: 6px 7px; border-radius: 12px; white-space: nowrap; }
+.an-btn:active { background: #0002; }
+.an-handle { position: absolute; z-index: 61; width: 22px; height: 22px; margin: 3px 0 0 -11px; border-radius: 50%; background: var(--accent, #36c); border: 2px solid #fff; touch-action: none; box-shadow: 0 1px 4px #0006; }
+.an-handle::after { content: ''; position: absolute; inset: -14px; }
+.an-handle.drag { filter: brightness(1.2); }
+.an-quote { margin: 4px 0; padding: 4px 0 4px 12px; border-left: 5px solid #ffd54f; font-style: italic; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+.an-note-in { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line, #0004); background: var(--bg, #fff); color: inherit; }
+.an-ed .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.an-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; flex-wrap: wrap; }
+.an-item { align-items: flex-start; gap: 8px; }
+.an-main { cursor: pointer; min-width: 0; } .an-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.an-notebox { margin-top: 4px; padding: 5px 8px; background: #0001; border-radius: 6px; font-size: .9em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.an-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }

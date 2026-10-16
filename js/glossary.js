@@ -32,7 +32,7 @@ export async function setShared(book, on) {
 /** Everything the book can see: its own records plus, for books in a series, the glossary entries of siblings that share theirs. */
 export async function forBook(book) {
   const k = keyOf(book); const list = await all();
-  const own = list.filter((x) => x.bookKey === k && x.kind !== 'meta');
+  const own = list.filter((x) => x.bookKey === k && (x.kind === 'term' || x.kind === 'word'));
   let shared = [];
   if (book.setId) {
     const sets = await setMap(); const sharing = new Set(list.filter((x) => x.kind === 'meta' && x.shared && x.bookKey !== k && sets.get(x.bookKey) === book.setId).map((x) => x.bookKey));
@@ -73,10 +73,10 @@ export async function saveWord(book, { term, def = '', pos = '', phonetic = '', 
   await DB.put(GL, rec); changed(); return rec;
 }
 export async function savedCounts() {   // for Settings: per book (key → { title, terms, words })
-  const m = new Map(); for (const x of await all()) { if (x.kind === 'meta') continue; const r = m.get(x.bookKey) || { key: x.bookKey, title: x.bookTitle || x.bookKey, terms: 0, words: 0 }; r[x.kind === 'term' ? 'terms' : 'words']++; if (x.bookTitle) r.title = x.bookTitle; m.set(x.bookKey, r); }
+  const m = new Map(); for (const x of await all()) { if (x.kind === 'meta' || x.kind === 'hl') continue; const r = m.get(x.bookKey) || { key: x.bookKey, title: x.bookTitle || x.bookKey, terms: 0, words: 0 }; r[x.kind === 'term' ? 'terms' : 'words']++; if (x.bookTitle) r.title = x.bookTitle; m.set(x.bookKey, r); }
   return [...m.values()].sort((a, b) => a.title.localeCompare(b.title));
 }
-export async function wordsOfKey(key) { return (await all()).filter((x) => x.bookKey === key && x.kind !== 'meta'); }
+export async function wordsOfKey(key) { return (await all()).filter((x) => x.bookKey === key && (x.kind === 'term' || x.kind === 'word')); }
 export async function clearBookWords(book) { const k = keyOf(book); for (const x of (await all()).filter((x) => x.bookKey === k && x.kind === 'word')) await DB.put(GL, { id: x.id, bookKey: k, kind: 'word', del: true }); changed(); }
 
 /** Import reviewed candidates [{ term, def, note?, src }]. Existing terms are left as they are unless `overwrite`. */

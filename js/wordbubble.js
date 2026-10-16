@@ -36,6 +36,8 @@ export function sentenceAt(text, offset) {
 
 let bubble = null;   // { el, backdrop, unlayer, close }
 export const wordBubbleOpen = () => !!bubble;
+let heldAt = 0;
+export const lastWordHold = () => heldAt;   // when a word hold last fired (the selection menu stays out of the way)
 export function closeBubble() { if (bubble) { const b = bubble; bubble = null; b.close(); } }
 
 const esc = (s) => String(s || '');
@@ -87,6 +89,7 @@ export async function openBubble(info, host) {
       h('button', { class: 'btn small' + (st.saved ? ' on' : ''), id: 'wl-save', onclick: toggleSave }, st.saved ? '★ Saved' : '☆ Save to book'),
       h('button', { class: 'btn small', id: 'wl-gadd', onclick: () => { closeBubble(); host.editEntry(g && g.bookKey === G.keyOf(book) ? g : null, g ? g.term : display, ctx, defOf().def); } }, g && g.bookKey === G.keyOf(book) ? '✎ Edit entry' : '＋ Glossary'),
       h('a', { class: 'btn small', id: 'wl-web', href: D.webUrl(display), target: '_blank', rel: 'noopener noreferrer' }, 'Search the web ↗'),
+      host.select && info.range ? h('button', { class: 'btn small', id: 'wl-hl', onclick: () => { const r = info.range; closeBubble(); host.select(r); } }, '🖍 Highlight…') : null,
       h('button', { class: 'btn small', id: 'wl-words', onclick: () => { closeBubble(); host.openWords(); } }, '📚 Words')));
     el.replaceChildren(...kids); place(el, info.rect);
   }
@@ -118,14 +121,14 @@ export function attachWordHold(target, host) {
     if (!st) return; const { x, y } = st; cancel();
     if (!settings.get('wordLookup') || (host.ready && !host.ready())) return;
     const w = wordAt(doc, x, y); if (!w) return;
-    swallowUntil = Date.now() + 900; armedUntil = Date.now() + 900;
+    swallowUntil = Date.now() + 900; armedUntil = Date.now() + 900; heldAt = Date.now();
     try { if (navigator.vibrate) navigator.vibrate(15); } catch { /* unsupported */ }
     const off = frameOffset(); const r = w.rect; const rect = { left: r.left + off.x, right: r.right + off.x, top: r.top + off.y, bottom: r.bottom + off.y, width: r.width, height: r.height };
     const unmark = markWord(doc, w.range);
     let cfi = ''; try { cfi = host.cfi ? host.cfi(w.range) : ''; } catch { /* ignore */ }
     let page = 0; try { page = host.page ? host.page(w.range.startContainer) : 0; } catch { /* ignore */ }
     const book = host.book(); if (!book) { unmark(); return; }
-    await openBubble({ word: w.word, text: w.text, offset: w.offset, rect, cfi, page, book }, { ...host.actions, onClose: () => { unmark(); if (host.afterClose) host.afterClose(); } });
+    await openBubble({ word: w.word, text: w.text, offset: w.offset, rect, cfi, page, book, range: w.range }, { ...host.actions, onClose: () => { unmark(); if (host.afterClose) host.afterClose(); } });
   };
   const down = (e) => {
     if (e.button > 0) return;
