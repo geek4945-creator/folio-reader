@@ -39,6 +39,7 @@ const frameInfo = (page) => page.evaluate(() => { const f = document.querySelect
   await step('Import 5 EPUBs via file picker (metadata + covers extracted)', async () => {
     await (await page.$('#file-input')).uploadFile(...['frankenstein', 'saga-1', 'saga-2', 'saga-3', 'standalone'].map(fx));
     await page.waitForFunction(() => document.querySelectorAll('.tile').length >= 3, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('.tile img.cover-img').length >= 3, { timeout: 20000 }).catch(() => {});
     const info = await page.evaluate(() => ({ tiles: [...document.querySelectorAll('.tile')].map((t) => t.querySelector('.t').innerText), covers: document.querySelectorAll('.tile img.cover-img').length }));
     assert(info.covers >= 3, 'covers: ' + JSON.stringify(info)); return JSON.stringify(info);
   });
