@@ -1,7 +1,9 @@
 // PDF reader (pdf.js): paged + continuous-scroll modes, pinch / buttons zoom, fit-width, page jump, per-book position + zoom,
 // theme via viewer background (optionally inverting pages for dark themes). Font / margin / line-spacing don't apply to PDFs.
 import { h, toast, sheet, debounce, $, fmtPct } from './util.js';
-import { settings, THEMES } from './settings.js';
+import { settings, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from './settings.js';
+import { pageBlocks } from './pdftext.js';
+import { attachPinch } from './pinch.js';
 import * as S from './store.js';
 import { openPdfDocument } from './pdf.js';
 import { fsButton } from './fullscreen.js';
@@ -33,7 +35,7 @@ export async function openPdf(book, blob, opts = {}) {
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
   const loading = makeLoading({ book: { ...book, format: 'pdf' }, onBack: () => closePdf(), onRetry: async () => { await closePdf(); const { openReader } = await import('./reader.js'); openReader(book.id); } });
   el.replaceChildren(top, viewer, bottom, makeFooter(), loading.el); applyFooterSettings(); paintFooter({});
-  cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
+  cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, textMode: !!book.pdfText, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
   const c = cur;
   try {
     loading.stage('Reading the file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (cur !== c) return;
@@ -48,7 +50,7 @@ export async function openPdf(book, blob, opts = {}) {
   slider.addEventListener('change', () => goTo(+slider.value));
   pageNum.addEventListener('change', () => goTo(+pageNum.value));
   viewer.addEventListener('click', onTap);
-  setupTouch(c);
+  setupTouch(c); attachPinch(viewer, pinchHost);
   window.addEventListener('keydown', keyNav); document.addEventListener('visibilitychange', onHide); window.addEventListener('resize', onResize);
   window.__pdf = c;
 }
@@ -67,8 +69,10 @@ function styleViewer(c) {
 }
 function draw(first) {
   const c = cur; if (!c || !c.ready) return;
-  styleViewer(c); c.mode = modeNow();
+  styleViewer(c); c.mode = c.textMode ? 'scroll' : modeNow();
   c.io && c.io.disconnect(); c.pages.forEach(cancelRender); c.pages = []; c.viewer.replaceChildren();
+  c.viewer.classList.toggle('pdf-text-mode', !!c.textMode); updateZoomUI();
+  if (c.textMode) return drawText(c);
   c.viewer.classList.toggle('scroll-mode', c.mode === 'scroll'); c.viewer.classList.toggle('paged-mode', c.mode === 'paged');
   const sz = pageSize(c);
   if (c.mode === 'paged') {
@@ -83,6 +87,50 @@ function draw(first) {
     const target = c.pages[c.page - 1]; if (target) c.viewer.scrollTop = target.offsetTop - 8;
   }
   syncUI();
+}
+/* ---------- Text view (reflow): the text size / font / line spacing / margins settings apply here ---------- */
+const stl = (c) => S.effectiveStyle(c.book);
+function styleText(c, ptOverride) {
+  const t = themeNow(); const st = stl(c); const v = c.viewer; const ff = FONTS[st.font]?.css || '';
+  v.style.background = t.bg; v.style.color = t.fg; v.style.fontSize = (ptOverride ?? st.fontSizePt) + 'pt'; v.style.lineHeight = st.lineHeight; v.style.fontFamily = ff || 'Georgia, "Times New Roman", serif';
+  v.style.setProperty('--pdf-tm', st.margin + 'px'); v.style.setProperty('--pdf-accent', t.accent); v.classList.remove('pdf-inv', 'pdf-dark', 'pdf-multiply');
+}
+function drawText(c) {
+  styleText(c);
+  const stage = h('div', { class: 'pdf-tstage' }); c.viewer.append(stage);
+  c.textCache = c.textCache || new Map();
+  for (let i = 1; i <= c.n; i++) { const s = h('section', { class: 'pdf-tpage', dataset: { page: i } }, h('div', { class: 'pdf-tp-n' }, 'Page ' + i)); stage.append(s); c.pages.push(s); }
+  c.io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) fillText(c, e.target); }, { root: c.viewer, rootMargin: '150% 0px' });
+  c.pages.forEach((p) => c.io.observe(p));
+  c.viewer.onscroll = onScroll;
+  const target = c.pages[c.page - 1]; if (target) { fillText(c, target); c.viewer.scrollTop = target.offsetTop - 4; }
+  syncUI();
+}
+async function fillText(c, slot) {
+  if (slot._filled) return; slot._filled = true; const n = +slot.dataset.page;
+  try {
+    let blocks = c.textCache.get(n); if (!blocks) { const page = await c.pdf.getPage(n); blocks = await pageBlocks(page); page.cleanup(); c.textCache.set(n, blocks); }
+    if (cur !== c) return;
+    if (!blocks.length) slot.append(h('p', { class: 'pdf-empty' }, 'No selectable text on this page (a scanned image?). Switch to Original pages to see it.'));
+    else slot.append(...blocks.map((b) => h(b.k === 'h' ? 'h3' : 'p', null, b.text)));
+    slot.dataset.filled = '1';
+  } catch (e) { slot._filled = false; console.warn('text', n, e); }
+}
+/** Write one style value like the EPUB Aa panel does: to this book if it has its own, else to the global setting. */
+async function writeStyle(k, v) {
+  const c = cur; if (!c) return;
+  if (c.scopeBook) c.book = await S.setOverride(c.book.id, { [k]: v }); else settings.set({ [k]: v });
+  if (c.textMode) styleText(c);
+}
+const pinchHost = {
+  disabled: () => !(cur && cur.textMode),
+  getPt: () => (cur ? S.effectiveStyle(cur.book).fontSizePt : settings.get('fontSizePt')),
+  pinched: () => { if (cur) cur.gestureAt = Date.now(); },
+  apply: (pt, final) => { const c = cur; if (!c || !c.textMode) return; if (!final) { styleText(c, pt); return; } c.scopeBook = !!(c.book.overrides && c.book.overrides.fontSizePt != null); writeStyle('fontSizePt', pt); },
+};
+export function setTextMode(on) {
+  const c = cur; if (!c) return; c.textMode = !!on; c.textCache = c.textCache || new Map();
+  c.viewer.style.cssText = ''; draw(); saveSoon();
 }
 function pageEl(c, n, sz) { return h('div', { class: 'pdf-page', dataset: { page: n }, style: { width: sz.w + 'px', height: sz.h + 'px' } }); }
 function cancelRender(slot, clear) {
@@ -157,24 +205,27 @@ const onHide = () => { if (document.hidden && cur) savePosition(); };
 let rzT; const onResize = () => { clearTimeout(rzT); rzT = setTimeout(() => { if (cur && cur.ready) draw(); }, 200); };
 
 /* ---------- zoom (buttons, fit width, pinch) + swipe ---------- */
-export function setZoom(z) { const c = cur; if (!c) return; z = Math.min(ZMAX, Math.max(ZMIN, z)); c.zoom = Math.round(z * 100) / 100; c.stageScale = 1; c.viewer.querySelectorAll('.pdf-stage').forEach((s) => { s.style.transform = ''; });
+export function setZoom(z) { const c = cur; if (!c || c.textMode) return; z = Math.min(ZMAX, Math.max(ZMIN, z)); c.zoom = Math.round(z * 100) / 100; c.stageScale = 1; c.viewer.querySelectorAll('.pdf-stage').forEach((s) => { s.style.transform = ''; });
   const keep = c.mode === 'scroll' ? (c.viewer.scrollTop - (c.pages[c.page - 1]?.offsetTop || 0)) / (c.pages[c.page - 1]?.offsetHeight || 1) : 0;
   draw(); if (c.mode === 'scroll') { const p = c.pages[c.page - 1]; if (p) c.viewer.scrollTop = p.offsetTop + keep * p.offsetHeight; }
   updateZoomUI(); saveSoon(); }
 const zoomBy = (f) => setZoom((cur?.zoom || 1) * f);
-function updateZoomUI() { const c = cur; if (!c) return; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1)); $('#pdf-zout').disabled = c.zoom <= ZMIN; $('#pdf-zin').disabled = c.zoom >= ZMAX; }
+function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
 function setupTouch(c) {
   const v = c.viewer; let p0 = null, sx = 0, sy = 0, st = 0, swiping = false;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
   v.addEventListener('touchstart', (e) => {
+    if (c.textMode) return;
     if (e.touches.length === 2) { p0 = dist(e.touches); c.pinch = 1; c.gestureAt = Date.now(); }
     else if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); swiping = true; }
   }, { passive: true });
   v.addEventListener('touchmove', (e) => {
+    if (c.textMode) return;
     if (e.touches.length === 2 && p0) { e.preventDefault(); c.pinch = Math.min(ZMAX / c.zoom, Math.max(ZMIN / c.zoom, dist(e.touches) / p0)); const s = v.querySelector('.pdf-stage'); if (s) { s.style.transformOrigin = 'center top'; s.style.transform = `scale(${c.pinch})`; } c.gestureAt = Date.now(); swiping = false; }
     else if (e.touches.length > 1) swiping = false;
   }, { passive: false });
   v.addEventListener('touchend', (e) => {
+    if (c.textMode) return;
     if (p0 && e.touches.length < 2) { const f = c.pinch || 1; p0 = null; c.pinch = 1; c.gestureAt = Date.now(); if (Math.abs(f - 1) > 0.03) setZoom(c.zoom * f); else { const s = v.querySelector('.pdf-stage'); if (s) s.style.transform = ''; } return; }
     if (swiping && e.changedTouches.length === 1 && c.mode === 'paged' && c.zoom <= 1.05) {
       const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
@@ -183,7 +234,7 @@ function setupTouch(c) {
     swiping = false;
   }, { passive: true });
   // ctrl+wheel / trackpad pinch on desktop
-  v.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); clearTimeout(c._wz); c._wf = (c._wf || 1) * Math.exp(-e.deltaY * 0.01); c._wz = setTimeout(() => { const f = c._wf; c._wf = 1; setZoom(c.zoom * f); }, 120); } }, { passive: false });
+  v.addEventListener('wheel', (e) => { if (e.ctrlKey && !c.textMode) { e.preventDefault(); clearTimeout(c._wz); c._wf = (c._wf || 1) * Math.exp(-e.deltaY * 0.01); c._wz = setTimeout(() => { const f = c._wf; c._wf = 1; setZoom(c.zoom * f); }, 120); } }, { passive: false });
 }
 
 /* ---------- progress ---------- */
@@ -191,7 +242,7 @@ const saveSoon = debounce(() => savePosition(), 500);
 async function savePosition() {
   const c = cur; if (!c || !c.ready) return;
   const b = await S.getBook(c.book.id); if (!b) return;
-  b.pdfPage = c.page; b.pdfZoom = c.zoom; b.progress = c.progress; b.lastOpened = Date.now();
+  b.pdfPage = c.page; b.pdfZoom = c.zoom; b.pdfText = !!c.textMode; b.progress = c.progress; b.lastOpened = Date.now();
   let moved = false;
   if (!c.finishedThisSession && c.n > 1 && c.page >= c.n && b.status !== 'finished') { b.status = 'finished'; b.finishedAt = Date.now(); c.finishedThisSession = true; moved = true; }
   else if (b.status !== 'finished' && b.status !== 'reading' && c.page > 1) b.status = 'reading';
@@ -209,23 +260,48 @@ function showOutline() {
   const w = sheet('Outline', () => h('div', { class: 'list' }, flat(c.outline).map(({ it, d }) => h('button', { class: 'list-item toc-item', style: { paddingLeft: (14 + d * 16) + 'px' }, onclick: () => go(it) }, (it.title || '').trim() || 'Untitled'))), { tall: true });
 }
 export function showSettings() {
-  const c = cur; const w = sheet('Appearance', () => build(), { noDim: true });
+  const c = cur; c.scopeBook = S.hasOverrides(c.book); const w = sheet('Appearance', () => build(), { noDim: true });
+  const redo = () => w.body.replaceChildren(build());
   function build() {
     const wrap = h('div', { class: 'appearance' });
-    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Zoom ', h('span', { class: 'muted', id: 'pdf-zoom-val' }, Math.round(c.zoom * 100) + '%'))),
-      h('div', { class: 'stepper' }, h('button', { class: 'btn', id: 'pdf-zout2', onclick: () => { zoomBy(1 / 1.25); w.body.replaceChildren(build()); } }, '−'), h('button', { class: 'btn', id: 'pdf-fit2', onclick: () => { setZoom(1); w.body.replaceChildren(build()); } }, 'Fit width'), h('button', { class: 'btn', id: 'pdf-zin2', onclick: () => { zoomBy(1.25); w.body.replaceChildren(build()); } }, '+')),
-      h('div', { class: 'row-ctl' }, h('label', null, 'Layout')),
-      h('div', { class: 'seg wide' }, ['paginated', 'scrolled'].map((f) => h('button', { class: settings.get('flow') === f ? 'on' : '', 'data-flow': f, onclick: () => { settings.set({ flow: f }); w.body.replaceChildren(build()); draw(); } }, f === 'paginated' ? 'Pages' : 'Scroll'))),
-      h('div', { class: 'row-ctl' }, h('label', null, 'Theme')),
-      h('div', { class: 'themes' }, Object.entries(THEMES).map(([k, t]) => h('button', { class: 'swatch' + (settings.get('theme') === k ? ' on' : ''), 'data-theme-pick': k, style: { background: t.bg, color: t.fg, borderColor: t.accent }, onclick: () => { settings.set({ theme: k }); w.body.replaceChildren(build()); } }, 'Aa', h('small', null, t.name)))));
-    if (themeNow().dark) wrap.append(h('label', { class: 'row-ctl' }, h('span', null, 'Invert page colors (dark mode)'), h('input', { type: 'checkbox', id: 'pdf-invert', checked: settings.get('pdfInvert') !== false, onchange: (e) => { settings.set({ pdfInvert: e.target.checked }); styleViewer(c); } })));
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'View')),
+      h('div', { class: 'seg wide', id: 'pdf-view-seg' }, [[false, 'Original pages'], [true, 'Text (reflow)']].map(([v, n]) => h('button', { class: !!c.textMode === v ? 'on' : '', 'data-pdfview': v ? 'text' : 'pages', onclick: () => { setTextMode(v); redo(); } }, n))));
+    if (c.textMode) {
+      const st = stl(c);
+      wrap.append(h('div', { class: 'seg wide' },
+        h('button', { class: !c.scopeBook ? 'on' : '', id: 'scope-global', onclick: () => { c.scopeBook = false; redo(); } }, 'All books'),
+        h('button', { class: c.scopeBook ? 'on' : '', id: 'scope-book', onclick: () => { c.scopeBook = true; redo(); } }, 'This book only' + (S.hasOverrides(c.book) ? ' •' : ''))));
+      const num = h('input', { type: 'number', id: 'fs-num', class: 'num', min: FONT_MIN, max: FONT_MAX, step: FONT_STEP, inputmode: 'decimal', value: st.fontSizePt });
+      const range = h('input', { type: 'range', id: 'fs-range', min: FONT_MIN, max: FONT_MAX, step: FONT_STEP, value: st.fontSizePt });
+      const setSize = (v) => { v = clampPt(v); range.value = v; if (document.activeElement !== num) num.value = v; writeStyle('fontSizePt', v); };
+      num.addEventListener('change', () => { setSize(num.value); num.value = clampPt(num.value); }); range.addEventListener('input', () => setSize(range.value));
+      wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Text size ', h('small', { class: 'muted' }, 'pt')),
+        h('div', { class: 'stepper' }, h('button', { class: 'btn', id: 'fs-minus', 'aria-label': 'Smaller', onclick: () => setSize(+num.value - FONT_STEP) }, '−'), num, h('button', { class: 'btn', id: 'fs-plus', 'aria-label': 'Larger', onclick: () => setSize(+num.value + FONT_STEP) }, '+'))), range);
+      wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Font')), h('select', { class: 'field', id: 'font-sel', onchange: (e) => writeStyle('font', e.target.value) }, Object.entries(FONTS).map(([k, f]) => h('option', { value: k, selected: k === st.font }, f.name))));
+      const lh = h('input', { type: 'range', id: 'lh-range', min: 1, max: 2.4, step: 0.05, value: st.lineHeight }); const lhv = h('span', { class: 'muted' }, (+st.lineHeight).toFixed(2));
+      lh.addEventListener('input', () => { lhv.textContent = (+lh.value).toFixed(2); writeStyle('lineHeight', +lh.value); });
+      wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Line spacing ', lhv)), lh);
+      const mg = h('input', { type: 'range', id: 'mg-range', min: 0, max: 80, step: 2, value: st.margin }); const mgv = h('span', { class: 'muted' }, st.margin + ' px');
+      mg.addEventListener('input', () => { mgv.textContent = mg.value + ' px'; writeStyle('margin', +mg.value); });
+      wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Margins ', mgv)), mg);
+      if (S.hasOverrides(c.book)) wrap.append(h('button', { class: 'btn block', id: 'reset-book', onclick: async () => { c.book = await S.resetOverrides(c.book.id); c.scopeBook = false; styleText(c); redo(); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults'));
+      wrap.append(h('p', { class: 'hint' }, 'Text view re-flows the PDF’s text (pictures, tables and columns are not kept). Pinch to change the text size. Switch back to Original pages for the real layout.'));
+    } else {
+      wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Zoom ', h('span', { class: 'muted', id: 'pdf-zoom-val' }, Math.round(c.zoom * 100) + '%'))),
+        h('div', { class: 'stepper' }, h('button', { class: 'btn', id: 'pdf-zout2', onclick: () => { zoomBy(1 / 1.25); redo(); } }, '−'), h('button', { class: 'btn', id: 'pdf-fit2', onclick: () => { setZoom(1); redo(); } }, 'Fit width'), h('button', { class: 'btn', id: 'pdf-zin2', onclick: () => { zoomBy(1.25); redo(); } }, '+')),
+        h('p', { class: 'hint', id: 'pdf-note' }, 'Original pages keep the PDF’s own layout, so the Text size setting (' + S.effectiveStyle(c.book).fontSizePt + ' pt) doesn’t change them — use Zoom / Fit width, or switch View to “Text (reflow)”, where Text size, font, line spacing and margins apply.'),
+        h('div', { class: 'row-ctl' }, h('label', null, 'Layout')),
+        h('div', { class: 'seg wide' }, ['paginated', 'scrolled'].map((f) => h('button', { class: settings.get('flow') === f ? 'on' : '', 'data-flow': f, onclick: () => { settings.set({ flow: f }); redo(); draw(); } }, f === 'paginated' ? 'Pages' : 'Scroll'))));
+    }
+    wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Theme')),
+      h('div', { class: 'themes' }, Object.entries(THEMES).map(([k, t]) => h('button', { class: 'swatch' + (settings.get('theme') === k ? ' on' : ''), 'data-theme-pick': k, style: { background: t.bg, color: t.fg, borderColor: t.accent }, onclick: () => { settings.set({ theme: k }); redo(); } }, 'Aa', h('small', null, t.name)))));
+    if (!c.textMode && themeNow().dark) wrap.append(h('label', { class: 'row-ctl' }, h('span', null, 'Invert page colors (dark mode)'), h('input', { type: 'checkbox', id: 'pdf-invert', checked: settings.get('pdfInvert') !== false, onchange: (e) => { settings.set({ pdfInvert: e.target.checked }); styleViewer(c); } })));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles());
-    wrap.append(h('p', { class: 'hint' }, 'Text size, margins and line spacing apply to EPUB books only; a PDF keeps its own page layout. Use zoom or Fit width instead.'));
     return wrap;
   }
   return w;
 }
-settings.onChange((p) => { const c = cur; if (c && c.ready && ('theme' in p || 'pdfInvert' in p)) { styleViewer(c); } });
+settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.textMode) { if ('theme' in p || 'fontSizePt' in p || 'font' in p || 'lineHeight' in p || 'margin' in p) { styleViewer(c); styleText(c); } } else if ('theme' in p || 'pdfInvert' in p) styleViewer(c); });
 
 /* ---------- close ---------- */
 export async function closePdf() {

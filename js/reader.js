@@ -91,6 +91,7 @@ async function generateLocations() {
 
 async function startRendition(cfi) {
   const c = cur; const scrolled = settings.get('flow') === 'scrolled';
+  try { c.fixed = (c.epub.packaging && c.epub.packaging.metadata && c.epub.packaging.metadata.layout) === 'pre-paginated'; } catch { c.fixed = false; }
   if (c.rendition) { try { c.rendition.destroy(); } catch { /* ignore */ } c.viewer.replaceChildren(); }
   applyMargin();
   const r = c.epub.renderTo(c.viewer, { width: '100%', height: '100%', flow: scrolled ? 'scrolled' : 'paginated', manager: scrolled ? 'continuous' : 'default', spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
@@ -146,26 +147,36 @@ function keyNav(e) {
 function onHide() { if (document.hidden && cur) savePosition(true); }
 
 /* ----- styles ----- */
+// Every rule below carries the same specificity booster (two :not(#_) = two id-weights) so a book's own `.cls { font-size: 30px !important }` or `#id { … !important }` cannot beat it.
+const BOOST = ':not(#_):not(#_)';
+const SPECIAL = 'h1,h2,h3,h4,h5,h6,small,big,sub,sup,pre,code,kbd,samp,font,svg,svg *,math,math *,rt,rp,img,video,audio';
 function buildCss() {
   const c = cur; const st = { ...S.effectiveStyle(c.book) }; if (c.previewPt != null) st.fontSizePt = c.previewPt; const t = THEMES[settings.get('theme')] || THEMES.light;
-  const ff = FONTS[st.font]?.css || '';
+  if (c.fixed) return 'html, body { touch-action: manipulation; }\n::selection { background: ' + t.accent + '55; }\n';   // fixed-layout books keep the publisher's design (absolute positions, px sizes)
+  const ff = FONTS[st.font]?.css || ''; const B = 'html body'; const ALL = `${B} ${BOOST}:not(${SPECIAL})`;
   return `
 html, body { touch-action: manipulation; }
 html { font-size: ${st.fontSizePt}pt !important; background: ${t.bg} !important; }
-body { font-size: 1em !important; color: ${t.fg} !important; background: ${t.bg} !important; ${ff ? `font-family: ${ff} !important;` : ''} -webkit-text-size-adjust: 100% !important; }
-p, li, dd, dt, blockquote, td, th, div, span, section, article, figcaption, cite, em, i, b, strong, small, sup, sub { font-size: inherit !important; ${ff ? 'font-family: inherit !important;' : ''} }
-body, p, li, dd, dt, blockquote, td, th, div, span { line-height: ${st.lineHeight} !important; }
-h1, h2, h3, h4, h5, h6 { ${ff ? `font-family: ${ff} !important;` : ''} line-height: 1.25 !important; }
-h1 { font-size: 1.6em !important; } h2 { font-size: 1.35em !important; } h3 { font-size: 1.15em !important; } h4,h5,h6 { font-size: 1em !important; }
-body *:not(img):not(svg):not(a) { color: ${t.fg} !important; background-color: transparent !important; }
-a, a * { color: ${t.accent} !important; }
+html body { font-size: 1em !important; color: ${t.fg} !important; background: ${t.bg} !important; ${ff ? `font-family: ${ff} !important;` : ''} -webkit-text-size-adjust: 100% !important; line-height: ${st.lineHeight} !important; }
+/* every element follows the base size, whatever px / pt / rem / !important / id-rule the book uses (inline !important is stripped by script) */
+${ALL} { font-size: inherit !important; line-height: ${st.lineHeight} !important; ${ff ? 'font-family: inherit !important;' : ''} }
+/* proportional exceptions: headings, small print, sub/superscripts, <font size>, code */
+${B} h1${BOOST} { font-size: 1.6em !important; } ${B} h2${BOOST} { font-size: 1.35em !important; } ${B} h3${BOOST} { font-size: 1.15em !important; } ${B} h4${BOOST}, ${B} h5${BOOST}, ${B} h6${BOOST} { font-size: 1em !important; }
+${B} h1${BOOST}, ${B} h2${BOOST}, ${B} h3${BOOST}, ${B} h4${BOOST}, ${B} h5${BOOST}, ${B} h6${BOOST} { ${ff ? `font-family: ${ff} !important;` : ''} line-height: 1.25 !important; }
+${B} small${BOOST} { font-size: .85em !important; } ${B} big${BOOST} { font-size: 1.2em !important; } ${B} sub${BOOST}, ${B} sup${BOOST} { font-size: .75em !important; }
+${B} font${BOOST}[size="1"] { font-size: .8em !important; } ${B} font${BOOST}[size="2"] { font-size: .9em !important; } ${B} font${BOOST}[size="3"], ${B} font${BOOST}:not([size]) { font-size: 1em !important; } ${B} font${BOOST}[size="4"] { font-size: 1.1em !important; }
+${B} font${BOOST}[size="5"] { font-size: 1.25em !important; } ${B} font${BOOST}[size="6"] { font-size: 1.5em !important; } ${B} font${BOOST}[size="7"] { font-size: 1.8em !important; }
+${B} pre${BOOST}, ${B} code${BOOST}, ${B} kbd${BOOST}, ${B} samp${BOOST} { font-family: Menlo, Consolas, monospace !important; font-size: .9em !important; }
+${B} pre${BOOST} code${BOOST} { font-size: 1em !important; }
+body *${BOOST}:not(img):not(svg):not(a) { color: ${t.fg} !important; background-color: transparent !important; }
+a${BOOST}, a${BOOST} * { color: ${t.accent} !important; }
 ::selection { background: ${t.accent}55; }
 img, svg, video { max-width: 100% !important; height: auto; ${t.dark ? 'opacity:.92;' : ''} }
-pre, code, kbd, samp { font-family: Menlo, Consolas, monospace !important; font-size: .9em !important; }
 `;
 }
 /** Pinch → text size: the same value the Aa panel would set (this book's own size if it has one, else the global size). */
 const pinchHost = {
+  disabled: () => !!(cur && cur.fixed),
   getPt: () => (cur ? S.effectiveStyle(cur.book).fontSizePt : settings.get('fontSizePt')),
   pinched: () => { if (cur) cur.pinchedAt = Date.now(); },
   apply: (pt, final) => {
@@ -187,7 +198,12 @@ function injectStyle(contents) {
     const d = contents.document; let el = d.getElementById('folio-user-style');
     if (!el) { el = d.createElement('style'); el.id = 'folio-user-style'; d.head.appendChild(el); }
     el.textContent = buildCss();
+    if (!cur || !cur.fixed) stripInlineImportant(d);
   } catch (e) { console.warn(e); }
+}
+/** An inline `style="font-size:8px !important"` outranks any stylesheet rule, so the properties we own are removed from such elements. */
+function stripInlineImportant(d) {
+  for (const e of d.querySelectorAll('[style]')) { const sy = e.style; for (const k of ['font-size', 'line-height', 'font-family', 'color']) if (sy.getPropertyPriority(k) === 'important') sy.removeProperty(k); }
 }
 function applyMargin() {
   const st = S.effectiveStyle(cur.book);
@@ -299,6 +315,7 @@ export function showSettings() {
     wrap.append(h('div', { class: 'seg wide' },
       h('button', { class: scope === 'global' ? 'on' : '', id: 'scope-global', onclick: () => { scope = 'global'; w.body.replaceChildren(build()); } }, 'All books'),
       (ui.tab = h('button', { class: scope === 'book' ? 'on' : '', id: 'scope-book', onclick: () => { scope = 'book'; w.body.replaceChildren(build()); } }, 'This book only' + (S.hasOverrides(c.book) ? ' •' : '')))));
+    if (c.fixed) wrap.append(h('p', { class: 'hint', id: 'fixed-note' }, 'This is a fixed-layout book: the publisher’s page design (absolute positions and sizes) is kept, so text size, font and line spacing can’t change it. Theme, margins and Pages/Scroll still work.'));
     if (scope === 'book') wrap.append(h('p', { class: 'hint' }, S.hasOverrides(c.book) ? 'This book has custom settings. They override the global defaults and the book’s own styling.' : 'Changes below apply only to this book and override its built-in styling. Untouched options follow your global defaults.'));
 
     // Font size: number input + −/+ + slider, all synced

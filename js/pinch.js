@@ -31,6 +31,7 @@ export function attachPinch(doc, host) {
     showHud((g.applied ?? pt) + ' pt'); g.raf = requestAnimationFrame(loop);
   };
   doc.addEventListener('touchstart', (e) => {
+    if (host.disabled && host.disabled()) return;
     if (e.touches.length === 2) { const p0 = host.getPt(); g = { d0: dist(e.touches), p0, exp: pinchExp(), armed: false, s0: 1, last: 1, raw: p0, shown: p0, applied: p0, appliedAt: 0, raf: 0 }; if (host.pinched) host.pinched(); }
     else if (g) stop();
   }, { passive: true });

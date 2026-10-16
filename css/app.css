@@ -295,3 +295,10 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 /* pinch text size HUD (v0.5.2) */
 #pinch-hud { position:fixed; left:50%; bottom:calc(5.2rem + var(--sab, 0px)); transform:translateX(-50%) scale(.9); z-index:60; padding:.35rem .8rem; border-radius:1rem; background:rgba(0,0,0,.72); color:#fff; font-weight:600; font-size:1rem; pointer-events:none; opacity:0; transition:opacity .2s, transform .2s; }
 #pinch-hud.on { opacity:1; transform:translateX(-50%) scale(1); }
+/* PDF text view (reflow): v0.5.3 */
+.pdf-viewer.pdf-text-mode { touch-action: pan-x pan-y; }
+.pdf-tstage { padding: 8px var(--pdf-tm, 20px) 40vh; max-width: 48em; margin: 0 auto; }
+.pdf-tpage { min-height: 40vh; padding: 6px 0 14px; }
+.pdf-tpage p { margin: 0 0 .85em; } .pdf-tpage h3 { font-size: 1.25em; line-height: 1.25; margin: 1em 0 .5em; }
+.pdf-tp-n { font: 600 11px/1 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; opacity: .45; text-align: center; margin: 4px 0 10px; }
+.pdf-empty { opacity: .6; font-style: italic; }
