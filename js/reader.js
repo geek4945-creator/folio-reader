@@ -334,9 +334,9 @@ function showToc() {
   const flat = (items, depth = 0) => items.flatMap((it) => [{ it, depth }, ...flat(it.subitems || [], depth + 1)]);
   let tab = 'toc';
   const w = sheet('Contents', () => build(), { tall: true });
-  const rebuild = async () => { await AN_count(); const b = build(); w.body.replaceChildren(b); };
-  AN_count().then(() => { if (c.annotCount && !w.closed) rebuild(); });
-  async function AN_count() { try { const n = (await (await import('./annots.js')).forBook(c.book)).length; if (n !== c.annotCount) { c.annotCount = n; } } catch { /* ignore */ } }
+  const rebuild = () => { w.body.replaceChildren(build()); AN_count().then((changed) => { if (changed && !w.closed) w.body.replaceChildren(build()); }); };   // synchronous tab switch; the count in the tab label catches up
+  AN_count().then((changed) => { if (changed) w.body.replaceChildren(build()); });
+  async function AN_count() { try { const n = (await (await import('./annots.js')).forBook(c.book)).length; if (n !== c.annotCount) { c.annotCount = n; return true; } } catch { /* ignore */ } return false; }
   function build() {
     const wrap = h('div');
     wrap.append(h('div', { class: 'seg wide' }, ['toc', 'bookmarks', 'notes'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; rebuild(); } }, t === 'toc' ? 'Chapters' : t === 'bookmarks' ? 'Bookmarks (' + c.bookmarks.length + ')' : 'Highlights & Notes' + (c.annotCount ? ' (' + c.annotCount + ')' : ''))).concat(h('button', { id: 'toc-words', 'data-tab': 'words', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words'))));

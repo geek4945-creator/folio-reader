@@ -20,13 +20,15 @@ export function mapLibrivox(b) {
     pageUrl: b.url_librivox || '', license: 'Public domain (LibriVox)', language: b.language || '', totalSecs: +b.totaltimesecs || parseLen(b.totaltime),
     tracks: (b.sections || []).filter((s) => s.listen_url).map((s) => ({ title: strip(s.title) || 'Section ' + s.section_number, url: fixIaUrl(s.listen_url), duration: parseLen(s.playtime) })) };
 }
+/** LibriVox answers HTTP 404 (not an empty list) when nothing matches — that is "no results", not an error. */
+export const isNoResults = (e) => !!e && (e.http === 404 || /Server returned 404/.test(e.message || ''));
 export async function searchLibrivox({ q = '', by = 'title', offset = 0 } = {}) {
   const p = new URLSearchParams({ format: 'json', extended: '1', coverart: '1', limit: String(PAGE), offset: String(offset) });
-  q = q.trim(); if (q) { if (by === 'author') p.set('author', q.split(/\s+/).pop()); else p.set('title', '^' + q); }
-  let r; try { r = await fetchSmart(LV + '?' + p, { timeout: 25000 }); } catch (e) { throw e; }
-  const txt = await r.text(); let d; try { d = JSON.parse(txt); } catch { return { items: [], more: false }; }   // LibriVox answers non-JSON when nothing matches
+  q = q.replace(/[\u0000-\u001f]/g, ' ').trim().replace(/\s+/g, ' '); if (q) { if (by === 'author') p.set('author', q.split(/\s+/).pop()); else p.set('title', '^' + q); }
+  let r; try { r = await fetchSmart(LV + '?' + p, { timeout: 25000 }); } catch (e) { if (isNoResults(e)) return { items: [], more: false, empty: true }; throw e; }
+  const txt = await r.text(); let d; try { d = JSON.parse(txt); } catch { return { items: [], more: false, empty: true }; }   // non-JSON body = nothing matched
   const items = (d.books || []).map(mapLibrivox).filter((x) => x.tracks.length);
-  return { items, more: (d.books || []).length >= PAGE };
+  return { items, more: (d.books || []).length >= PAGE, empty: !(d.books || []).length };
 }
 
 /* ---------- Internet Archive audio ---------- */
@@ -59,20 +61,25 @@ const fetchCover = async (u) => { const r = await fetchSmart(u, { timeout: 15000
 const addedKeys = async () => new Set((await A.getAudiobooks()).map((b) => b.sourceKey).filter(Boolean));
 
 export function openAudioSources() {
-  let src = localStorage.getItem('folio.audioSrc') || 'librivox'; let by = 'title'; let q = ''; let offset = 0; let page = 1; let busy = false;
-  const list = h('div', { class: 'list audio-results', id: 'audio-results' }); const more = h('button', { class: 'btn block', id: 'audio-more', hidden: true }, 'Load more'); const note = h('p', { class: 'muted small', id: 'audio-src-note' });
+  let src = localStorage.getItem('folio.audioSrc') || 'librivox'; let by = 'title'; let q = ''; let offset = 0; let page = 1; let busy = false; let fb = '';   const list = h('div', { class: 'list audio-results', id: 'audio-results' }); const more = h('button', { class: 'btn block', id: 'audio-more', hidden: true }, 'Load more'); const note = h('p', { class: 'muted small', id: 'audio-src-note' });
   const input = h('input', { type: 'search', class: 'field search', id: 'audio-src-q', placeholder: 'Search title or author (leave empty for newest)', enterkeyhint: 'search' });
   const seg = h('div', { class: 'seg wide', id: 'audio-src-seg' }); const bySeg = h('div', { class: 'seg wide', id: 'audio-by-seg' });
   const w = sheet('Free audiobooks', () => [seg, h('form', { onsubmit: (e) => { e.preventDefault(); q = input.value; run(true); } }, input), bySeg, note, list, more], { tall: true });
   const draw = () => {
     seg.replaceChildren(...[['librivox', 'LibriVox'], ['ia', 'Internet Archive']].map(([v, n]) => h('button', { class: src === v ? 'on' : '', 'data-src': v, onclick: () => { src = v; q = input.value; localStorage.setItem('folio.audioSrc', v); draw(); run(true); } }, n)));
     bySeg.hidden = src !== 'librivox'; bySeg.replaceChildren(...[['title', 'By title'], ['author', 'By author']].map(([v, n]) => h('button', { class: by === v ? 'on' : '', 'data-by': v, onclick: () => { by = v; q = input.value; draw(); if (q.trim()) run(true); } }, n)));
-    note.textContent = src === 'librivox' ? 'LibriVox: free public-domain audiobooks read by volunteers. Streams from the Internet Archive.' : 'Internet Archive: the LibriVox collection and openly licensed audio. Lending-only and restricted items are left out.';
+    if (!fb || src !== 'librivox') note.textContent = src === 'librivox' ? 'LibriVox: free public-domain audiobooks read by volunteers. Streams from the Internet Archive.' : 'Internet Archive: the LibriVox collection and openly licensed audio. Lending-only and restricted items are left out.';
   };
   async function run(reset) {
     if (busy) return; busy = true; if (reset) { offset = 0; page = 1; list.replaceChildren(h('div', { class: 'spinner-row' }, h('div', { class: 'spinner' }), 'Loading…')); }
     try {
-      const r = src === 'librivox' ? await searchLibrivox({ q, by, offset }) : await searchIaAudio({ q, page });
+      if (reset) fb = '';
+      let r;
+      if (src === 'librivox' && !fb) {
+        try { r = await searchLibrivox({ q, by, offset }); } catch (e) { if (!reset) throw e; fb = 'down'; r = null; }   // LibriVox itself is down / unreachable: Internet Archive's LibriVox collection instead
+        if (r && r.empty && reset && q.trim()) { fb = 'empty'; r = null; }   // nothing starts with that: look for it anywhere in title / author on the Internet Archive
+        if (!r) { r = await searchIaAudio({ q, page: 1 }); page = 1; note.textContent = fb === 'down' ? 'LibriVox isn’t answering right now — showing matches from the Internet Archive’s LibriVox collection.' : 'No LibriVox title starts with that — showing Internet Archive matches (title or author contains it).'; }
+      } else r = await searchIaAudio({ q, page });
       const have = await addedKeys(); if (reset) list.replaceChildren();
       for (const it of r.items) list.append(row(it, have.has(it.sourceKey)));
       if (reset && !r.items.length) list.append(h('p', { class: 'muted pad' }, 'No audiobooks found. Try a shorter title, or switch source.'));

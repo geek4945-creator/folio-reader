@@ -26,12 +26,15 @@ function mockNet(page, log) {
       log.lv.push({ target, viaProxy });
       if (!viaProxy) return req.respond({ status: 200, contentType: 'application/json', body: '{}' });   // no CORS header: the browser blocks it, so the app must fall back to the proxy
       const q = new URL(target).searchParams.get('title') || ''; const a = new URL(target).searchParams.get('author');
-      if (q === '^nomatch') return ok('<html>no results</html>', 'text/html');
+      if (log.lvDown) return req.respond({ status: 503, headers: cors, contentType: 'text/plain', body: 'down' });
       const books = LV_BOOKS.filter((b) => (!q || b.title.toLowerCase().startsWith(q.slice(1).toLowerCase())) && (!a || b.authors[0].last_name.toLowerCase() === a.toLowerCase()));
+      if (!books.length) return req.respond({ status: 404, headers: cors, contentType: 'application/json', body: '{"error":"Audiobooks could not be found"}' });   // the real API answers 404 when nothing matches
       return ok(JSON.stringify({ books }));
     }
     if (/^https:\/\/archive\.org\/advancedsearch\.php/.test(target)) {
       log.ia.push(target); const q = new URL(target).searchParams.get('q');
+      if (log.iaDown) return req.respond({ status: 503, headers: cors, contentType: 'text/plain', body: 'down' });
+      if (/nomatch|zzzq/.test(q)) return ok(JSON.stringify({ response: { docs: [] } }));
       assert_(/mediatype:audio/.test(q) && /librivoxaudio/.test(q) && /-access-restricted-item:true/.test(q), 'IA query not restricted: ' + q);
       return ok(JSON.stringify({ response: { docs: [{ identifier: 'iatone_librivox', title: 'IA Tone Book', creator: 'Ida Archive', runtime: '0:00:12', licenseurl: 'http://creativecommons.org/licenses/publicdomain/' }] } }));
     }
@@ -283,7 +286,18 @@ const waitFor = async (page, fn, t = 8000, arg) => { const end = Date.now() + t;
   await step('LibriVox search by title prefix (^) and by author; "no results" answer handled', async () => {
     await O.type('#audio-src-q', 'The Tone St'); await O.keyboard.press('Enter'); await O.waitForFunction(() => document.querySelectorAll('.aud-row').length === 1, { timeout: 8000 }); assert(O.log.lv.some((x) => /title=%5EThe\+Tone\+St/.test(x.target)), JSON.stringify(O.log.lv.map((x) => x.target)));
     await O.$eval('#audio-src-q', (e) => { e.value = 'Tess Tone'; }); await click(O, '[data-by="author"]'); await O.waitForFunction(() => document.querySelectorAll('.aud-row').length === 2, { timeout: 8000 }); assert(O.log.lv.some((x) => /author=Tone/.test(x.target)), 'author query');
-    await click(O, '[data-by="title"]'); await O.$eval('#audio-src-q', (e) => { e.value = 'nomatch'; }); await O.keyboard.press('Enter'); await O.waitForFunction(() => /No audiobooks found/.test(document.querySelector('#audio-results').innerText), { timeout: 8000 }); return 'ok';
+    await click(O, '[data-by="title"]'); await O.$eval('#audio-src-q', (e) => { e.value = 'nomatch'; }); await O.keyboard.press('Enter'); await O.waitForFunction(() => /No audiobooks found/.test(document.querySelector('#audio-results').innerText), { timeout: 8000 }); assert(!(await O.$('#audio-src-err')), 'a 404 "no results" is shown as an error'); return 'ok';
+  });
+  await step('LibriVox bug fix (v0.5.10): HTTP 404 = no results (never an error); a partial word falls back to Internet Archive matches; odd characters / empty query are fine', async () => {
+    const q = async (text, by = 'title') => { await click(O, `[data-by="${by}"]`); await O.$eval('#audio-src-q', (e, t) => { e.value = t; }, text); await O.focus('#audio-src-q'); await O.keyboard.press('Enter'); await sleep(900); await O.waitForFunction(() => !document.querySelector('#audio-results .spinner-row'), { timeout: 8000 }); return O.evaluate(() => ({ rows: document.querySelectorAll('.aud-row').length, err: !!document.querySelector('#audio-src-err'), text: document.querySelector('#audio-results').innerText.slice(0, 120), note: document.querySelector('#audio-src-note').textContent })); };
+    let r = await q('zzzq nothing'); assert(r.rows === 0 && !r.err && /No audiobooks found/.test(r.text), JSON.stringify(r));
+    r = await q('Sequel'); assert(r.rows === 1 && !r.err && /Internet Archive matches/.test(r.note), JSON.stringify(r));   // not a title prefix: LibriVox 404 → IA contains-search
+    r = await q('100% & "quotes" <b>'); assert(!r.err, JSON.stringify(r)); r = await q("O'Brien: a/b?c=d#e"); assert(!r.err, JSON.stringify(r));
+    r = await q('Tone', 'author'); assert(!r.err, JSON.stringify(r)); r = await q(''); assert(r.rows >= 1 && !r.err, JSON.stringify(r));
+    r = await q('The Tone St'); assert(r.rows === 1 && !/Internet Archive matches/.test(r.note), 'normal prefix search still LibriVox: ' + JSON.stringify(r));
+    O.log.lvDown = true; r = await q('The Tone'); assert(r.rows >= 1 && !r.err && /isn’t answering/.test(r.note), 'LibriVox down → Internet Archive: ' + JSON.stringify(r));
+    O.log.iaDown = true; r = await q('The Tone'); assert(r.err, 'both down should show the error with retry'); O.log.lvDown = O.log.iaDown = false;
+    r = await q('The Tone St'); assert(r.rows === 1 && !r.err, 'recovers: ' + JSON.stringify(r));
   });
   await step('LibriVox: Add (stream) → library book with remote tracks (www.archive.org rewritten), cover, license; plays streaming', async () => {
     await O.$eval('#audio-src-q', (e) => { e.value = ''; }); await O.keyboard.press('Enter'); await O.waitForSelector('.aud-row [data-act=add]'); await O.evaluate(() => document.querySelector('.aud-row [data-act=add]').click()); await waitBooks(O, 1);
