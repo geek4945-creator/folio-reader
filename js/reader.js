@@ -136,6 +136,7 @@ function glossaryCtx() {
 const wordActions = () => ({
   editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def, onDone: () => {} }),
   openWords: () => openGlossary(glossaryCtx(), 'words'),
+  highlight: (range) => { const c = cur; if (!c) return; const k = c.rendition.getContents().find((x) => x.document === range.startContainer.ownerDocument); if (k) AN.quickHighlight(annotHost(), k, range); },
   select: (range) => { const c = cur; if (!c) return; const k = c.rendition.getContents().find((x) => x.document === range.startContainer.ownerDocument); if (k) AN.selectRange(annotHost(), k, range); },
 });
 function wordSetup(contents) {
@@ -156,7 +157,7 @@ function annotHost() {
     next: () => c.rendition.next(), prev: () => c.rendition.prev(), scroller: () => c.rendition.manager && c.rendition.manager.container,
     describe: (contents, range) => ({ fmt: 'epub', cfiRange: contents.cfiFromRange(range), chapter: (() => { try { const href = c.epub.spine.get(contents.sectionIndex).href; const it = c.epub.navigation.get(href); return it ? (it.label || '').trim() : chapterOf({ start: { href } }); } catch { return ''; } })(), sec: contents.sectionIndex || 0, off: secOff(contents.document, range), progress: c.loc && c.loc.start ? c.loc.start.percentage || 0 : 0 }),
     jump: (a) => c.rendition.display(a.cfiRange),
-    define: (word, text, rect) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book }, wordActions())); },
+    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, wordActions())); },
   };
 }
 window.addEventListener('folio-annots', () => { const hst = annotHost(); if (hst) AN.repaintAll(hst); });

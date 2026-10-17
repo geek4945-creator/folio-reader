@@ -333,11 +333,13 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .rn-sub { margin-top:.3rem; font-size:.85rem; } .rn-pct { font-weight:600; }
 
 /* ---- highlights & notes (v0.5.8) ---- */
-.an-menu { position: absolute; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 5px 7px; background: var(--panel, #fff); color: var(--fg, #222); border: 1px solid var(--line, #0003); border-radius: 22px; box-shadow: 0 4px 18px #0004; max-width: calc(100% - 12px); flex-wrap: nowrap; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.an-menu { position: absolute; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 5px 7px; background: var(--panel, #fff); color: var(--fg, #222); border: 1px solid var(--line, #0003); border-radius: 22px; box-shadow: 0 4px 18px #0004; max-width: calc(100% - 12px); flex-wrap: wrap; justify-content: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .an-menu .an-dot, .an-colors .an-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #0003; padding: 0; flex: none; }
 .an-colors { display: flex; gap: 10px; margin: 10px 0; } .an-colors .an-dot { width: 34px; height: 34px; } .an-dot.on { outline: 3px solid var(--accent, #36c); outline-offset: 1px; }
 .an-btn { background: none; border: 0; color: inherit; font: inherit; font-size: .86rem; padding: 6px 7px; border-radius: 12px; white-space: nowrap; }
 .an-btn:active { background: #0002; }
+.an-btn.an-first { font-weight: 700; background: #ffd54f55; }
+.wl-actions { position: sticky; bottom: -.6rem; background: var(--bg); padding: .45rem 0 .5rem; z-index: 1; } .wl-actions .wl-hl { font-weight: 700; order: -1; background: #ffd54f55; }
 .an-handle { position: absolute; z-index: 61; width: 22px; height: 22px; margin: 3px 0 0 -11px; border-radius: 50%; background: var(--accent, #36c); border: 2px solid #fff; touch-action: none; box-shadow: 0 1px 4px #0006; }
 .an-handle::after { content: ''; position: absolute; inset: -14px; }
 .an-handle.drag { filter: brightness(1.2); }

@@ -134,19 +134,67 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     assert((await recs(A)).length === 3, 'delete failed: ' + (await recs(A)).length); assert((await paintedText(A, 'purple')).length === 0, 'deleted highlight still painted');
     await A.evaluate(() => (window.__folioBack || window.__flimsyBack)());
   });
-  await step('Word hold and highlights coexist: holding a word opens the bubble (no selection menu); “Highlight…” in the bubble turns the word into a selection with handles; a colour saves it', async () => {
-    await toStart(A); const p = await wordXY(A, 'harbour'); assert(p, 'word not visible');
-    await A.mouse.move(p.x, p.y); await A.mouse.down(); await sleep(1100); await A.mouse.up(); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await sleep(500);
-    assert(!(await A.$('#an-menu')), 'selection menu appeared next to the bubble'); await A.waitForSelector('#wl-hl'); await click(A, '#wl-hl'); await menu(A); assert(!(await A.$('#wl-bubble')), 'bubble still open');
-    assert(await handlePos(A, 'start') && await handlePos(A, 'end'), 'handles missing'); assert((await selLen(A)) === 'harbour'.length, 'selection is ' + (await selLen(A)));
-    await colorBtn(A, 'pink'); await noMenu(A); await sleep(300); const r = (await recs(A)).find((x) => x.color === 'pink'); assert(r && r.text === 'harbour', JSON.stringify(r));
+  const touchHold = async (page, x, y, ms = 1100) => { const c = await page.createCDPSession(); await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(x), y: Math.round(y) }] }); await sleep(ms); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await c.detach(); };
+  // v0.5.11: the 🖍 Highlight button is the FIRST (leftmost) action of the long-press bubble, always on screen, and one tap highlights at once and opens the editor
+  const bubbleActions = (page) => page.evaluate(() => { const b = document.querySelector('#wl-bubble'); if (!b) return null; const bs = [...b.querySelectorAll('#wl-actions > *')].map((x) => ({ id: x.id, left: Math.round(x.getBoundingClientRect().left), top: Math.round(x.getBoundingClientRect().top) })); const hl = document.querySelector('#wl-hl'); const r = hl && hl.getBoundingClientRect(); const br = b.getBoundingClientRect(); return { ids: bs.map((x) => x.id), first: bs[0] && bs[0].id, hlTop: r && Math.round(r.top), hlLeft: r && Math.round(r.left), minLeft: Math.min(...bs.map((x) => x.left)), onScreen: !!r && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth, inBubble: !!r && r.top >= br.top - 1 && r.bottom <= br.bottom + 1 }; });
+  const holdHighlight = async (page, word, label) => {
+    await toStart(page); const p = await wordXY(page, word); assert(p, 'word not visible: ' + word);
+    await touchHold(page, p.x, p.y); await page.waitForSelector('#wl-bubble', { timeout: 8000 }); await sleep(600);
+    assert(!(await page.$('#an-menu')), label + ': selection menu appeared next to the bubble');
+    await page.waitForSelector('#wl-hl', { timeout: 3000 }); const a = await bubbleActions(page);
+    assert(a.first === 'wl-hl' && a.hlLeft === a.minLeft && a.onScreen && a.inBubble, label + ': ' + JSON.stringify(a));
+    assert(a.ids.includes('wl-save') && a.ids.includes('wl-gadd') && a.ids.includes('wl-words'), label + ' other actions: ' + a.ids.join());
+    const before = (await recs(page)).length; await click(page, '#wl-hl'); await page.waitForSelector('#an-save', { timeout: 5000 });
+    assert(!(await page.$('#wl-bubble')), label + ': bubble still open'); const r = await recs(page); assert(r.length === before + 1 && r.some((x) => x.text === word), label + ' ' + JSON.stringify(r.map((x) => x.text)));
+    return a;
+  };
+  await step('Touch long-press on a word (paginated): the bubble lists 🖍 Highlight FIRST (leftmost, on screen, inside the bubble); one tap saves a highlight of the word and opens the editor', async () => {
+    const a = await holdHighlight(A, 'harbour', 'paginated'); assert(await A.$('#an-extend'), 'no Extend range button');
+    return JSON.stringify(a.ids);
+  });
+  await step('Editor → ↔ Extend range puts the handles on the saved highlight; dragging the end handle and 🖍 Save range updates the same highlight (no duplicate)', async () => {
+    const n0 = (await recs(A)).length; await click(A, '#an-extend'); await menu(A);
+    assert(await handlePos(A, 'start') && await handlePos(A, 'end'), 'handles missing'); assert((await selLen(A)) === 'harbour'.length, 'selection ' + (await selLen(A)));
+    const hp = await handlePos(A, 'end'); await A.mouse.move(hp.x, hp.y); await A.mouse.down(); await A.mouse.move(hp.x + 90, hp.y - 14, { steps: 6 }); await A.mouse.up(); await sleep(400);
+    assert((await selLen(A)) > 'harbour'.length, 'handle drag did not extend the selection');
+    assert(/Save range/.test(await A.evaluate(() => document.querySelector('#an-hl').textContent)), 'button label'); await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 });
+    const r = await recs(A); assert(r.length === n0, 'duplicate created: ' + r.length + ' vs ' + n0); const x = r.find((y) => /^harbour/.test(y.text)); assert(x && x.text.length > 'harbour'.length, JSON.stringify(r.map((y) => y.text)));
+    await click(A, '#an-save'); await sleep(300);
+    // keep the state the later steps expect: one pink highlight on this word
+    const hit = r.find((y) => /^harbour/.test(y.text)); await A.evaluate(async (id) => { await (await import('./js/annots.js')).update(id, { color: 'pink' }); }, hit.id); return x.text;
+  });
+  await step('Selected text: the selection menu starts with 🖍 Highlight too (highlights at once, opens the editor); Define → bubble also offers 🖍 Highlight first', async () => {
+    await toStart(A); const n0 = (await recs(A)).length; await selectText(A, 'Paragraph 1.1 begins here', 'quiet'); await menu(A);
+    const first = await A.evaluate(() => document.querySelector('#an-menu').firstElementChild.id); assert(first === 'an-hl', 'first menu item is ' + first);
+    await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); await noMenu(A); assert((await recs(A)).length === n0 + 1, 'not saved');
+    await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400); assert((await recs(A)).length === n0, 'delete failed');
+    await selectText(A, 'Paragraph 1.1 begins here', 'quiet'); await menu(A); await click(A, '#an-define'); await A.waitForSelector('#wl-bubble', { timeout: 6000 }); await sleep(400);
+    const a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen, JSON.stringify(a)); await click(A, '#wl-hl'); await A.waitForSelector('#an-save', { timeout: 5000 });
+    const r = await recs(A); assert(r.length === n0 + 1 && r.some((x) => x.text.startsWith('Paragraph 1.1 begins here') && x.text.endsWith('quiet')), 'whole selection not highlighted: ' + JSON.stringify(r.map((x) => x.text)));
+    await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+  });
+  await step('Touch long-press in SCROLL mode: the same bubble, 🖍 Highlight first, creates the highlight and opens the editor', async () => {
+    await close(A); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'scrolled', flowChosen: true })); await open(A); await rendered(A); await sleep(500);
+    const a = await holdHighlight(A, 'travellers', 'scroll'); await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+    await close(A); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(A); await rendered(A); await toStart(A); await sleep(500);
+    return JSON.stringify(a.ids);
+  });
+  await step('The 🖍 button stays reachable when the definition is long (small phone, 5 definitions)', async () => {
+    await A.setViewport({ width: 320, height: 480, deviceScaleFactor: 2, isMobile: true, hasTouch: true }); await sleep(600);
+    S.dict.reply = () => ({ status: 200, body: [{ word: 'harbour', phonetic: '', meanings: ['noun', 'verb', 'adjective'].map((pos) => ({ partOfSpeech: pos, definitions: [1, 2, 3, 4, 5].map((i) => ({ definition: 'A fairly long definition number ' + i + ' of the word to make the bubble tall and scrollable on a small screen.' })) })) }] });
+    await A.evaluate(async () => { await (await import('./js/db.js')).DB.del('dict', 'harbour'); }); await toStart(A); const p = await wordXY(A, 'harbour'); assert(p, 'word not visible');
+    await touchHold(A, p.x, p.y); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await A.waitForSelector('#wl-dict', { timeout: 8000 }); await sleep(500);
+    const a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen && a.inBubble, JSON.stringify(a)); await A.keyboard.press('Escape'); await sleep(300);
+    await A.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true }); await sleep(500);
+    S.dict.reply = () => ({ status: 200, body: [{ word: 'harbour', phonetic: '', meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A sheltered port.' }] }] }] });
+    return JSON.stringify(a);
   });
   await step('Selecting by double-tap / mouse also works with word lookup on (native selection is not suppressed outside a hold)', async () => {
     await toStart(A); const p = await wordXY(A, 'travellers'); assert(p, 'word not visible'); await A.mouse.click(p.x, p.y, { clickCount: 2 }); await sleep(600); await menu(A); assert((await selLen(A)) >= 'travellers'.length, 'no selection'); await click(A, '#an-x'); await noMenu(A);
   });
   await step('Reload: highlights and notes persist and are painted again; Back closes the selection menu first', async () => {
     const before = await recs(A); await A.reload({ waitUntil: 'networkidle0' }); await open(A); await rendered(A); await toStart(A);
-    const after = await recs(A); assert(after.length === before.length && before.length >= 4, before.length + ' vs ' + after.length); assert((await paintedText(A, 'yellow')).length >= 1 && (await paintedText(A, 'pink')).includes('harbour'), 'not painted after reload');
+    const after = await recs(A); assert(after.length === before.length && before.length >= 4, before.length + ' vs ' + after.length); assert((await paintedText(A, 'yellow')).length >= 1 && (await paintedText(A, 'pink')).some((t) => /^harbour/.test(t)), 'not painted after reload');
     await selectText(A, 'Paragraph 1.1 begins', 'begins'); await menu(A); await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(250); assert(await A.$('#r-toc'), 'reader closed by the first Back'); assert(!(await A.$('#an-menu')), 'menu still open'); assert((await selLen(A)) === 0, 'selection kept');
   });
   await step('Copy all / Export produce Markdown with chapter heading, quoted excerpt and note', async () => {
@@ -172,6 +220,17 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   /* ---------------- sync between two devices + backup ---------------- */
   const P1 = await mk(await browser.createBrowserContext(), { login: true }), P2 = await mk(await browser.createBrowserContext(), { login: true });
   const sync = (p, o = {}) => p.evaluate(async (o) => { const g = await import('./js/google.js'); const r = await g.syncNow(o); await new Promise((x) => setTimeout(x, 200)); return r; }, o);
+  await step('PDF Text view: touch long-press on a word → 🖍 Highlight is the first action; one tap highlights it and opens the editor', async () => {
+    await A.evaluate(async () => { const b = (await (await import('./js/store.js')).getBooks()).find((b) => b.format === 'pdf'); (await import('./js/reader.js')).openReader(b.id); }); await until(() => A.evaluate(() => document.querySelector('#reader.pdf-mode') && !document.querySelector('#reader .r-loading')), 20000, 'pdf');
+    await A.evaluate(async () => (await import('./js/pdfreader.js')).setTextMode(true)); await until(() => A.evaluate(() => document.querySelectorAll('.pdf-tpage[data-filled]').length >= 2), 15000, 'text view'); await sleep(500);
+    const pos = await A.evaluate(() => { const ps = [...document.querySelectorAll('.pdf-tpage[data-filled] > p')]; const p = ps[ps.length - 1]; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); const n = w.nextNode(); const m = /[A-Za-z]{5,}/.exec(n.data); p.scrollIntoView({ block: 'center' }); const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, word: m[0] }; });
+    await sleep(300); const pos2 = await A.evaluate((w) => { for (const p of document.querySelectorAll('.pdf-tpage[data-filled] > p')) { const t = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n; while ((n = t.nextNode())) { const i = n.data.indexOf(w); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + w.length); const b = r.getBoundingClientRect(); if (b.top > 60 && b.bottom < innerHeight - 60) return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; } } } return null; }, pos.word);
+    assert(pos2, 'word not on screen'); const n0 = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && !x.del).length);
+    await touchHold(A, pos2.x, pos2.y); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await sleep(500);
+    const a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen && a.inBubble, JSON.stringify(a)); await click(A, '#wl-hl'); await A.waitForSelector('#an-save', { timeout: 5000 });
+    const n1 = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && !x.del).length); assert(n1 === n0 + 1, n0 + ' → ' + n1);
+    await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400); await close(A); return pos.word;
+  });
   await step('Sync: highlights (CFI range, full text, colour, note) travel through the glossary Drive file; the other device paints them; library file stays free of them', async () => {
     await importFiles(P1, BOOK); await importFiles(P2, BOOK); for (const p of [P1, P2]) await p.evaluate(async () => (await import('./js/google.js')).syncTuning.minGap = 3600e3);
     await P1.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(P1); await rendered(P1); await toStart(P1);

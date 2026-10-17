@@ -35,7 +35,8 @@ export async function add(book, a) {
 }
 export async function update(id, patch) {
   const cur = await DB.get(GL, id); if (!live(cur)) return null;
-  const rec = { ...cur, ...(patch.note != null ? { note: clip(patch.note, NOTE_MAX) } : {}), ...(patch.color && COLORS.some((c) => c.id === patch.color) ? { color: patch.color } : {}) };
+  const rec = { ...cur, ...(patch.note != null ? { note: clip(patch.note, NOTE_MAX) } : {}), ...(patch.color && COLORS.some((c) => c.id === patch.color) ? { color: patch.color } : {}),
+    ...(patch.text ? { text: clip(norm(patch.text), TEXT_MAX), cfiRange: patch.cfiRange || '', chapter: clip(patch.chapter, 200), sec: patch.sec ?? cur.sec, off: patch.off ?? cur.off, progress: patch.progress ?? cur.progress, ...(patch.loc ? { loc: patch.loc } : {}) } : {}) };   // v0.5.11: extend / shrink the range
   await DB.put(GL, rec); if (patch.color) localStorage.setItem('folio.hlColor', rec.color); changed(); return rec;
 }
 export async function remove(id) { const cur = await DB.get(GL, id); if (!cur) return; await DB.put(GL, { id, bookKey: cur.bookKey, kind: 'hl', del: true }); changed(); }

@@ -45,7 +45,7 @@ export async function openPdf(book, blob, opts = {}) {
   const c = cur;
   const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
   attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.textMode && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage'))?.dataset.page || 0),
-    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), select: (range) => { if (cur && cur.textMode) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
+    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), highlight: (range) => { if (cur && cur.textMode) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); }, select: (range) => { if (cur && cur.textMode) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
   AN.attachPdf(pdfAnnotHost(), viewer);
   c.glossaryCtx = gctx;
   try {
@@ -147,7 +147,7 @@ function pdfAnnotHost() {
       if (!c.textMode) { goTo(a.loc.sp.page); return; } goTo(a.loc.sp.page);
       for (let i = 0; i < 30; i++) { const l = pdfAnnotHost().locate(a.loc.sp); if (l) { const el = l.n.parentElement; c.viewer.scrollTo({ top: Math.max(0, el.offsetTop + (el.offsetParent ? el.offsetParent.offsetTop : 0) - c.viewer.clientHeight * 0.3) }); return; } await new Promise((r) => setTimeout(r, 100)); }
     },
-    define: (word, text, rect) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book }, { editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
+    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur && cur.textMode) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
   };
   return c.__ah;
 }

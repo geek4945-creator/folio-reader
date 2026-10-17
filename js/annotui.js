@@ -103,6 +103,7 @@ function showUi(host, contents, range, opts = {}) {
   if (!ui) {
     const root = host.root();
     const menu = h('div', { class: 'an-menu', id: 'an-menu', role: 'toolbar', 'aria-label': 'Selection' },
+      h('button', { class: 'an-btn an-first', id: 'an-hl', onclick: () => quickFromUi() }, '🖍 Highlight'),
       ...A.COLORS.map((c) => h('button', { class: 'an-dot', 'data-color': c.id, 'aria-label': 'Highlight ' + c.name.toLowerCase(), style: { background: c.hex }, onclick: () => createFrom(c.id, false) })),
       h('button', { class: 'an-btn', id: 'an-note', onclick: () => createFrom(A.lastColor(), true) }, '✎ Note'),
       h('button', { class: 'an-btn', id: 'an-define', onclick: () => define() }, 'Define'),
@@ -186,13 +187,35 @@ export function onSelectionChange(host, contents) {
 }
 
 async function createFrom(color, withNote) {
-  const u = ui; if (!u) return; const { host, contents } = u; const range = u.range;
+  const u = ui; if (!u) return; const { host, contents } = u; const range = u.range; const editing = u.rec;
   try {
     const info = host.describe(contents, range);
-    const rec = await A.add(host.book(), { ...info, text: u.text, color });
+    const rec = editing ? await A.update(editing.id, { ...info, text: u.text, color }) : await A.add(host.book(), { ...info, text: u.text, color });
     closeSelectionUI(true); await repaintAll(host);
-    if (withNote) openEditor(host, rec, { focusNote: true });
+    if (withNote && rec) openEditor(host, rec, { focusNote: true });
   } catch (e) { toast('Couldn’t save that highlight: ' + (e.message || e)); }
+}
+/** v0.5.11: the 🖍 Highlight button — highlight at once (last colour) and open the colour / note editor. */
+const quickFromUi = () => { const u = ui; if (u) createFrom(u.rec ? u.rec.color : A.lastColor(), true); };
+export async function quickHighlight(host, contents, range) {
+  const text = rangeText(range); if (!text) { toast('Nothing to highlight there'); return null; }
+  try {
+    closeSelectionUI(true);
+    const info = host.describe(contents, range);
+    const rec = await A.add(host.book(), { ...info, text, color: A.lastColor() });
+    try { contents.window.getSelection().removeAllRanges(); } catch { /* ignore */ }
+    await repaintAll(host); openEditor(host, rec, { extend: true }); return rec;
+  } catch (e) { toast('Couldn’t save that highlight: ' + (e.message || e)); return null; }
+}
+/** Put the handles back on an existing highlight so its range can be extended; the 🖍 button then saves the new range. */
+export function extendRec(host, rec) {
+  try {
+    let contents, range;
+    if (rec.fmt === 'pdf') { contents = host.contents()[0]; const s = host.locate(rec.loc.sp), e = host.locate(rec.loc.ep); if (s && e) { range = document.createRange(); range.setStart(s.n, s.o); range.setEnd(e.n, e.o); } }
+    else { contents = host.contents().find((c) => inSection(c, rec)); range = contents && rangeFor(contents, rec); }
+    if (!contents || !range) { toast('Go to that highlight first (it isn’t on screen)'); return false; }
+    selectRange(host, contents, range); if (ui) { ui.rec = rec; const b = ui.menu.querySelector('#an-hl'); if (b) b.textContent = '✓ Save range'; } return true;
+  } catch { return false; }
 }
 async function copy() {
   const u = ui; if (!u) return; const t = u.text;
@@ -201,9 +224,9 @@ async function copy() {
 }
 function define() {
   const u = ui; if (!u) return; const { host } = u; const word = u.text.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').split(/\s+/)[0];
-  const r = u.range; const rects = rectsOf(u.contents, r); const f = rects[0] || { left: 40, right: 80, top: 80, bottom: 100 };
+  const r = u.range.cloneRange(); const rects = rectsOf(u.contents, r); const f = rects[0] || { left: 40, right: 80, top: 80, bottom: 100 };
   const rect = { left: f.left, right: f.right, top: f.top, bottom: f.bottom, width: f.right - f.left, height: f.bottom - f.top };
-  const ctxText = u.text; closeSelectionUI(true); if (word) host.define(word, ctxText, rect);
+  const ctxText = u.text; closeSelectionUI(true); if (word) host.define(word, ctxText, rect, r);
 }
 
 /* ------------------------------------------------------------------ tap a highlight */
@@ -250,6 +273,7 @@ export function openEditor(host, rec, opts = {}) {
       note,
       h('div', { class: 'row' },
         h('button', { class: 'btn', id: 'an-save', onclick: async () => { await A.update(rec.id, { note: note.value, color }); w.close(); await repaintAll(host); if (opts.onDone) opts.onDone(); } }, 'Save'),
+        opts.extend !== false && host.contents && (rec.cfiRange || rec.loc) ? h('button', { class: 'btn', id: 'an-extend', onclick: () => { w.close(); extendRec(host, rec); } }, '↔ Extend range') : null,
         host.jump ? h('button', { class: 'btn', id: 'an-jump', onclick: () => { w.close(); host.jump(rec); } }, 'Go to') : null,
         h('button', { class: 'btn danger', id: 'an-del', onclick: async () => { await A.remove(rec.id); w.close(); await repaintAll(host); if (opts.onDone) opts.onDone(); toast('Highlight removed'); } }, 'Delete')));
   };

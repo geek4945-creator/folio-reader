@@ -85,11 +85,11 @@ export async function openBubble(info, host) {
       kids.push(h('div', { class: 'wl-src' }, (d.asWord && d.asWord !== D.normWord(display) ? 'Showing “' + d.asWord + '” · ' : '') + (d.cached ? 'Saved copy (works offline) · ' : '') + (D.SOURCES.find((s) => s.id === d.src)?.name || d.src)));
     } else kids.push(h('div', { class: 'wl-miss', id: 'wl-miss' }, d.status === 'missing' ? 'No dictionary entry for “' + display + '”.' : d.status === 'offline' ? 'You’re offline and this word isn’t saved on this device yet.' : 'Couldn’t reach the dictionary just now.',
       d.status === 'missing' ? null : h('button', { class: 'btn-text small', id: 'wl-retry', onclick: () => run(true) }, 'Try again')));
-    kids.push(h('div', { class: 'wl-actions' },
+    kids.push(h('div', { class: 'wl-actions', id: 'wl-actions' },
+      host.highlight && info.range ? h('button', { class: 'btn small wl-hl', id: 'wl-hl', onclick: () => { const r = info.range; closeBubble(); host.highlight(r); } }, '🖍 Highlight') : null,
       h('button', { class: 'btn small' + (st.saved ? ' on' : ''), id: 'wl-save', onclick: toggleSave }, st.saved ? '★ Saved' : '☆ Save to book'),
       h('button', { class: 'btn small', id: 'wl-gadd', onclick: () => { closeBubble(); host.editEntry(g && g.bookKey === G.keyOf(book) ? g : null, g ? g.term : display, ctx, defOf().def); } }, g && g.bookKey === G.keyOf(book) ? '✎ Edit entry' : '＋ Glossary'),
       h('a', { class: 'btn small', id: 'wl-web', href: D.webUrl(display), target: '_blank', rel: 'noopener noreferrer' }, 'Search the web ↗'),
-      host.select && info.range ? h('button', { class: 'btn small', id: 'wl-hl', onclick: () => { const r = info.range; closeBubble(); host.select(r); } }, '🖍 Highlight…') : null,
       h('button', { class: 'btn small', id: 'wl-words', onclick: () => { closeBubble(); host.openWords(); } }, '📚 Words')));
     el.replaceChildren(...kids); place(el, info.rect);
   }
