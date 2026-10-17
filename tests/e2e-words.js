@@ -68,6 +68,7 @@ S.dict = { calls: [], serendipityApiDown: true, reply(u) {
   await step('A quick tap or a drag does not open the bubble; the setting turns it off; hold time is adjustable', async () => {
     const p = await wordXY(A, 'ephemeral'); await A.mouse.move(p.x, p.y); await A.mouse.down(); await sleep(120); await A.mouse.up(); await sleep(900); await noBubble(A);
     await A.mouse.move(p.x, p.y); await A.mouse.down(); await A.mouse.move(p.x + 40, p.y + 30, { steps: 4 }); await sleep(1000); await A.mouse.up(); await noBubble(A);
+    await A.evaluate(() => window.__reader.rendition.getContents().forEach((k) => k.window.getSelection().removeAllRanges())); await sleep(500);   // v0.5.8: a mouse drag selects text (selection menu); clear it so it doesn't sit on the word
     await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ wordLookup: false })); await holdWord(A, 'ephemeral', 1100); await sleep(300); await noBubble(A);
     await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ wordLookup: true, wordHoldSec: 0.3 })); await holdWord(A, 'ephemeral', 450); await waitBubble(A);
     await A.evaluate(() => window.__folioBack()); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ wordHoldSec: 0.7 }));
@@ -165,7 +166,7 @@ S.dict = { calls: [], serendipityApiDown: true, reply(u) {
     await hold(A, pos.x, pos.y); const b = await waitBubble(A); assert(b.word.toLowerCase() === pos.word.toLowerCase(), JSON.stringify([b.word, pos.word])); await A.evaluate(() => window.__folioBack()); await sleep(200); assert(await A.evaluate(() => !document.querySelector('#reader').hidden), 'pdf closed'); await close(A);
   });
   await step('Settings → Word lookup: toggle, hold-time slider, highlight, Saved words & glossaries list, clear offline definitions', async () => {
-    await A.evaluate(() => document.querySelector('[data-tab=settings]').click()); await A.waitForSelector('#sec-words');
+    await A.evaluate(() => document.querySelector('[data-tab=settings]').click()); await A.waitForSelector('#sec-words', { timeout: 6000 }).catch(async (e) => { throw new Error(e.message + ' :: ' + await A.evaluate(() => document.body.className + ' | ' + document.querySelector('#overlay').innerHTML.slice(0, 200) + ' | reader hidden=' + document.querySelector('#reader').hidden + ' | view=' + document.querySelector('#view').className + ' | ' + document.querySelector('#view').textContent.slice(0, 80))); });
     assert(await A.evaluate(() => !!document.querySelector('#word-lookup') && !!document.querySelector('#word-hold') && !!document.querySelector('#gl-highlight')), 'controls missing');
     await A.evaluate(() => { const r = document.querySelector('#word-hold'); r.value = '1.5'; r.dispatchEvent(new Event('input')); }); assert((await A.evaluate(async () => (await import('./js/settings.js')).settings.get('wordHoldSec'))) === 1.5, 'hold time not saved');
     await click(A, '#saved-words-all'); await A.waitForSelector('#aw-root .list-item'); const t = await A.evaluate(() => document.querySelector('#aw-root').textContent); assert(/Saga of Ash One/.test(t) && /8 glossary/.test(t), t); await A.evaluate(() => window.__folioBack());
