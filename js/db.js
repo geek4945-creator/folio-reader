@@ -20,10 +20,11 @@ export const GROUPS = {
   shelves: { fields: ['shelves'], sig: (b) => J([...(b.shelves || [])].sort()) },
   series: { fields: ['setId', 'seriesIndex'], sig: (b) => J([b.setId || null, b.seriesIndex ?? null]) },
   name: { fields: ['title', 'author'], sig: (b) => J([b.title, b.author || '']) },
+  now: { fields: ['nowHiddenAt'], sig: (b) => J([b.nowHiddenAt || 0]), noLegacy: true },   // v0.5.14: "Remove from Reading now" (hidden while nowHiddenAt > lastOpened); older files carry no stamp for it, so they never overwrite it
 };
 const posSig = (b) => J([b.cfi || null, Math.round((b.progress || 0) * 1e4), b.pdfPage || 0, b.pdfText ? 1 : 0, b.pdfZoom || 0, Math.round(b.position || 0), b.trackIndex ?? null]);
 export const structAtOf = (b) => b.structAt ?? b.updatedAt ?? 0;
-export const gAtOf = (b, g) => b.gAt?.[g] ?? structAtOf(b);
+export const gAtOf = (b, g) => b.gAt?.[g] ?? (GROUPS[g] && GROUPS[g].noLegacy ? 0 : structAtOf(b));
 export const posAtOf = (b) => b.posAt ?? Math.max(b.lastOpened || 0, b.updatedAt || 0);   // legacy records: their last touch
 export const posAtOfState = (st) => st.posAt ?? Math.max(st.lastOpened || 0, st.updatedAt || 0);
 function stamp(val, old) {

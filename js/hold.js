@@ -35,7 +35,7 @@ export function initHold() {
   if (inited) return; inited = true;
   document.addEventListener('pointerdown', (e) => {
     if (e.button > 0 || !e.isPrimary) return; cancelHold();
-    const el = e.target.closest && e.target.closest('.tile'); if (!el || !el.__onHold) return;
+    const el = e.target.closest && e.target.closest('.tile, .rn-row'); if (!el || !el.__onHold) return;
     if (e.target.closest('button, a, input, select, textarea') || el.closest('.selecting') || document.body.classList.contains('dragging-now')) return;
     const ms = holdSeconds() * 1000;
     st = { el, id: e.pointerId, x: e.clientX, y: e.clientY, timer: setTimeout(fire, ms), ring: null };
@@ -48,6 +48,6 @@ export function initHold() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) cancelHold(); });
   document.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; } }, true);
   // no native long-press UI on tiles: context menu / image save / callout / text selection / image drag
-  const stopNative = (e) => { if (e.target.closest && e.target.closest('.tile')) e.preventDefault(); };
+  const stopNative = (e) => { if (e.target.closest && e.target.closest('.tile, .rn-row')) e.preventDefault(); };
   for (const t of ['contextmenu', 'selectstart', 'dragstart']) document.addEventListener(t, stopNative, true);
 }

@@ -360,3 +360,11 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .pdf-tl .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; -webkit-user-select: none; }
 .pdf-tl ::selection { background: rgba(0, 110, 255, .30); color: transparent; }
 .pdf-multiply .pdf-tl { mix-blend-mode: multiply; }
+
+/* v0.5.14: Reading now — remove / restore */
+.rn-row { position: relative; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.rn-actions { display: flex; align-items: center; gap: .25rem; flex: none; }
+.rn-x { font-size: 1.05rem; opacity: .65; min-width: 2.2rem; min-height: 2.2rem; } .rn-x:hover, .rn-x:focus-visible { opacity: 1; }
+.rn-foot { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem 1.2rem; padding-top: .4rem; padding-bottom: 1.4rem; } .rn-foot .rn-note { flex-basis: 100%; text-align: center; }
+.rn-row.holding { outline: 2px solid var(--accent, #4a90d9); }
+.rn-hid { display: flex; align-items: center; gap: .6rem; }

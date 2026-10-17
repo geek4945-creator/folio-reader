@@ -410,6 +410,9 @@ export function bookMenu(b, ctx) {
     b.format !== 'pdf' ? { label: '🎧  Find my place (audiobook)…', id: 'menu-findplace', onClick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: b.id })) } : null,
     ...Loans.loanMenuItems('book', b, rerender),
     b.format !== 'pdf' && S.hasOverrides(b) ? { label: 'Reset this book’s reading settings', onClick: async () => { await S.resetOverrides(b.id); toast('Using global reading settings'); rerender(); } } : null,
+    S.isReadingNow(b) ? (S.isHiddenFromNow(b)
+      ? { label: 'Show in Reading now', id: 'menu-show-now', onClick: async () => { await S.setNowHidden([b.id], false); toast('Back in Reading now'); rerender(); } }
+      : { label: 'Remove from Reading now', id: 'menu-hide-now', onClick: async () => { const prev = await S.setNowHidden([b.id], true); toast('Removed from Reading now', 6000, { label: 'Undo', onClick: () => S.restoreNowHidden(prev) }); rerender(); } }) : null,
     { label: 'Delete from library', danger: true, id: 'menu-delete-book', onClick: () => deleteBooksFlow([b.id]) },
   ].filter(Boolean));
   return s;

@@ -191,6 +191,21 @@ export async function deleteShelf(id) {
   await DB.del('shelves', id); await DB.del('orders', 'shelf:' + id); addTomb('shelf', id); emitChange();
 }
 export async function setStatus(bookId, status) { const b = await getBook(bookId); b.status = status; if (status === 'finished') b.finishedAt = Date.now(); await DB.put('books', b); emitChange(); }
+/* ---------- Reading now (v0.5.14) ---------- */
+/** A book belongs in Reading now while it is being read (status Reading, or started and not finished) … */
+export const isReadingNow = (b) => b.status === 'reading' || (b.status !== 'finished' && (b.progress || 0) > 0.005);
+/** … unless she removed it by hand: hidden while the removal is newer than the last time it was opened, so reading it again brings it back by itself. */
+export const isHiddenFromNow = (b) => (b.nowHiddenAt || 0) > (b.lastOpened || 0);
+/** Hide (on) or show (off) books in Reading now; returns the previous values so the caller can offer Undo. */
+export async function setNowHidden(ids, on) {
+  const prev = {};
+  for (const id of ids) { const b = await getBook(id); if (!b) continue; prev[id] = b.nowHiddenAt || 0; b.nowHiddenAt = on ? Math.max(Date.now(), (b.lastOpened || 0) + 1) : 0; await DB.put('books', b); }
+  emitChange(); return prev;
+}
+export async function restoreNowHidden(prev) {
+  for (const [id, v] of Object.entries(prev)) { const b = await getBook(id); if (!b) continue; b.nowHiddenAt = v; await DB.put('books', b); }
+  emitChange();
+}
 export async function toggleShelf(bookId, shelfId) {
   const b = await getBook(bookId); b.shelves = b.shelves || [];
   b.shelves = b.shelves.includes(shelfId) ? b.shelves.filter((x) => x !== shelfId) : [...b.shelves, shelfId];
@@ -263,6 +278,7 @@ export function applyPending(book) {
   Object.assign(book, { status: st.status || book.status, shelves: st.shelves || [], setId: st.setId || book.setId, seriesIndex: st.seriesIndex ?? book.seriesIndex, overrides: st.overrides || null, progress: st.progress || 0, cfi: st.cfi || null, lastOpened: st.lastOpened || 0 });
   if (st.posAt) Object.assign(book, { posAt: st.posAt, posDev: st.dev || '', posDevName: st.devName || '' }); if (st.ovAt) book.ovAt = st.ovAt; if (st.updatedAt) book.structAt = st.updatedAt;
   if (st.title) book.title = st.title; if (st.author) book.author = st.author;
+  if (st.nowHiddenAt) { book.nowHiddenAt = st.nowHiddenAt; if (st.gAt && st.gAt.now) book.gAt = { ...(book.gAt || {}), now: st.gAt.now }; }
   if (st.pdfPage) Object.assign(book, { pdfPage: st.pdfPage, pdfZoom: st.pdfZoom || 1, pdfText: !!st.pdfText }); if (st.finishedAt) book.finishedAt = st.finishedAt;
   if (st.loan && (st.loan.at || 0) > (book.loanAt || 0)) Object.assign(book, { borrowed: !!st.loan.b, dueAt: st.loan.due || null, loanAt: st.loan.at, ...(st.loan.src ? { loanSource: st.loan.src } : {}) });   // Borrowed flag + due date kept for a book that wasn't here yet
   applyPendingMeta(book, 'book', bookSyncKey(book)); { const pm = getPendingMeta('book'); delete pm[bookSyncKey(book)]; setPendingMeta('book', pm); }

@@ -209,7 +209,7 @@ export const POS_STATE = ['progress', 'cfi', 'lastOpened', 'pdfPage', 'pdfZoom',
 export const AUDIO_POS_STATE = ['position', 'progress', 'track', 'trackIndex', 'speed', 'lastOpened', 'posAt', 'dev', 'devName'];
 const jeq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const gAtsOf = (b) => Object.fromEntries(Object.keys(GROUPS).map((g) => [g, gAtOf(b, g)]));
-const stGroupAt = (st, g) => st.gAt?.[g] ?? st.updatedAt ?? 0;
+const stGroupAt = (st, g) => st.gAt?.[g] ?? (GROUPS[g] && GROUPS[g].noLegacy ? 0 : st.updatedAt ?? 0);
 export function buildSettingsPart() {
   const all = settings.all(), stamps = settingStamps(), flat = {}, legacy = 0;
   for (const k of syncedKeys()) {
@@ -254,7 +254,7 @@ export async function buildSnapshot() {
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
