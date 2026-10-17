@@ -12,7 +12,8 @@ import { onAudioChange } from './audiostore.js';
 import { initPlayerUI, playerOpen } from './audioplayer.js';
 import { onLibraryChange, getBooks, pruneSets } from './store.js';
 import * as G from './google.js';
-import { closeReader, currentReader } from './reader.js';
+import { closeReader, currentReader, flushPosition, openReader } from './reader.js';
+import { initUpdates } from './update.js';
 import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
 import { initInstall, installMode, installLabel, startInstall } from './install.js';
 import { initFullscreen, fsButton } from './fullscreen.js';
@@ -182,9 +183,7 @@ show(tab); initNav({ getTab: () => tab, show });
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
 if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);
 navigator.storage?.persist?.();
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
-}
+initUpdates({ readerOpen: () => { const r = currentReader(); return r && r.book ? r.book.id : null; }, flush: flushPosition, reopen: (id) => openReader(id) });   // v0.5.16: non-disruptive updates (update.js)
 // Test hook
 initClearButtons();
 window.__folio = { show, settings, G };

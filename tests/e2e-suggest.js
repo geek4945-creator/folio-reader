@@ -31,7 +31,7 @@ const S = makeState(); S.suggest = { calls: [], mode: 'ok' };
     await type('Please make the page-turn\nanimation optional. Thanks — Ann'); assert(!(await page.$eval('#sg-send', (e) => e.disabled)), 'enabled'); assert((await page.$eval('#sg-count', (e) => e.innerText)) === '58 / 2000', await page.$eval('#sg-count', (e) => e.innerText));
     await send(); eq(await msg(), 'Thanks — sent');
     const c = sg().calls; eq(c.length, 1); eq(c[0].method, 'POST'); assert(/application\/json/.test(c[0].ct), c[0].ct);
-    const b = c[0].body; eq(Object.keys(b).sort(), ['app', 'id', 'platform', 'text', 'ua', 'version']); eq(b.app, NAME); eq(b.version, '0.5.16'); eq(b.text, 'Please make the page-turn\nanimation optional. Thanks — Ann'); assert(/^(web|pwa|app)\//.test(b.platform), b.platform); assert(b.ua.length <= 160 && b.ua.length > 5);
+    const b = c[0].body; eq(Object.keys(b).sort(), ['app', 'id', 'platform', 'text', 'ua', 'version']); eq(b.app, NAME); eq(b.version, '0.5.17'); eq(b.text, 'Please make the page-turn\nanimation optional. Thanks — Ann'); assert(/^(web|pwa|app)\//.test(b.platform), b.platform); assert(b.ua.length <= 160 && b.ua.length > 5);
     const it = await items(); eq(it.length, 1); eq(it[0].st, 'sent'); eq(it[0].label, '✓ Sent'); assert(/animation optional/.test(it[0].text) && !it[0].retry);
     eq(await page.$eval('#sg-text', (e) => e.value), ''); assert(await page.$eval('#sg-send', (e) => e.disabled));
   });

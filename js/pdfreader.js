@@ -416,4 +416,6 @@ export async function closePdf() {
   const el = root(); el.hidden = true; el.replaceChildren(); el.classList.remove('chrome-hidden', 'pdf-mode'); document.body.classList.remove('reading');
   $('#overlay').replaceChildren(); $('#overlay').hidden = true; window.__pdf = null;
   const { refreshLibrary } = await import('./library.js'); refreshLibrary();
+  window.dispatchEvent(new Event('reader-closed'));
 }
+export async function flushPdfPosition() { if (cur) await savePosition(); }

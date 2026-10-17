@@ -377,3 +377,8 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .sg-head { display:flex; justify-content:space-between; gap:.5rem; align-items:center; margin-bottom:.25rem; }
 .sg-st { font-size:.78rem; font-weight:700; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--border); } .sg-st.sent { color:#2a7; } .sg-st.queued { color:#b80; } .sg-st.failed { color:#c33; }
 .sg-text { white-space:pre-wrap; overflow-wrap:anywhere; max-height:7.5em; overflow:auto; font-size:.92rem; }
+
+/* v0.5.16 update banner */
+#update-banner { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom) + 70px); z-index:60; display:flex; align-items:center; gap:.5rem; padding:.45rem .6rem .45rem .9rem; border-radius:2rem; background:var(--card); color:var(--fg); border:1px solid var(--border); box-shadow:0 4px 18px rgba(0,0,0,.25); font-size:.9rem; max-width:94vw; }
+#update-banner .btn { padding:.35rem .8rem; margin:0; }
+body.reading #update-banner { display:none; }

@@ -3,7 +3,7 @@ import { h, toast, sheet, debounce, $, fmtPct } from './util.js';
 import { settings, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from './settings.js';
 import * as S from './store.js';
 import { fsButton } from './fullscreen.js';
-import { openPdf, closePdf, pdfCurrent } from './pdfreader.js';
+import { openPdf, closePdf, pdfCurrent, flushPdfPosition } from './pdfreader.js';
 import { blockZoom } from './viewport.js';
 import { attachPinch } from './pinch.js';
 import { makeFooter, applyFooterSettings, paintFooter, createPager, footerToggles, applyScrub, scrubToggle } from './pages.js';
@@ -25,7 +25,7 @@ export async function openReader(id, opts = {}) {
   const book = await S.getBook(id); const blob = await S.getFile(id);
   if (!book || !blob) { toast('Book file not found'); return; }
   if (book.format === 'pdf') return openPdf(book, blob, opts);
-  const el = root(); el.hidden = false; document.body.classList.add('reading');
+  const el = root(); el.hidden = false; document.body.classList.add('reading'); window.dispatchEvent(new Event('reader-opened'));
   const viewer = h('div', { id: 'viewer' });
   const title = h('div', { class: 'r-title ellipsis' }, book.title);
   const ovr = h('span', { class: 'ovr-dot', id: 'r-ovr', hidden: !S.hasOverrides(book), title: 'This book has custom reading settings' }, 'Aa');
@@ -100,10 +100,24 @@ async function generateLocations() {
 async function startRendition(cfi) {
   const c = cur; const scrolled = settings.get('flow') === 'scrolled';
   try { c.fixed = (c.epub.packaging && c.epub.packaging.metadata && c.epub.packaging.metadata.layout) === 'pre-paginated'; } catch { c.fixed = false; }
+  if (c.grabResize) { window.removeEventListener('resize', c.grabResize, true); window.removeEventListener('orientationchange', c.grabResize, true); c.grabResize = null; }
   if (c.rendition) { try { c.rendition.destroy(); } catch { /* ignore */ } c.viewer.replaceChildren(); }
   applyMargin();
   const r = c.epub.renderTo(c.viewer, { width: '100%', height: '100%', flow: scrolled ? 'scrolled' : 'paginated', manager: scrolled ? 'continuous' : 'default', spread: 'none', allowScriptedContent: false, minSpreadWidth: 99999 });
   c.rendition = r;
+  if (scrolled) {
+    // v0.5.17: when the stage size changes (iOS address bar / keyboard / rotation / zoom guard) epub.js clears every view and then display()s the last location IT reported. During a touch scroll that location
+    // lags behind the finger, so the page "jumped back" a few screens at random. Read the live position just BEFORE the clear and re-display that instead.
+    r.onResized = function (size, ecfi) {
+      this.emit('resized', { width: size.width, height: size.height }, ecfi);
+      const cfi = this.__fresh || (this.location && this.location.start && this.location.start.cfi); this.__fresh = null;
+      if (cfi) this.display(cfi);
+    };
+    // epub.js debounces the resize, so this runs first: remember where the reader really is right now (see above)
+    if (c.grabResize) window.removeEventListener('resize', c.grabResize, true);
+    c.grabResize = () => { try { const l = r.currentLocation(); if (l && l.start && l.start.cfi) r.__fresh = l.start.cfi; } catch { /* ignore */ } };
+    window.addEventListener('resize', c.grabResize, true); window.addEventListener('orientationchange', c.grabResize, true);
+  }
   r.hooks.content.register((contents) => injectStyle(contents));
   r.hooks.content.register((contents) => wordSetup(contents));
   r.on('relocated', (loc) => { if (c.rendition !== r) return; c.loc = loc; AN.reposition(); updateProgress(loc); c.pager && c.pager.update(loc); });
@@ -415,12 +429,15 @@ export async function closeReader() {
   if (pdfCurrent()) return closePdf();
   const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true); AN.disarm();
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
-  c.closed = true; c.pager && c.pager.stop();
+  c.closed = true; c.pager && c.pager.stop(); if (c.grabResize) { window.removeEventListener('resize', c.grabResize, true); window.removeEventListener('orientationchange', c.grabResize, true); }
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;
   try { c.rendition && c.rendition.destroy(); } catch { /* ignore */ }
   try { c.epub && c.epub.destroy(); } catch { /* ignore */ }
   const el = root(); el.hidden = true; el.replaceChildren(); el.classList.remove('chrome-hidden'); document.body.classList.remove('reading');
   $('#overlay').replaceChildren(); $('#overlay').hidden = true;
   const { refreshLibrary } = await import('./library.js'); refreshLibrary();
+  window.dispatchEvent(new Event('reader-closed'));
 }
+/** Save the exact reading position right now (before an app update reloads the page). */
+export async function flushPosition() { if (pdfCurrent()) return flushPdfPosition(); if (cur) await savePosition(); }
 export const currentReader = () => cur || pdfCurrent();
