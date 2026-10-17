@@ -61,7 +61,7 @@ const fetchCover = async (u) => { const r = await fetchSmart(u, { timeout: 15000
 const addedKeys = async () => new Set((await A.getAudiobooks()).map((b) => b.sourceKey).filter(Boolean));
 
 export function openAudioSources() {
-  let src = localStorage.getItem('folio.audioSrc') || 'librivox'; let by = 'title'; let q = ''; let offset = 0; let page = 1; let busy = false; let fb = '';   const list = h('div', { class: 'list audio-results', id: 'audio-results' }); const more = h('button', { class: 'btn block', id: 'audio-more', hidden: true }, 'Load more'); const note = h('p', { class: 'muted small', id: 'audio-src-note' });
+  let src = localStorage.getItem('folio.audioSrc') || 'librivox'; let by = 'title'; let q = ''; let offset = 0; let page = 1; let busy = false; let again = false; let fb = '';   const list = h('div', { class: 'list audio-results', id: 'audio-results' }); const more = h('button', { class: 'btn block', id: 'audio-more', hidden: true }, 'Load more'); const note = h('p', { class: 'muted small', id: 'audio-src-note' });
   const input = h('input', { type: 'search', class: 'field search', id: 'audio-src-q', placeholder: 'Search title or author (leave empty for newest)', enterkeyhint: 'search' });
   const seg = h('div', { class: 'seg wide', id: 'audio-src-seg' }); const bySeg = h('div', { class: 'seg wide', id: 'audio-by-seg' });
   const w = sheet('Free audiobooks', () => [seg, h('form', { onsubmit: (e) => { e.preventDefault(); q = input.value; run(true); } }, input), bySeg, note, list, more], { tall: true });
@@ -71,7 +71,8 @@ export function openAudioSources() {
     if (!fb || src !== 'librivox') note.textContent = src === 'librivox' ? 'LibriVox: free public-domain audiobooks read by volunteers. Streams from the Internet Archive.' : 'Internet Archive: the LibriVox collection and openly licensed audio. Lending-only and restricted items are left out.';
   };
   async function run(reset) {
-    if (busy) return; busy = true; if (reset) { offset = 0; page = 1; list.replaceChildren(h('div', { class: 'spinner-row' }, h('div', { class: 'spinner' }), 'Loading…')); }
+    if (busy) { if (reset) again = true; return; }   // a newer search waits for the one in flight (it used to be dropped)
+    busy = true; if (reset) { offset = 0; page = 1; list.replaceChildren(h('div', { class: 'spinner-row' }, h('div', { class: 'spinner' }), 'Loading…')); }
     try {
       if (reset) fb = '';
       let r;
@@ -85,7 +86,7 @@ export function openAudioSources() {
       if (reset && !r.items.length) list.append(h('p', { class: 'muted pad' }, 'No audiobooks found. Try a shorter title, or switch source.'));
       offset += PAGE; page += 1; more.hidden = !r.more;
     } catch (e) { if (reset) list.replaceChildren(); list.append(h('div', { class: 'pad' }, h('p', { class: 'err', id: 'audio-src-err' }, e instanceof SiteError ? e.message : 'Couldn’t reach ' + (src === 'librivox' ? 'LibriVox' : 'the Internet Archive') + '. ' + (e.message || '') + ' Check your connection, or the proxy in Settings → Network.'), h('button', { class: 'btn', onclick: () => run(true) }, 'Try again'))); }
-    busy = false;
+    busy = false; if (again) { again = false; run(true); }
   }
   more.onclick = () => run(false);
   function row(it, already) {
