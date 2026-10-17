@@ -27,6 +27,8 @@ export async function forBook(book, filter = 'all') {
 }
 export const get = async (id) => { const x = await DB.get(GL, id); return live(x) ? x : null; };
 export async function countFor(book) { return (await forBook(book)).length; }
+export const pageOf = (a) => (a.loc ? (a.loc.sp ? a.loc.sp.page : a.loc.pv ? a.loc.pv.sp.page : a.sec || '') : a.sec || '');
+const A_pageOf = pageOf;
 export async function add(book, a) {
   const text = clip(norm(a.text), TEXT_MAX); if (!text) throw new Error('Nothing selected');
   const rec = { id: uid(), at: Date.now(), kind: 'hl', bookKey: keyOf(book), bookTitle: book.title, fmt: a.fmt || 'epub', cfiRange: a.cfiRange || '', text, note: clip(a.note, NOTE_MAX), color: COLORS.some((c) => c.id === a.color) ? a.color : lastColor(),
@@ -47,7 +49,7 @@ export function toMarkdown(list, book) {
   let chap = null;
   for (const a of list) {
     if ((a.chapter || '') !== chap) { chap = a.chapter || ''; if (chap) out.push('## ' + chap, ''); }
-    out.push(a.text.split('\n').map((l) => '> ' + l).join('\n') + '  ', '_(' + a.color + (a.fmt === 'pdf' && a.loc ? ', page ' + (a.loc.sp ? a.loc.sp.page : '') : '') + ')_', '');
+    out.push(a.text.split('\n').map((l) => '> ' + l).join('\n') + '  ', '_(' + a.color + (a.fmt === 'pdf' && a.loc ? ', page ' + A_pageOf(a) : '') + ')_', '');
     if (a.note) out.push('**Note:** ' + a.note, '');
   }
   return out.join('\n');

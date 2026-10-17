@@ -56,8 +56,8 @@ export async function repaintAll(host) {
 export function paintPdf(contents, list, host) {
   const w = contents.window; contents.__hl = []; const by = new Map(); const noted = [];
   for (const a of list) {
-    if (a.fmt !== 'pdf' || !a.loc) continue; const s = host.locate(a.loc.sp), e = host.locate(a.loc.ep); if (!s || !e) continue;
-    try { const r = document.createRange(); r.setStart(s.n, s.o); r.setEnd(e.n, e.o); if (r.collapsed) continue; contents.__hl.push({ a, r }); (by.get(a.color) || by.set(a.color, []).get(a.color)).push(r); if (a.note) noted.push(r); } catch { /* ignore */ }
+    if (a.fmt !== 'pdf' || !a.loc) continue;
+    try { const r = host.rangeOf(a); if (!r || r.collapsed) continue; contents.__hl.push({ a, r }); (by.get(a.color) || by.set(a.color, []).get(a.color)).push(r); if (a.note) noted.push(r); } catch { /* ignore */ }
   }
   ensureTopCss();
   if (!highlightSupported(w)) return;
@@ -221,7 +221,7 @@ export async function quickHighlight(host, contents, range) {
 export function extendRec(host, rec) {
   try {
     let contents, range;
-    if (rec.fmt === 'pdf') { contents = host.contents()[0]; const s = host.locate(rec.loc.sp), e = host.locate(rec.loc.ep); if (s && e) { range = document.createRange(); range.setStart(s.n, s.o); range.setEnd(e.n, e.o); } }
+    if (rec.fmt === 'pdf') { contents = host.contents()[0]; range = host.rangeOf(rec); }
     else { contents = host.contents().find((c) => inSection(c, rec)); range = contents && rangeFor(contents, rec); }
     if (!contents || !range) { toast('Go to that highlight first (it isn’t on screen)'); return false; }
     selectRange(host, contents, range); if (ui) { ui.rec = rec; const b = ui.menu.querySelector('#an-hl'); if (b) b.textContent = '✓ Save range'; } return true;
@@ -339,7 +339,7 @@ export async function listTab(host, rebuild, closeSheet) {
       h('div', { class: 'grow an-main', role: 'button', tabindex: 0, onclick: () => { closeSheet(); host.jump(a); } },
         h('div', { class: 'an-text' }, excerpt(a.text, 220, open)),
         a.note ? h('div', { class: 'an-notebox' }, '✎ ' + a.note) : null,
-        h('small', { class: 'muted' }, [a.chapter, a.fmt === 'pdf' && a.loc ? 'p. ' + a.loc.sp.page : ''].filter(Boolean).join(' · '))),
+        h('small', { class: 'muted' }, [a.chapter, a.fmt === 'pdf' && a.loc ? 'p. ' + A.pageOf(a) : ''].filter(Boolean).join(' · '))),
       h('div', { class: 'an-side' },
         long ? h('button', { class: 'btn-text small an-more', onclick: () => { open ? expanded.delete(a.id) : expanded.add(a.id); rebuild(); } }, open ? 'Less' : 'More') : null,
         h('button', { class: 'btn-icon an-edit', 'aria-label': 'Edit highlight', onclick: () => openEditor(host, a, { onDone: rebuild }) }, '✎'),

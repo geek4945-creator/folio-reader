@@ -293,6 +293,66 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     await menu(A); const hs2 = await A.evaluate(() => ['start', 'end'].filter((w) => { const e = document.querySelector('#an-h-' + w); return e && e.style.visibility !== 'hidden'; }).length); assert(hs2 === 2, 'select mode: handles ' + hs2);
     await click(A, '#an-x'); await noMenu(A); await close(A);
   });
+  // v0.5.13: PDF *page* view (Original pages, canvas) now has an invisible text layer: long-press, selection bar, highlights
+  const pdfPageOpen = async (page, textMode) => {
+    await page.evaluate(async (tm) => { const b = (await (await import('./js/store.js')).getBooks()).find((b) => b.format === 'pdf' && /prose/i.test(b.title)); b.pdfText = tm; await (await import('./js/store.js')).saveBook(b); (await import('./js/reader.js')).openReader(b.id); }, textMode);
+    await until(() => page.evaluate(() => document.querySelector('#reader.pdf-mode') && !document.querySelector('#reader .r-loading')), 20000, 'pdf');
+    if (textMode) await until(() => page.evaluate(() => document.querySelectorAll('.pdf-tpage[data-filled]').length >= 2), 15000, 'text view');
+    else await until(() => page.evaluate(() => document.querySelectorAll('.pdf-tl span').length >= 5), 15000, 'text layer'); await sleep(600);
+  };
+  const pdfHls = (page) => page.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && x.fmt === 'pdf' && !x.del).map((x) => ({ id: x.id, text: x.text, loc: x.loc, color: x.color })));
+  const pdfWord = (page, nth = 0) => page.evaluate((nth) => { const spans = [...document.querySelectorAll('.pdf-tl span')].filter((sp) => /harbour/.test(sp.textContent)); const sp = spans[nth]; sp.scrollIntoView({ block: 'center' }); const n = sp.firstChild; const m = /harbour/.exec(n.data); const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, word: m[0], i: m.index, nth }; }, nth);
+  const paintedPdf = (page) => page.evaluate(() => { let t = []; for (const [k, v] of CSS.highlights) if (/^folio-hl-/.test(k) && !/noted/.test(k)) t.push(...[...v].map((r) => r.toString().replace(/\s+/g, ''))); return t; });
+  await step('PDF PAGE view (canvas + text layer): a touch long-press on a word opens the bubble with 🖍 Highlight first; one tap saves it, opens the editor and paints it on the page', async () => {
+    await importFiles(A, path.join(__dirname, 'fixtures', 'prose-3pp.pdf')); await pdfPageOpen(A, false); assert(await A.evaluate(() => !!document.querySelector('.pdf-canvas') && !document.querySelector('.pdf-tstage')), 'not the canvas page view');
+    const w = await pdfWord(A); await sleep(300); const w1 = await pdfWord(A); await touchHold(A, w1.x, w1.y); await A.waitForSelector('#wl-bubble', { timeout: 8000 }); await sleep(500);
+    const a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen && a.inBubble, JSON.stringify(a)); await click(A, '#wl-hl'); await A.waitForSelector('#an-save', { timeout: 5000 });
+    const r = await pdfHls(A); assert(r.length >= 1 && r.some((x) => x.text === w.word && x.loc.pv && x.loc.pv.sp.page === x.loc.pv.ep.page), JSON.stringify(r)); await sleep(300);
+    assert((await paintedPdf(A)).includes(w.word), 'not painted: ' + JSON.stringify(await paintedPdf(A)));
+    await click(A, '#an-save'); await sleep(300); return w.word;
+  });
+  await step('Android WebView quirks (PDF page view): a long press that ends in pointercancel, or in a contextmenu event, still opens the bubble (🖍 first); a pointercancel from scrolling does not', async () => {
+    const w = await pdfWord(A, 1); await sleep(300); const w1 = await pdfWord(A, 1);
+    const fireTouch = (kind, x, y) => A.evaluate((kind, x, y) => { const el = document.elementFromPoint(x, y); const o = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, pointerId: 77, pointerType: 'touch', isPrimary: true, button: 0, view: window };
+      if (kind === 'down') el.dispatchEvent(new PointerEvent('pointerdown', o)); else if (kind === 'cancel') el.dispatchEvent(new PointerEvent('pointercancel', o)); else if (kind === 'ctx') el.dispatchEvent(new MouseEvent('contextmenu', o)); else if (kind === 'move') el.dispatchEvent(new PointerEvent('pointermove', { ...o, clientY: y + 30 })); return el.tagName; }, kind, x, y);
+    await fireTouch('down', w1.x, w1.y); await sleep(500); await fireTouch('cancel', w1.x, w1.y); await A.waitForSelector('#wl-bubble', { timeout: 6000 }); await sleep(400);
+    let a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen, 'pointercancel path ' + JSON.stringify(a)); await A.keyboard.press('Escape'); await sleep(400);
+    await fireTouch('down', w1.x, w1.y); await sleep(420); await fireTouch('ctx', w1.x, w1.y); await A.waitForSelector('#wl-bubble', { timeout: 3000 }); await sleep(300);
+    a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen, 'contextmenu path ' + JSON.stringify(a)); await A.keyboard.press('Escape'); await sleep(400);
+    await fireTouch('down', w1.x, w1.y); await sleep(100); await fireTouch('move', w1.x, w1.y); await fireTouch('cancel', w1.x, w1.y); await sleep(1500); assert(!(await A.$('#wl-bubble')), 'a scroll gesture opened the bubble'); void w;
+  });
+  await step('PDF PAGE view: native touch selection (simulated) → docked bar (🖍 first, our handles hidden); 🖍 saves the whole phrase; tap on a highlight edits it; toolbar 🖍 + select mode work', async () => {
+    const before = (await pdfHls(A)).length; const w = await pdfWord(A, 3); await sleep(300); const w1 = await pdfWord(A, 3); const c = await A.createCDPSession();
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(w1.x), y: Math.round(w1.y) }] }); await sleep(450);
+    await A.evaluate((nth) => { const spans = [...document.querySelectorAll('.pdf-tl span')].filter((sp) => /harbour/.test(sp.textContent)); const a = spans[nth], b = spans[nth + 2]; const m = /harbour/.exec(a.firstChild.data); const sel = getSelection(); sel.setBaseAndExtent(a.firstChild, m.index, b.firstChild, b.firstChild.data.length); }, w1.nth);
+    await sleep(700); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await sleep(600);
+    assert(!(await A.$('#wl-bubble')), 'bubble over the selection'); await menu(A); assert((await A.evaluate(() => document.querySelector('#an-menu').firstElementChild.id)) === 'an-hl', 'first item');
+    assert((await A.evaluate(() => ['start', 'end'].filter((x) => { const e = document.querySelector('#an-h-' + x); return e && e.style.visibility !== 'hidden'; }).length)) === 0, 'our handles over native ones');
+    const selTxt = await A.evaluate(() => getSelection().toString().replace(/\s+/g, '')); await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); await sleep(300);
+    let r = await pdfHls(A); assert(r.length === before + 1, 'count ' + r.length); const nw = r.find((x) => x.text.replace(/\s+/g, '') === selTxt); assert(nw && nw.text.length > w.word.length, JSON.stringify(r.map((x) => x.text)));
+    await click(A, '#an-save'); await sleep(300);
+    // tap on the highlight opens its editor
+    const xy = await A.evaluate(() => { const r = [...CSS.highlights].filter(([k]) => /^folio-hl-/.test(k) && !/noted/.test(k)).flatMap(([, v]) => [...v]).pop(); const q = r.getClientRects()[0]; return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; });
+    await touchTap(A, xy.x, xy.y); await A.waitForSelector('#an-save', { timeout: 4000 }); await click(A, '#an-save'); await sleep(300);
+    // select mode from the toolbar
+    await click(A, '#r-hl'); await sleep(300); assert(await A.evaluate(() => document.querySelector('#r-hl').classList.contains('on')), 'select mode not lit'); const w4 = await pdfWord(A, 6); await sleep(300); const w5 = await pdfWord(A, 6);
+    await touchTap(A, w5.x, w5.y); await menu(A); await sleep(300); const hs = await A.evaluate(() => ['start', 'end'].filter((x) => { const e = document.querySelector('#an-h-' + x); return e && e.style.visibility !== 'hidden'; }).length); assert(hs === 2, 'handles ' + hs); void w4;
+    await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); r = await pdfHls(A); assert(r.length === before + 2, 'select-mode highlight missing ' + r.length); await click(A, '#an-save'); await sleep(300);
+    await c.detach(); return r.length + ' highlights';
+  });
+  await step('PDF: highlights made in the page view show in the Text view (found by their text) and vice versa; reload repaints; the ✎ list shows page numbers', async () => {
+    const pv = (await pdfHls(A)).filter((x) => x.loc.pv); const first = pv[0].text.replace(/\s+/g, '');
+    await close(A); await pdfPageOpen(A, true); await sleep(800);
+    const t1 = await paintedPdf(A); assert(t1.some((x) => x === first), 'page-view highlight not painted in text view: ' + JSON.stringify(t1.slice(0, 5)));
+    // a text-view highlight → page view
+    const pos = await A.evaluate(() => { const p = document.querySelectorAll('.pdf-tpage[data-filled] > p')[2]; p.scrollIntoView({ block: 'center' }); const n = document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode(); const m = /Chapter/.exec(n.data); const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); getSelection().removeAllRanges(); getSelection().addRange(r); return m[0]; });
+    await menu(A); await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); await click(A, '#an-save'); await sleep(300);
+    await close(A); await pdfPageOpen(A, false); await A.evaluate(() => { const n = document.querySelector('#pdf-page-num'); n.value = 1; n.dispatchEvent(new Event('change')); }); await until(() => A.evaluate(() => !!document.querySelector('.pdf-page[data-page="1"] .pdf-tl span')), 10000, 'page 1 text layer'); await sleep(900); const t2 = await paintedPdf(A); assert(t2.includes(first), 'page view paint (page 1): ' + JSON.stringify(t2));
+    await A.evaluate(() => { const n = document.querySelector('#pdf-page-num'); n.value = 3; n.dispatchEvent(new Event('change')); }); await until(() => A.evaluate(() => !!document.querySelector('.pdf-page[data-page="3"] .pdf-tl span')), 10000, 'page 3 text layer'); await sleep(900); const t3 = await paintedPdf(A); assert(t3.includes(pos), 'text-view highlight not painted in page view: ' + JSON.stringify(t3) + ' want ' + pos);
+    await click(A, '#r-notes'); await A.waitForSelector('#an-list .an-item'); const labels = await A.evaluate(() => [...document.querySelectorAll('#an-list .an-item small')].map((x) => x.textContent)); assert(labels.length >= 3 && labels.every((x) => /p\. \d+/.test(x)), JSON.stringify(labels));
+    await A.evaluate(() => (window.__folioBack || window.__flimsyBack)()); await sleep(200);
+    for (const x of await pdfHls(A)) await A.evaluate(async (id) => { await (await import('./js/annots.js')).remove(id); }, x.id); await sleep(300); await close(A); return labels.join(' | ');
+  });
   await step('Sync: highlights (CFI range, full text, colour, note) travel through the glossary Drive file; the other device paints them; library file stays free of them', async () => {
     await importFiles(P1, BOOK); await importFiles(P2, BOOK); for (const p of [P1, P2]) await p.evaluate(async () => (await import('./js/google.js')).syncTuning.minGap = 3600e3);
     await P1.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(P1); await rendered(P1); await toStart(P1);

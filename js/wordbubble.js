@@ -139,7 +139,9 @@ export function attachWordHold(target, host) {
     st = { x: e.clientX, y: e.clientY, id: e.pointerId, type: e.pointerType, t0: Date.now(), timer: setTimeout(fire, wordHoldSeconds() * 1000) };
   };
   const move = (e) => { if (st && e.pointerId === st.id && Math.hypot(e.clientX - st.x, e.clientY - st.y) > MOVE_PX) cancel(); };
-  const up = (e) => { if (st && e.pointerId === st.id) cancel(); };
+  // Android WebView: a long press often ends in pointercancel (+ contextmenu) instead of pointerup. A stationary touch that has been down for a while keeps its timer,
+  // and fire() itself checks that no native selection took over; a contextmenu on a pending touch hold is treated as the long press.
+  const up = (e) => { if (!st || e.pointerId !== st.id) return; if (e.type === 'pointercancel' && st.type === 'touch' && Date.now() - st.t0 > 350) return; cancel(); };
   target.addEventListener('pointerdown', down, true); target.addEventListener('pointermove', move, true);
   target.addEventListener('pointerup', up, true); target.addEventListener('pointercancel', up, true);
   target.addEventListener('touchmove', cancel, { passive: true, capture: true }); target.addEventListener('scroll', cancel, true);
@@ -147,7 +149,7 @@ export function attachWordHold(target, host) {
   // while a hold is pending (and just after it fired) no native text selection / callout may start; the release must not turn the page or toggle the toolbars
   // (v0.5.8: only a touch press that has lasted long enough to be a native long-press selection is suppressed; mouse drags and double-taps select normally, so highlights can start anywhere)
   // v0.5.12: a touch long-press now starts the NATIVE text selection (the OS handles + our docked bar with 🖍 Highlight); only the moment right after a bubble opened is quiet
-  const quiet = (e) => { if (Date.now() < armedUntil) e.preventDefault(); };
+  const quiet = (e) => { if (Date.now() < armedUntil) { e.preventDefault(); return; } if (e.type === 'contextmenu' && st && st.type === 'touch') { try { const sl = doc.defaultView.getSelection(); if (sl && sl.rangeCount && !sl.isCollapsed) return; } catch { /* ignore */ } e.preventDefault(); fire(); } };
   for (const t of ['selectstart', 'contextmenu']) target.addEventListener(t, quiet, true);
   target.addEventListener('selectstart', () => { if (st && st.type === 'touch') cancel(); }, true);   // selection began first: it wins over the hold
   doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bubble) { e.preventDefault(); closeBubble(); } }, true);

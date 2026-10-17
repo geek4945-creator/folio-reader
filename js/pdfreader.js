@@ -5,7 +5,7 @@ import { settings, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt } from 
 import { pageBlocks } from './pdftext.js';
 import { attachPinch } from './pinch.js';
 import * as S from './store.js';
-import { openPdfDocument } from './pdf.js';
+import { openPdfDocument, loadPdfjs } from './pdf.js';
 import { fsButton } from './fullscreen.js';
 import { makeLoading, withTimeout } from './openguard.js';
 import { makeFooter, applyFooterSettings, paintFooter, footerToggles, applyScrub, scrubToggle } from './pages.js';
@@ -34,8 +34,8 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'pdf-zout', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
     h('button', { class: 'btn-icon', id: 'pdf-zin', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
     h('button', { class: 'btn-icon', id: 'pdf-fit', 'aria-label': 'Fit width', title: 'Fit width', onclick: () => setZoom(1) }, '⤢'),
-    h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', hidden: true, onclick: () => { if (cur && cur.textMode) AN.toolbarHighlight(pdfAnnotHost()); } }, '🖍'),
-    h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', hidden: true, onclick: showPdfNotes }, '✎'),
+    h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { if (cur) AN.toolbarHighlight(pdfAnnotHost()); } }, '🖍'),
+    h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', onclick: showPdfNotes }, '✎'),
     tocBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
@@ -45,8 +45,8 @@ export async function openPdf(book, blob, opts = {}) {
   cur = { isPdf: true, book, viewer, slider, pageNum, total, pct, el, top, bottom, chrome: true, page: 1, n: 0, zoom: book.pdfZoom || 1, textMode: !!book.pdfText, pages: [], finishedThisSession: false, progress: book.progress || 0, ready: false };
   const c = cur;
   const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
-  attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.textMode && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage'))?.dataset.page || 0),
-    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), highlight: (range) => { if (cur && cur.textMode) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); }, select: (range) => { if (cur && cur.textMode) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
+  attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage, .pdf-page'))?.dataset.page || 0),
+    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); }, select: (range) => { if (cur) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
   AN.attachPdf(pdfAnnotHost(), viewer);
   c.glossaryCtx = gctx;
   try {
@@ -62,6 +62,7 @@ export async function openPdf(book, blob, opts = {}) {
   slider.addEventListener('change', () => goTo(+slider.value));
   pageNum.addEventListener('change', () => goTo(+pageNum.value));
   viewer.addEventListener('click', onTap);
+  viewer.addEventListener('contextmenu', (e) => { if (e.target && e.target.closest && e.target.closest('canvas, .pdf-page') && !e.target.closest('.pdf-tl span')) e.preventDefault(); });   // Android WebView: long-press on the picture must not open the image menu
   setupTouch(c); attachPinch(viewer, pinchHost);
   window.addEventListener('keydown', keyNav); document.addEventListener('visibilitychange', onHide); window.addEventListener('resize', onResize);
   window.__pdf = c;
@@ -133,26 +134,44 @@ function pdfAnnotHost() {
     return null;
   };
   c.__ah = {
-    pdf: true, book: () => c.book, ready: () => cur === c && c.textMode && c.ready, root: () => c.el, annotations: null, contents: () => [pseudo], viewerRect: () => c.viewer.getBoundingClientRect(),
+    pdf: true, book: () => c.book, ready: () => cur === c && c.ready, root: () => c.el, annotations: null, contents: () => [pseudo], viewerRect: () => c.viewer.getBoundingClientRect(),
     paginated: () => false, pageInfo: () => null, next() {}, prev() {}, scroller: () => c.viewer, viewer: c.viewer,
     describe: (contents, range) => {
+      if (!c.textMode) {   // page view: character offsets inside each page's text layer
+        const at = (node, off) => { const el = node.nodeType === 1 ? node : node.parentElement; const box = el && el.closest('.pdf-tl'); if (!box) return null; const r = document.createRange(); r.selectNodeContents(box); r.setEnd(node, off); return { page: +box.dataset.page, off: squash(r.toString()).length }; };
+        const sp = at(range.startContainer, range.startOffset), ep = at(range.endContainer, range.endOffset); if (!sp || !ep) throw new Error('select text on the page');
+        return { fmt: 'pdf', cfiRange: '', loc: { pv: { sp, ep, n: squash((c.viewer.querySelector(`.pdf-tl[data-page="${sp.page}"]`) || { textContent: '' }).textContent).length } }, chapter: '', sec: sp.page, off: sp.off, progress: c.n ? (sp.page - 1) / c.n : 0 };
+      }
       const sp = pos(range.startContainer, range.startOffset, false), ep = pos(range.endContainer, range.endOffset, true); if (!sp || !ep) throw new Error('select text inside the page text');
-      return { fmt: 'pdf', cfiRange: '', loc: { sp, ep }, chapter: '', sec: sp.page, off: sp.idx * 100000 + sp.off, progress: c.n ? (sp.page - 1) / c.n : 0 };
+      return { fmt: 'pdf', cfiRange: '', loc: { sp, ep, r: (() => { const sl = c.pages[sp.page - 1]; return sl ? Math.round(ratioIn(sl, range.startContainer, range.startOffset) * 10000) / 10000 : undefined; })() }, chapter: '', sec: sp.page, off: sp.idx * 100000 + sp.off, progress: c.n ? (sp.page - 1) / c.n : 0 };
     },
     locate: ({ page, idx, off }) => {
       const slot = c.pages[page - 1]; if (!slot || !slot.dataset.filled) return null; const blk = blocksOf(slot)[idx]; if (!blk) return null;
       const w = document.createTreeWalker(blk, NodeFilter.SHOW_TEXT); let n, acc = 0, last = null; while ((n = w.nextNode())) { last = n; if (off <= acc + n.data.length) return { n, o: off - acc }; acc += n.data.length; }
       return last ? { n: last, o: last.data.length } : null;
     },
+    /** The live DOM range of a saved highlight in the CURRENT view (exact where it was made, found by its text in the other view). */
+    rangeOf: (a) => {
+      if (a.fmt !== 'pdf' || !a.loc) return null;
+      const L = a.loc, pageOf = L.sp ? L.sp.page : L.pv ? L.pv.sp.page : 0; const endPage = L.ep ? L.ep.page : L.pv ? L.pv.ep.page : pageOf;
+      if (c.textMode) {
+        if (L.sp && L.ep) { const s0 = pdfAnnotHost().locate(L.sp), e0 = pdfAnnotHost().locate(L.ep); if (!s0 || !e0) return null; const r = document.createRange(); r.setStart(s0.n, s0.o); r.setEnd(e0.n, e0.o); return r.collapsed ? null : r; }
+        const slot = c.pages[pageOf - 1]; return slot && slot.dataset.filled && pageOf === endPage ? findText(slot, a.text, L.pv ? L.pv.sp.off / (L.pv.n || 1) : undefined) : null;
+      }
+      const slot = c.pages.find((x) => +x.dataset.page === pageOf); const box = slot && slot.querySelector('.pdf-tl'); if (!box || !slot.dataset.tl) return null;
+      if (L.pv && pageOf === endPage) { const f = flatten(box); const s0 = L.pv.sp.off, e0 = L.pv.ep.off - 1; if (e0 >= s0 && f.map[s0] && f.map[e0]) return rangeBetween(f.map, s0, e0); return null; }
+      return pageOf === endPage ? findText(box, a.text, L.r) : null;
+    },
     jump: async (a) => {
-      if (!c.textMode) { goTo(a.loc.sp.page); return; } goTo(a.loc.sp.page);
+      const pg = a.loc.sp ? a.loc.sp.page : a.loc.pv ? a.loc.pv.sp.page : a.sec || 1;
+      if (!c.textMode || !a.loc.sp) { goTo(pg); return; } goTo(a.loc.sp.page);
       for (let i = 0; i < 30; i++) { const l = pdfAnnotHost().locate(a.loc.sp); if (l) { const el = l.n.parentElement; c.viewer.scrollTo({ top: Math.max(0, el.offsetTop + (el.offsetParent ? el.offsetParent.offsetTop : 0) - c.viewer.clientHeight * 0.3) }); return; } await new Promise((r) => setTimeout(r, 100)); }
     },
-    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur && cur.textMode) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
+    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
   };
   return c.__ah;
 }
-window.addEventListener('folio-annots', () => { if (cur && cur.textMode) AN.repaintAll(pdfAnnotHost()); });
+window.addEventListener('folio-annots', () => { if (cur) AN.repaintAll(pdfAnnotHost()); });
 function showPdfNotes() {
   const c = cur; if (!c) return; const host = pdfAnnotHost(); let w;
   const rebuild = async () => { w.body.replaceChildren(await AN.listTab(host, rebuild, () => w.close())); };
@@ -202,9 +221,38 @@ async function renderPage(c, slot) {
     slot.style.width = vp.width + 'px'; slot.style.height = vp.height + 'px';
     const task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null, background: 'rgb(255,255,255)' });
     slot._task = task; await task.promise; if (cur !== c || slot._key !== key) return;
-    slot.replaceChildren(canvas); slot.dataset.rendered = '1'; page.cleanup();
+    slot.replaceChildren(canvas); slot.dataset.rendered = '1';
+    await addTextLayer(c, slot, page, vp, key); page.cleanup();
   } catch (e) { if (!(e && e.name === 'RenderingCancelledException')) { console.warn('render', n, e); slot._key = null; } }
 }
+
+const repaintSoon = debounce(() => { if (cur && cur.ready) AN.repaintAll(pdfAnnotHost()); }, 120);
+/** v0.5.13: an invisible pdf.js text layer over the canvas, so the page view has real selectable text (long-press / drag handles, word bubble, highlights). */
+async function addTextLayer(c, slot, page, vp, key) {
+  try {
+    const lib = await loadPdfjs(); if (!lib.TextLayer || cur !== c || slot._key !== key) return;
+    const box = h('div', { class: 'pdf-tl textLayer', 'data-page': slot.dataset.page }); box.style.setProperty('--scale-factor', String(vp.scale)); box.style.width = vp.width + 'px'; box.style.height = vp.height + 'px';
+    slot.append(box);
+    const tl = new lib.TextLayer({ textContentSource: page.streamTextContent({ includeMarkedContent: false }), container: box, viewport: vp }); await tl.render();
+    box.append(h('div', { class: 'endOfContent' })); slot.dataset.tl = '1';
+    if (cur === c) repaintSoon();
+  } catch (e) { if (!(e && e.name === 'AbortException')) console.warn('text layer', e); }
+}
+/** The non-whitespace characters under `root` with the DOM position of each (so a highlight can be found again whatever the markup). */
+function flatten(root) {
+  let str = ''; const map = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n;
+  while ((n = w.nextNode())) { const d = n.data; for (let i = 0; i < d.length; i++) { if (!/\s/.test(d[i])) { str += d[i]; map.push([n, i]); } } }
+  return { str, map };
+}
+const rangeBetween = (map, a, b) => { try { const r = document.createRange(); r.setStart(map[a][0], map[a][1]); r.setEnd(map[b][0], map[b][1] + 1); return r; } catch { return null; } };
+const squash = (t) => String(t || '').replace(/\s+/g, '');
+/** A saved text found again inside one page's text (works for highlights made in the other view). */
+function findText(root, text, hint) {   // `hint` (0..1) = where on the page it was made: of several identical matches the nearest one wins
+  const f = flatten(root); const q = squash(text); if (!q || !f.str) return null; let i = f.str.indexOf(q); if (i < 0) return null;
+  if (hint != null && isFinite(hint)) { let best = i, bd = Math.abs(i / f.str.length - hint); for (let j = f.str.indexOf(q, i + 1); j >= 0; j = f.str.indexOf(q, j + 1)) { const d = Math.abs(j / f.str.length - hint); if (d < bd) { bd = d; best = j; } } i = best; }
+  return rangeBetween(f.map, i, i + q.length - 1);
+}
+const ratioIn = (root, node, off) => { try { const r = document.createRange(); r.selectNodeContents(root); r.setEnd(node, off); const tot = squash(root.textContent).length; return tot ? squash(r.toString()).length / tot : 0; } catch { return 0; } };
 
 /* ---------- navigation ---------- */
 function goTo(n) {
@@ -242,6 +290,7 @@ function syncUI() {
 }
 function onTap(e) {
   const c = cur; if (!c || Date.now() - (c.gestureAt || 0) < 450) return;
+  try { const sel = window.getSelection(); if (sel && !sel.isCollapsed && sel.toString().trim() && c.viewer.contains(sel.anchorNode)) return; } catch { /* ignore */ }   // a tap with a selection active is not a page / toolbar tap
   const r = c.viewer.getBoundingClientRect(); const ratio = (e.clientX - r.left) / r.width; const mode = settings.get('tapZones');
   if (c.mode === 'paged' && mode !== 'off') {
     const left = mode === 'inverted' ? next : prev, right = mode === 'inverted' ? prev : next;
@@ -263,7 +312,7 @@ export function setZoom(z) { const c = cur; if (!c || c.textMode) return; z = Ma
   draw(); if (c.mode === 'scroll') { const p = c.pages[c.page - 1]; if (p) c.viewer.scrollTop = p.offsetTop + keep * p.offsetHeight; }
   updateZoomUI(); saveSoon(); }
 const zoomBy = (f) => setZoom((cur?.zoom || 1) * f);
-function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; for (const id of ['pdf-zout', 'pdf-zin', 'pdf-fit']) { const e = $('#' + id); if (e) e.hidden = tm; } const nb = $('#r-notes'); if (nb) nb.hidden = !tm; const hb = $('#r-hl'); if (hb) hb.hidden = !tm; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
+function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; for (const id of ['pdf-zout', 'pdf-zin', 'pdf-fit']) { const e = $('#' + id); if (e) e.hidden = tm; }  $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
 function setupTouch(c) {
   const v = c.viewer; let p0 = null, sx = 0, sy = 0, st = 0, swiping = false;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
