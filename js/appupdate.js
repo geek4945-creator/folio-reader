@@ -5,7 +5,7 @@ import { h, toast } from './util.js';
 const REPO = 'geek4945-creator/folio-reader', ASSET = '^folio-reader.*\\.apk$';
 const DAY = 24 * 3600 * 1000, K_LAST = 'folio.updcheck', K_AVAIL = 'folio.updavail';
 
-export const isAndroidApp = () => { try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch { return false; } };
+export const isAndroidApp = () => { try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform() && typeof window.Capacitor.registerPlugin === 'function'); } catch { return false; } };
 const plugin = () => window.Capacitor.registerPlugin('AppUpdater');
 
 /** Once a day, silently, when the app opens: remember a newer release and tell the user where to tap. */
