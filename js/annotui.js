@@ -3,7 +3,7 @@
 // as a fallback), tap-a-highlight editor, and the "Highlights & Notes" list for the Contents sheet.
 import { h, toast, sheet, pushLayer } from './util.js';
 import * as A from './annots.js';
-import { highlightSupported, lastWordHold, wordBubbleOpen } from './wordbubble.js';
+import { highlightSupported, lastWordHold, wordBubbleOpen, wordAt } from './wordbubble.js';
 
 let ui = null;      // { host, contents, range, text, menu, hs, he, drag }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,9 +67,10 @@ export function paintPdf(contents, list, host) {
 function ensureTopCss() { if (document.getElementById('an-top-css')) return; const st = document.createElement('style'); st.id = 'an-top-css'; st.textContent = hlCss(); document.head.append(st); }
 /** Wire selection + tap-a-highlight for a PDF text view (the viewer lives in the app document, so the contents object is the app window). */
 export function attachPdf(host, viewer) {
-  const contents = host.contents()[0]; let t = 0;
+  const contents = host.contents()[0]; let t = 0; if (!document.__anT) { document.__anT = true; trackTouch(document); }
+  for (const ev of ['touchend', 'pointerup', 'mouseup']) viewer.addEventListener(ev, () => { clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); }, 380); }, true);
   document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); else if (ui && ui.contents === contents && !(s && s.rangeCount && !s.isCollapsed)) onSelectionChange(host, contents); }, 220); });
-  viewer.addEventListener('click', (e) => { if (!host.ready()) return; const s = window.getSelection(); if (s && !s.isCollapsed && s.toString().trim()) return; const a = hitTest(contents, e.clientX, e.clientY); if (a) { e.stopPropagation(); e.preventDefault(); openEditor(host, a, {}); } }, true);
+  viewer.addEventListener('click', (e) => { if (!host.ready()) return; if (armed) { e.stopPropagation(); e.preventDefault(); armedTap(host, contents, e.clientX, e.clientY); return; } const s = window.getSelection(); if (s && !s.isCollapsed && s.toString().trim()) return; const a = hitTest(contents, e.clientX, e.clientY); if (a) { e.stopPropagation(); e.preventDefault(); openEditor(host, a, {}); } }, true);
   repaintAll(host);
 }
 
@@ -86,6 +87,16 @@ function caretAt(doc, x, y) {
     if (doc.caretRangeFromPoint) { const r = doc.caretRangeFromPoint(x, y); if (r) return { n: r.startContainer, o: r.startOffset }; }
   } catch { /* ignore */ }
   return null;
+}
+
+/* ------------------------------------------------------------------ touch tracking (v0.5.12) */
+// A selection that appears while a finger is (or just was) on the screen is a NATIVE touch selection: the OS draws its own handles (iOS / Android), so ours stay hidden.
+let touchDown = false, lastTouch = 0;
+const touchRecent = () => touchDown || Date.now() - lastTouch < 2500;
+function trackTouch(target) {
+  target.addEventListener('touchstart', () => { touchDown = true; lastTouch = Date.now(); }, { passive: true, capture: true });
+  const end = () => { touchDown = false; lastTouch = Date.now(); };
+  target.addEventListener('touchend', end, { passive: true, capture: true }); target.addEventListener('touchcancel', end, { passive: true, capture: true });
 }
 
 /* ------------------------------------------------------------------ selection menu + handles */
@@ -111,31 +122,30 @@ function showUi(host, contents, range, opts = {}) {
       h('button', { class: 'an-btn', id: 'an-x', 'aria-label': 'Close', onclick: () => closeSelectionUI(true) }, '✕'));
     menu.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the selection alive
     const mkHandle = (which) => { const el = h('div', { class: 'an-handle ' + which, id: 'an-h-' + which, role: 'slider', 'aria-label': which === 'start' ? 'Selection start' : 'Selection end' }); el.addEventListener('pointerdown', (e) => beginDrag(e, which)); return el; };
-    ui = { host, contents, range, text, menu, hs: mkHandle('start'), he: mkHandle('end'), drag: null, edge: 0 };
+    const press = () => { if (ui) ui.pressed = Date.now(); };   // a tap on the bar may collapse the native selection first: don't close the bar under the finger
+    for (const ev of ['pointerdown', 'touchstart', 'mousedown']) menu.addEventListener(ev, press, true);
+    ui = { host, contents, range, text, menu, hs: mkHandle('start'), he: mkHandle('end'), drag: null, edge: 0, native: !!opts.native, pressed: 0 };
     root.append(menu, ui.hs, ui.he); ui.unlayer = pushLayer(() => closeSelectionUI(true));   // Back closes the menu first
   }
-  ui.host = host; ui.contents = contents; ui.range = range; ui.text = text; if (opts.focus !== false) place();
+  ui.host = host; ui.contents = contents; ui.range = range; ui.text = text; if (opts.native != null) ui.native = !!opts.native; if (opts.focus !== false) place();
 }
 function place() {
   if (!ui) return; const { contents, range, menu, hs, he } = ui;
   let rs = []; try { rs = rectsOf(contents, range); } catch { /* ignore */ }
-  const root = ui.host.root().getBoundingClientRect();
-  if (!rs.length) { menu.style.visibility = 'hidden'; hs.style.visibility = he.style.visibility = 'hidden'; return; }
-  menu.style.visibility = ''; hs.style.visibility = he.style.visibility = 'hidden';
-  const first = rs[0], last = rs[rs.length - 1]; const vr = ui.host.viewerRect();
-  const startIn = range.getClientRects().length && contents.__startVisible !== false;
-  // the handles only exist where the range's real start / end are on screen
-  const all = [...range.getClientRects()]; const off = frameOff(contents.document);
-  const sr = all[0], er = all[all.length - 1];
+  const root = ui.host.root(); const rr = root.getBoundingClientRect(); const vr = ui.host.viewerRect();
+  // v0.5.12: the bar is DOCKED (bottom of the page, above the bottom bar; top when the selection is down there) so it never sits under the OS callout / loupe next to the selection
+  const hidden = root.classList.contains('chrome-hidden'); const bar = hidden ? 10 : 62;
+  const mw = menu.offsetWidth || 300, mh = menu.offsetHeight || 44; const bottomTop = Math.min(rr.bottom, innerHeight) - mh - bar - 4; const topTop = Math.max(rr.top, 0) + (hidden ? 10 : 58);
+  const selTop = rs.length ? rs[0].top : -1, selBottom = rs.length ? rs[rs.length - 1].bottom : -1;
+  const top = rs.length && selBottom > bottomTop - 14 && selTop < bottomTop + mh + 6 ? topTop : bottomTop;
+  menu.style.visibility = ''; menu.style.top = Math.max(4, top) + 'px'; menu.style.left = Math.max(6, Math.min(innerWidth - mw - 6, rr.left + (rr.width - mw) / 2)) + 'px';
+  hs.style.visibility = he.style.visibility = 'hidden';
+  if (ui.native || !rs.length) return;   // the OS draws its own handles for a touch selection
+  const startIn = range.getClientRects().length && contents.__startVisible !== false; void startIn;
+  const all = [...range.getClientRects()]; const off = frameOff(contents.document); const sr = all[0], er = all[all.length - 1];
   const vis = (r) => r && r.left + off.x >= vr.left - 2 && r.right + off.x <= vr.right + 2 && r.top + off.y >= vr.top - 2 && r.bottom + off.y <= vr.bottom + 2;
-  void startIn;
-  if (vis(sr)) { hs.style.visibility = ''; hs.style.left = (sr.left + off.x - root.left) + 'px'; hs.style.top = (sr.bottom + off.y - root.top) + 'px'; }
-  if (vis(er)) { he.style.visibility = ''; he.style.left = (er.right + off.x - root.left) + 'px'; he.style.top = (er.bottom + off.y - root.top) + 'px'; }
-  const mw = menu.offsetWidth || 300, mh = menu.offsetHeight || 44; const cx = (first.left + Math.min(first.right, last.right)) / 2 || first.left;
-  let top = first.top - mh - 12; if (top < root.top + 56) top = last.bottom + 34;   // no room above: below the selection (past the handles)
-  top = Math.max(root.top + 4, Math.min(root.bottom - mh - 4, top));
-  const left = Math.max(root.left + 6, Math.min(root.right - mw - 6, (first.left + last.right) / 2 - mw / 2 + (cx - cx)));
-  menu.style.left = (left - root.left) + 'px'; menu.style.top = (top - root.top) + 'px';
+  if (vis(sr)) { hs.style.visibility = ''; hs.style.left = (sr.left + off.x - rr.left) + 'px'; hs.style.top = (sr.bottom + off.y - rr.top) + 'px'; }
+  if (vis(er)) { he.style.visibility = ''; he.style.left = (er.right + off.x - rr.left) + 'px'; he.style.top = (er.bottom + off.y - rr.top) + 'px'; }
 }
 export const reposition = () => { if (ui && !ui.drag) place(); };
 
@@ -173,17 +183,17 @@ async function edgeScroll(u) {
 /** Open the selection menu + handles on a range (used by the word bubble's "Highlight…" and by tests). */
 export function selectRange(host, contents, range) {
   try { const s = contents.window.getSelection(); s.removeAllRanges(); s.addRange(range); } catch { /* ignore */ }
-  showUi(host, contents, range);
+  showUi(host, contents, range, { native: false }); if (ui) ui.prog = true;   // set by us: our handles stay (the OS did not make this selection)
 }
 /** A native selection changed inside this section document. */
 export function onSelectionChange(host, contents) {
   if (!host.ready()) return;
   const dragging = ui && ui.drag; if (dragging) return;
   let s; try { s = contents.window.getSelection(); } catch { return; }
-  if (!s || !s.rangeCount || s.isCollapsed) { if (ui && ui.contents === contents) closeSelectionUI(false); return; }
+  if (!s || !s.rangeCount || s.isCollapsed) { if (ui && ui.contents === contents && !ui.rec && Date.now() - ui.pressed > 1200) closeSelectionUI(false); return; }
   if (wordBubbleOpen() || Date.now() - lastWordHold() < 1400) return;
   const range = s.getRangeAt(0).cloneRange(); if (!rangeText(range)) return;
-  showUi(host, contents, range);
+  showUi(host, contents, range, { native: ui && (ui.prog || ui.drag) ? ui.native : touchRecent() });
 }
 
 async function createFrom(color, withNote) {
@@ -245,10 +255,40 @@ export function hitTest(contents, x, y) {
 }
 export function attach(contents, host) {
   const doc = contents.document; if (doc.__an) return; doc.__an = true;
-  let t = 0; doc.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(() => { const hh = host(); if (hh) onSelectionChange(hh, contents); }, 220); });
+  let t = 0; const check = (ms) => { clearTimeout(t); t = setTimeout(() => { const hh = host(); if (hh) onSelectionChange(hh, contents); }, ms); };
+  doc.addEventListener('selectionchange', () => check(220));
+  // iOS fires selectionchange late (or only when the loupe is released): look again when the finger / mouse lifts
+  for (const ev of ['touchend', 'pointerup', 'mouseup']) doc.addEventListener(ev, () => check(380), true);
+  trackTouch(doc);
   const hh = host(); if (hh) paintLater(contents, hh);
 }
 async function paintLater(contents, host) { try { paint(contents, await A.forBook(host.book()), host); } catch { /* ignore */ } }
+/* ------------------------------------------------------------------ toolbar 🖍 button + tap-a-word select mode (v0.5.12) */
+let armed = null, armTimer = 0;
+const armUi = () => { const b = document.getElementById('r-hl'); if (b) b.classList.toggle('on', !!armed); };
+export const selectModeOn = () => !!armed;
+export function disarm() { armed = null; clearTimeout(armTimer); armUi(); }
+/** The 🖍 button in the reader's top bar: highlight the current selection; with nothing selected, switch on "select text" mode (the next tap on a word selects it, with handles). */
+export async function toolbarHighlight(host) {
+  if (armed) { disarm(); toast('Select mode off'); return 'off'; }
+  if (ui) { quickFromUi(); return 'selection'; }
+  for (const c of host.contents()) {
+    try { const s = c.window.getSelection(); if (s && s.rangeCount && !s.isCollapsed) { const r = s.getRangeAt(0).cloneRange(); if (rangeText(r)) { showUi(host, c, r, { native: touchRecent() }); quickFromUi(); return 'selection'; } } } catch { /* ignore */ }
+  }
+  armed = host; armUi(); clearTimeout(armTimer); armTimer = setTimeout(disarm, 20000); toast('Tap a word to start selecting, then drag the handles — 🖍 saves it');
+  return 'armed';
+}
+/** A tap while select mode is on: select the word under it (our handles + bar). */
+export function armedTap(host, contents, x, y) {
+  const h0 = armed; disarm(); if (!h0) return false;
+  const w = wordAt(contents.document, x, y); if (!w) { toast('No word there — tap on text'); return true; }
+  selectRange(host, contents, w.range); return true;
+}
+export function selectModeTap(host, e) {
+  if (!armed) return false;
+  try { const contents = host.contents().find((c) => c.window === e.view); if (!contents) return false; return armedTap(host, contents, e.clientX, e.clientY); } catch { return false; }
+}
+
 /** Called from the reader's tap handler: opens the editor when a highlight was tapped. */
 export function annotTap(host, e) {
   try {

@@ -36,6 +36,7 @@ export async function openReader(id, opts = {}) {
     h('button', { class: 'btn-icon', id: 'r-back', 'aria-label': 'Close book', onclick: closeReader }, '‹'),
     h('div', { class: 'grow r-titlewrap' }, title, ovr),
     h('button', { class: 'btn-icon', id: 'r-link', 'aria-label': 'Find my place (audiobook)', title: 'Find my place (audiobook)', hidden: true, onclick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: book.id })) }, '🎧'),
+    h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { const a = annotHost(); if (a) AN.toolbarHighlight(a); } }, '🖍'),
     h('button', { class: 'btn-icon', id: 'r-toc', 'aria-label': 'Table of contents', onclick: showToc }, '☰'),
     bmBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
@@ -173,6 +174,7 @@ settings.onChange((p) => { if ('glossaryHighlight' in p) refreshAllHighlights();
 function onTap(e) {
   if (Date.now() - swipedAt < 400) return;
   try { if (e.view.getSelection().toString()) return; } catch { /* ignore */ }
+  if (cur && AN.selectModeTap(annotHost(), e)) return;
   if (cur && AN.annotTap(annotHost(), e)) return;
   if (e.target && e.target.closest && e.target.closest('a[href]')) return;
   if (justPinched()) return;
@@ -411,7 +413,7 @@ export function showSettings() {
 /* ----- close ----- */
 export async function closeReader() {
   if (pdfCurrent()) return closePdf();
-  const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true);
+  const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true); AN.disarm();
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   c.closed = true; c.pager && c.pager.stop();
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;

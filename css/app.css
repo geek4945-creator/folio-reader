@@ -333,7 +333,7 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .rn-sub { margin-top:.3rem; font-size:.85rem; } .rn-pct { font-weight:600; }
 
 /* ---- highlights & notes (v0.5.8) ---- */
-.an-menu { position: absolute; z-index: 60; display: flex; align-items: center; gap: 4px; padding: 5px 7px; background: var(--panel, #fff); color: var(--fg, #222); border: 1px solid var(--line, #0003); border-radius: 22px; box-shadow: 0 4px 18px #0004; max-width: calc(100% - 12px); flex-wrap: wrap; justify-content: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.an-menu { position: fixed; z-index: 85; display: flex; align-items: center; gap: 4px; padding: 5px 7px; background: var(--panel, #fff); color: var(--fg, #222); border: 1px solid var(--line, #0003); border-radius: 22px; box-shadow: 0 4px 18px #0004; max-width: calc(100% - 12px); flex-wrap: wrap; justify-content: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
 .an-menu .an-dot, .an-colors .an-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #0003; padding: 0; flex: none; }
 .an-colors { display: flex; gap: 10px; margin: 10px 0; } .an-colors .an-dot { width: 34px; height: 34px; } .an-dot.on { outline: 3px solid var(--accent, #36c); outline-offset: 1px; }
 .an-btn { background: none; border: 0; color: inherit; font: inherit; font-size: .86rem; padding: 6px 7px; border-radius: 12px; white-space: nowrap; }
@@ -351,3 +351,5 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .an-main { cursor: pointer; min-width: 0; } .an-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 .an-notebox { margin-top: 4px; padding: 5px 8px; background: #0001; border-radius: 6px; font-size: .9em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .an-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
+
+#r-hl.on { background: #ffd54f66; border-radius: 10px; }

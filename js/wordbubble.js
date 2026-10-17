@@ -120,6 +120,7 @@ export function attachWordHold(target, host) {
   const fire = async () => {
     if (!st) return; const { x, y } = st; cancel();
     if (!settings.get('wordLookup') || (host.ready && !host.ready())) return;
+    try { const sl = doc.defaultView.getSelection(); if (sl && sl.rangeCount && !sl.isCollapsed) return; } catch { /* ignore */ }   // something is selected: the selection bar is in charge
     const w = wordAt(doc, x, y); if (!w) return;
     swallowUntil = Date.now() + 900; armedUntil = Date.now() + 900; heldAt = Date.now();
     try { if (navigator.vibrate) navigator.vibrate(15); } catch { /* unsupported */ }
@@ -145,8 +146,10 @@ export function attachWordHold(target, host) {
   doc.addEventListener('visibilitychange', cancel);
   // while a hold is pending (and just after it fired) no native text selection / callout may start; the release must not turn the page or toggle the toolbars
   // (v0.5.8: only a touch press that has lasted long enough to be a native long-press selection is suppressed; mouse drags and double-taps select normally, so highlights can start anywhere)
-  const quiet = (e) => { if (Date.now() < armedUntil || (st && e.type === 'contextmenu') || (st && st.type === 'touch' && Date.now() - st.t0 > 280)) e.preventDefault(); };
+  // v0.5.12: a touch long-press now starts the NATIVE text selection (the OS handles + our docked bar with 🖍 Highlight); only the moment right after a bubble opened is quiet
+  const quiet = (e) => { if (Date.now() < armedUntil) e.preventDefault(); };
   for (const t of ['selectstart', 'contextmenu']) target.addEventListener(t, quiet, true);
+  target.addEventListener('selectstart', () => { if (st && st.type === 'touch') cancel(); }, true);   // selection began first: it wins over the hold
   doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bubble) { e.preventDefault(); closeBubble(); } }, true);
   target.addEventListener('click', (e) => { if (Date.now() < swallowUntil) { e.stopPropagation(); e.preventDefault(); swallowUntil = 0; } }, true);
 }

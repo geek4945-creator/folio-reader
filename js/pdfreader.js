@@ -34,6 +34,7 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'pdf-zout', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
     h('button', { class: 'btn-icon', id: 'pdf-zin', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
     h('button', { class: 'btn-icon', id: 'pdf-fit', 'aria-label': 'Fit width', title: 'Fit width', onclick: () => setZoom(1) }, '⤢'),
+    h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', hidden: true, onclick: () => { if (cur && cur.textMode) AN.toolbarHighlight(pdfAnnotHost()); } }, '🖍'),
     h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', hidden: true, onclick: showPdfNotes }, '✎'),
     tocBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
@@ -262,7 +263,7 @@ export function setZoom(z) { const c = cur; if (!c || c.textMode) return; z = Ma
   draw(); if (c.mode === 'scroll') { const p = c.pages[c.page - 1]; if (p) c.viewer.scrollTop = p.offsetTop + keep * p.offsetHeight; }
   updateZoomUI(); saveSoon(); }
 const zoomBy = (f) => setZoom((cur?.zoom || 1) * f);
-function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; for (const id of ['pdf-zout', 'pdf-zin', 'pdf-fit']) { const e = $('#' + id); if (e) e.hidden = tm; } const nb = $('#r-notes'); if (nb) nb.hidden = !tm; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
+function updateZoomUI() { const c = cur; if (!c) return; const tm = !!c.textMode; for (const id of ['pdf-zout', 'pdf-zin', 'pdf-fit']) { const e = $('#' + id); if (e) e.hidden = tm; } const nb = $('#r-notes'); if (nb) nb.hidden = !tm; const hb = $('#r-hl'); if (hb) hb.hidden = !tm; $('#pdf-fit') && ($('#pdf-fit').classList.toggle('on', c.zoom === 1 && !tm), $('#pdf-fit').disabled = tm); $('#pdf-zout').disabled = tm || c.zoom <= ZMIN; $('#pdf-zin').disabled = tm || c.zoom >= ZMAX; }
 function setupTouch(c) {
   const v = c.viewer; let p0 = null, sx = 0, sy = 0, st = 0, swiping = false;
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
@@ -359,7 +360,7 @@ settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.text
 
 /* ---------- close ---------- */
 export async function closePdf() {
-  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true);
+  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true); AN.disarm();
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
   cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }

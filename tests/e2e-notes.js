@@ -189,6 +189,49 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     S.dict.reply = () => ({ status: 200, body: [{ word: 'harbour', phonetic: '', meanings: [{ partOfSpeech: 'noun', definitions: [{ definition: 'A sheltered port.' }] }] }] });
     return JSON.stringify(a);
   });
+  // v0.5.12: a native touch selection (long-press + OS handles, double-tap) → the docked bar with 🖍 Highlight first; our own handles stay hidden (the OS draws its own)
+  const touchTap = async (page, x, y, { between } = {}) => { const c = await page.createCDPSession(); await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(x), y: Math.round(y) }] }); if (between) await between(); await sleep(80); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await c.detach(); };
+  const selRect = (page) => page.evaluate(() => { for (const c of window.__reader.rendition.getContents()) { const s = c.window.getSelection(); if (s.rangeCount && !s.isCollapsed) { const r = s.getRangeAt(0).getBoundingClientRect(); const f = c.document.defaultView.frameElement.getBoundingClientRect(); return { left: r.left + f.left, right: r.right + f.left, top: r.top + f.top, bottom: r.bottom + f.top }; } } return null; });
+  const barRect = (page) => page.evaluate(() => { const m = document.querySelector('#an-menu'); if (!m) return null; const r = m.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, vis: m.style.visibility !== 'hidden', first: m.firstElementChild.id, w: innerWidth, h: innerHeight }; });
+  const hlHandlesShown = (page) => page.evaluate(() => ['start', 'end'].filter((w) => { const e = document.querySelector('#an-h-' + w); return e && e.style.visibility !== 'hidden'; }).length);
+  const nativeSelectByTouch = async (page, word, holdMs = 450) => {
+    const p = await wordXY(page, word); assert(p, 'word not visible: ' + word); const c = await page.createCDPSession();
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(p.x), y: Math.round(p.y) }] }); await sleep(holdMs);
+    await selectText(page, word, word);   // what the OS does on a long-press: selects the word while the finger is still down
+    await sleep(700); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await c.detach(); await sleep(500);
+  };
+  await step('Native touch selection (long-press → OS selects the word): no word bubble steals it; the docked bar shows 🖍 Highlight FIRST, away from the selection, our handles hidden', async () => {
+    await toStart(A); await nativeSelectByTouch(A, 'harbour');
+    assert(!(await A.$('#wl-bubble')), 'the word-hold bubble opened over the native selection'); const m = await menu(A); assert(m, 'no bar');
+    const b = await barRect(A), r = await selRect(A); assert(b && b.vis && b.first === 'an-hl', JSON.stringify(b));
+    assert(b.left >= 0 && b.right <= b.w && b.top >= 0 && b.bottom <= b.h, 'bar off screen ' + JSON.stringify(b));
+    assert(b.bottom < r.top - 4 || b.top > r.bottom + 4, 'bar overlaps the selection ' + JSON.stringify([b, r])); assert((await hlHandlesShown(A)) === 0, 'our handles visible on top of the native ones'); assert((await selLen(A)) === 'harbour'.length, 'selection lost');
+    return JSON.stringify({ bar: [Math.round(b.top), Math.round(b.bottom)], sel: [Math.round(r.top), Math.round(r.bottom)] });
+  });
+  await step('Tapping 🖍 with a finger works even if the tap collapses the native selection first (iOS): highlight saved, editor opens', async () => {
+    const n0 = (await recs(A)).length; const bb = await barRect(A); const x = bb.left + 50, y = (bb.top + bb.bottom) / 2;
+    await touchTap(A, x, y, { between: async () => { await A.evaluate(() => window.__reader.rendition.getContents().forEach((k) => k.window.getSelection().removeAllRanges())); await sleep(1500); } });
+    await A.waitForSelector('#an-save', { timeout: 5000 }); const r = await recs(A); assert(r.length === n0 + 1 && r.some((x) => x.text === 'harbour'), JSON.stringify(r.map((x) => x.text)));
+    await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+  });
+  await step('A selection near the bottom of the page docks the bar at the top instead (never under the OS callout)', async () => {
+    await toStart(A);
+    await A.evaluate(() => { const c = window.__reader.rendition.getContents()[0]; const d = c.document; const w = d.createTreeWalker(d.body, NodeFilter.SHOW_TEXT); let n, best = null; const fh = c.document.defaultView.frameElement.getBoundingClientRect(); while ((n = w.nextNode())) { const m = /[A-Za-z]{5,}/.exec(n.data); if (!m) continue; const r = d.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); const b = r.getBoundingClientRect(); if (b.width && b.top + fh.top < innerHeight - 40 && (!best || b.bottom > best.b)) best = { b: b.bottom, n, i: m.index, l: m[0].length }; } const rr = d.createRange(); rr.setStart(best.n, best.i); rr.setEnd(best.n, best.i + best.l); c.window.getSelection().setBaseAndExtent(best.n, best.i, best.n, best.i + best.l); });
+    await sleep(700); const b = await barRect(A), r = await selRect(A); assert(b && b.vis, 'no bar'); assert(b.bottom < r.top - 4 || b.top > r.bottom + 4, 'bar overlaps selection ' + JSON.stringify([b, r])); await click(A, '#an-x'); await noMenu(A);
+  });
+  await step('Reader toolbar 🖍: with text selected it highlights it (editor opens); with nothing selected it turns on select mode — tap a word, handles + bar appear, 🖍 saves — in Pages and Scroll', async () => {
+    const run = async (label) => {
+      await toStart(A); assert(await A.$('#r-hl'), 'no toolbar 🖍 button'); const n0 = (await recs(A)).length;
+      await selectText(A, 'Paragraph 1.1 begins here', 'quiet'); await menu(A); await click(A, '#r-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); assert((await recs(A)).length === n0 + 1, label + ': selection not highlighted'); await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+      await click(A, '#r-hl'); await sleep(300); assert(await A.evaluate(() => document.querySelector('#r-hl').classList.contains('on')), label + ': select mode button not lit');
+      const p = await wordXY(A, 'travellers'); assert(p, 'no word'); await touchTap(A, p.x, p.y); await menu(A); await sleep(300);
+      assert(!(await A.evaluate(() => document.querySelector('#r-hl').classList.contains('on'))), label + ': select mode still on'); assert((await selLen(A)) === 'travellers'.length, label + ': selected ' + (await selLen(A)));
+      assert((await hlHandlesShown(A)) === 2, label + ': handles missing'); await click(A, '#an-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); assert((await recs(A)).some((x) => x.text === 'travellers'), label + ': not saved'); await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+      const pn = await pageNo(A).catch(() => 0); return pn;
+    };
+    await run('pages'); await close(A); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'scrolled', flowChosen: true })); await open(A); await rendered(A); await sleep(500);
+    await run('scroll'); await close(A); await A.evaluate(async () => (await import('./js/settings.js')).settings.set({ flow: 'paginated', flowChosen: true })); await open(A); await rendered(A); await toStart(A); await sleep(500);
+  });
   await step('Selecting by double-tap / mouse also works with word lookup on (native selection is not suppressed outside a hold)', async () => {
     await toStart(A); const p = await wordXY(A, 'travellers'); assert(p, 'word not visible'); await A.mouse.click(p.x, p.y, { clickCount: 2 }); await sleep(600); await menu(A); assert((await selLen(A)) >= 'travellers'.length, 'no selection'); await click(A, '#an-x'); await noMenu(A);
   });
@@ -230,6 +273,25 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
     const a = await bubbleActions(A); assert(a.first === 'wl-hl' && a.onScreen && a.inBubble, JSON.stringify(a)); await click(A, '#wl-hl'); await A.waitForSelector('#an-save', { timeout: 5000 });
     const n1 = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && !x.del).length); assert(n1 === n0 + 1, n0 + ' → ' + n1);
     await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400); await close(A); return pos.word;
+  });
+  await step('PDF Text view: native touch selection → docked bar (🖍 first, our handles hidden); toolbar 🖍 highlights it; with nothing selected 🖍 = select mode (tap a word)', async () => {
+    await A.evaluate(async () => { const b = (await (await import('./js/store.js')).getBooks()).find((b) => b.format === 'pdf'); (await import('./js/reader.js')).openReader(b.id); }); await until(() => A.evaluate(() => document.querySelector('#reader.pdf-mode') && !document.querySelector('#reader .r-loading')), 20000, 'pdf');
+    await A.evaluate(async () => (await import('./js/pdfreader.js')).setTextMode(true)); await until(() => A.evaluate(() => document.querySelectorAll('.pdf-tpage[data-filled]').length >= 2), 15000, 'text view'); await sleep(500);
+    assert(await A.evaluate(() => { const b = document.querySelector('#r-hl'); return b && !b.hidden; }), 'no toolbar 🖍 in text view');
+    const where = () => A.evaluate(() => { const p = document.querySelector('.pdf-tpage[data-filled] > p'); p.scrollIntoView({ block: 'start' }); const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); const n = w.nextNode(); const m = /[A-Za-z]{5,}/.exec(n.data); const r = document.createRange(); r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, word: m[0], i: m.index }; });
+    const pos = await where(); await sleep(300); const pos1 = await where(); const c = await A.createCDPSession();
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(pos1.x), y: Math.round(pos1.y) }] }); await sleep(450);
+    await A.evaluate((i, l) => { const p = document.querySelector('.pdf-tpage[data-filled] > p'); const n = document.createTreeWalker(p, NodeFilter.SHOW_TEXT).nextNode(); window.getSelection().setBaseAndExtent(n, i, n, i + l); }, pos1.i, pos1.word.length);
+    await sleep(700); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await sleep(600);
+    assert(!(await A.$('#wl-bubble')), 'bubble over the selection'); const m = await menu(A); const first = await A.evaluate(() => document.querySelector('#an-menu').firstElementChild.id); assert(first === 'an-hl', first);
+    const hs = await A.evaluate(() => ['start', 'end'].filter((w) => { const e = document.querySelector('#an-h-' + w); return e && e.style.visibility !== 'hidden'; }).length); assert(hs === 0, 'our handles over the native ones');
+    const n0 = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && !x.del).length);
+    await click(A, '#r-hl'); await A.waitForSelector('#an-save', { timeout: 5000 }); const n1 = await A.evaluate(async () => (await (await import('./js/db.js')).DB.all('glossary')).filter((x) => x.kind === 'hl' && !x.del).length); assert(n1 === n0 + 1, n0 + ' → ' + n1);
+    await A.evaluate(() => document.querySelector('#an-del').click()); await sleep(400);
+    await click(A, '#r-hl'); await sleep(300); assert(await A.evaluate(() => document.querySelector('#r-hl').classList.contains('on')), 'select mode not lit'); const p2 = await where(); await sleep(300); const p3 = await where();
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(p3.x), y: Math.round(p3.y) }] }); await sleep(60); await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await c.detach(); void p2;
+    await menu(A); const hs2 = await A.evaluate(() => ['start', 'end'].filter((w) => { const e = document.querySelector('#an-h-' + w); return e && e.style.visibility !== 'hidden'; }).length); assert(hs2 === 2, 'select mode: handles ' + hs2);
+    await click(A, '#an-x'); await noMenu(A); await close(A);
   });
   await step('Sync: highlights (CFI range, full text, colour, note) travel through the glossary Drive file; the other device paints them; library file stays free of them', async () => {
     await importFiles(P1, BOOK); await importFiles(P2, BOOK); for (const p of [P1, P2]) await p.evaluate(async () => (await import('./js/google.js')).syncTuning.minGap = 3600e3);
