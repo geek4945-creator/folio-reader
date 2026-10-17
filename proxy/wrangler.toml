@@ -7,3 +7,9 @@ compatibility_date = "2024-09-01"
 ALLOW_HOSTS = ""
 # Comma-separated allowed origins: the GitHub Pages site plus the Android (Capacitor) app origins
 ALLOW_ORIGIN = "https://geek4945-creator.github.io,https://localhost,http://localhost,capacitor://localhost"
+
+# v0.5.15 "Suggest a change" inbox. The namespace is shared by folio-proxy and flimsy-proxy (entries carry the app name).
+# Admin secret: `wrangler secret put SUGGEST_KEY` (never commit it).
+[[kv_namespaces]]
+binding = "SUGGESTIONS"
+id = "a2a4b0c6d7284a33b19036cd7e93e489"

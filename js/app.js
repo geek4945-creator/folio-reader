@@ -1,4 +1,5 @@
 import { syncDetails, statusLine } from './syncui.js';
+import { suggestSection, initSuggest } from './suggest.js';
 import { backupSettingsSection } from './backupui.js';
 import { h, $, $$, toast, sheet, confirmDlg, initClearButtons } from './util.js';
 import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
@@ -124,7 +125,8 @@ function renderSettings() {
     h('section', { class: 'pad card-sec' }, h('h3', null, 'About'),
       h('p', { class: 'muted small' }, 'Folio Reader — your books stay on this device (IndexedDB). Only reading state syncs if you sign in with Google. Legal sources only.'),
       h('button', { class: 'btn', onclick: async () => { const books = await getBooks(); toast(`${books.length} books · ${(books.reduce((a, b) => a + (b.size || 0), 0) / 1048576).toFixed(1)} MB stored`); } }, 'Storage usage'),
-      ' ', h('button', { class: 'btn', onclick: () => navigator.storage?.persist?.().then((ok) => toast(ok ? 'Persistent storage granted' : 'Browser declined persistent storage')) }, 'Request persistent storage')));
+      ' ', h('button', { class: 'btn', onclick: () => navigator.storage?.persist?.().then((ok) => toast(ok ? 'Persistent storage granted' : 'Browser declined persistent storage')) }, 'Request persistent storage')),
+    suggestSection());
 }
 function slider(label, key, min, max, step, fmt) {
   const v = settings.get(key); const out = h('span', { class: 'muted' }, fmt(+v));
@@ -173,7 +175,7 @@ window.addEventListener('drop', async (e) => {
 /* ---------- boot ---------- */
 initViewport(); initHold(); setTimeout(() => import('./backup.js').then((m) => m.expireUndo()).catch(() => {}), 4000);
 window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
-G.initSync();
+G.initSync(); initSuggest();
 show(tab); initNav({ getTab: () => tab, show });
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
 if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);

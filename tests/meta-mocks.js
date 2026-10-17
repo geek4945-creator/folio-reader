@@ -74,6 +74,15 @@ async function install(page, S) {
     if (/^https:\/\/cors\.example\.test\/wide\.png/.test(target)) { S.log.img.push(target); return img('wide.png', 'image/png'); }
     if (/^https:\/\/cors\.example\.test\/page\.html/.test(target)) return req.respond({ status: 200, headers: CORS, contentType: 'text/html', body: '<html><body>not an image</body></html>' });
     if (/^https:\/\/customsearch\.googleapis\.com|googleapis\.com\/customsearch\/v1/.test(target)) { S.log.cse.push(target); return json({ items: [{ link: 'https://cors.example.test/wide.png', image: { thumbnailLink: 'https://cors.example.test/wide.png' } }] }); }
+    if (/^https:\/\/folio-proxy\.geek4945\.workers\.dev\/suggest$/.test(u)) {   // v0.5.15 "Suggest a change": S.suggest = { mode: 'ok' | 'offline' | '429' | '500', calls: [...] }
+      if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers: CORS });
+      const sg = S.suggest || (S.suggest = { calls: [], mode: 'ok' }); let body = {}; try { body = JSON.parse(req.postData() || '{}'); } catch { /* ignore */ }
+      sg.calls.push({ method: req.method(), ct: req.headers()['content-type'], body, mode: sg.mode, t: Date.now() });
+      if (sg.mode === 'offline') return req.abort('internetdisconnected');
+      if (sg.mode === '429') return json({ ok: false, error: 'rate limited' }, 429);
+      if (sg.mode === '500') return json({ ok: false }, 500);
+      return json({ ok: true, id: body.id });
+    }
     if (/^https:\/\/(api\.dictionaryapi\.dev|en\.wiktionary\.org\/api\/rest_v1|api\.datamuse\.com)\//.test(u)) {   // v0.5.6 dictionary sources: S.dict.reply(url) → { status, body }
       if (req.method() === 'OPTIONS') return req.respond({ status: 204, headers: CORS });
       const d = S.dict || { calls: [], reply: () => ({ status: 404, body: {} }) }; (d.calls = d.calls || []).push(u); const r = (d.reply ? d.reply(u) : null) || { status: 404, body: {} };

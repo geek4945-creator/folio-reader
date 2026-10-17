@@ -368,3 +368,12 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .rn-foot { display: flex; flex-wrap: wrap; justify-content: center; gap: .4rem 1.2rem; padding-top: .4rem; padding-bottom: 1.4rem; } .rn-foot .rn-note { flex-basis: 100%; text-align: center; }
 .rn-row.holding { outline: 2px solid var(--accent, #4a90d9); }
 .rn-hid { display: flex; align-items: center; gap: .6rem; }
+
+/* v0.5.15 Suggest a change */
+#sec-suggest textarea { display:block; min-height:7rem; line-height:1.4; }
+.sg-msg { min-height:1.2em; margin:.4rem 0 0; } .sg-msg.ok { color:var(--accent, #2a7); font-weight:600; } .sg-msg.bad { color:#c33; }
+.sg-h { margin:1rem 0 .3rem; font-size:.95rem; }
+.sg-item { border:1px solid var(--border); border-radius:.7rem; padding:.55rem .7rem; margin:.4rem 0; background:var(--card); }
+.sg-head { display:flex; justify-content:space-between; gap:.5rem; align-items:center; margin-bottom:.25rem; }
+.sg-st { font-size:.78rem; font-weight:700; padding:.1rem .5rem; border-radius:1rem; border:1px solid var(--border); } .sg-st.sent { color:#2a7; } .sg-st.queued { color:#b80; } .sg-st.failed { color:#c33; }
+.sg-text { white-space:pre-wrap; overflow-wrap:anywhere; max-height:7.5em; overflow:auto; font-size:.92rem; }
