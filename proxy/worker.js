@@ -35,9 +35,10 @@ async function handleSuggest(request, env, path, allowed, reqOrigin) {
     if (text.length > MAX_TEXT) return withCors(J({ ok: false, error: 'too long' }, 413));
     const id = clip(body.v.id, 64).replace(/[^A-Za-z0-9_-]/g, '') || crypto.randomUUID();
     if (await env.SUGGESTIONS.get('i:' + id)) return withCors(J({ ok: true, id, duplicate: true }));   // a retry of something already stored
-    // simple per-IP rate limit: RATE_PER_HOUR per hour (counter keyed by a salted hash of the IP; expires on its own)
+    // per-IP rate limit: a burst limit (rate-limit binding, 5 per minute) plus RATE_PER_HOUR per hour (KV counter keyed by a salted hash of the IP; best-effort because KV reads can lag)
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     const rk = 'r:' + (await sha(ip + '|' + (env.SUGGEST_KEY || 'salt'))) + ':' + Math.floor(Date.now() / 3600000);
+    if (env.SUGGEST_RL) { const { success } = await env.SUGGEST_RL.limit({ key: rk.split(':')[1] }); if (!success) return withCors(J({ ok: false, error: 'rate limited' }, 429, { 'Retry-After': '60' })); }   // burst limit (Workers rate-limit binding: 5 per 60 s per IP hash)
     const n = +(await env.SUGGESTIONS.get(rk)) || 0;
     if (n >= RATE_PER_HOUR) return withCors(J({ ok: false, error: 'rate limited' }, 429, { 'Retry-After': '3600' }));
     await env.SUGGESTIONS.put(rk, String(n + 1), { expirationTtl: 3700 });

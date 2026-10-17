@@ -13,3 +13,11 @@ ALLOW_ORIGIN = "https://geek4945-creator.github.io,https://localhost,http://loca
 [[kv_namespaces]]
 binding = "SUGGESTIONS"
 id = "a2a4b0c6d7284a33b19036cd7e93e489"
+
+# Burst limit for POST /suggest: 5 requests per 60 s per IP hash (Workers rate-limit binding).
+[[ratelimits]]
+name = "SUGGEST_RL"
+namespace_id = "1501"
+  [ratelimits.simple]
+  limit = 5
+  period = 60
