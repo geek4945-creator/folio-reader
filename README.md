@@ -7,6 +7,8 @@ A mobile-first **ebook reader and audiobook player Progressive Web App** inspire
 * Your books live in the browser's IndexedDB. Optional Google sign-in syncs *reading state* (not book files) through your own Drive's hidden app-data folder.
 * **Legal sources only.** There is no support for Anna's Archive, Z-Library or similar sites, and "Add a source" refuses them.
 
+**App updates (Android app, v0.5.16):** Settings → **App updates → Check for updates** checks this repo's latest GitHub release (also once a day when the app opens), downloads the APK and opens Android's installer. Allow *Install unknown apps* for Folio Reader the first time. Same package + signing key, so your library and settings are kept. Not shown in the browser/PWA.
+
 ## Features
 
 | Area | What you get |
