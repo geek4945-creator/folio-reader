@@ -121,7 +121,7 @@ input[type=range] { width:100%; accent-color:var(--accent); margin:.3rem 0; }
 #reader.chrome-hidden .r-bar.top { transform:translateY(-110%); } #reader.chrome-hidden .r-bar.bottom { transform:translateY(110%); }
 .r-titlewrap { display:flex; align-items:center; gap:.4rem; min-width:0; justify-content:center; } .r-title { font-weight:600; font-size:.95rem; }
 .ovr-dot { background:#f4b400; color:#222; font-size:.6rem; font-weight:700; padding:0 .3rem; border-radius:.3rem; flex:none; } .ovr-dot[hidden] { display:none; }
-.r-label { text-align:center; font-size:.75rem; color:var(--muted); } #r-bm.on { color:#f4b400; }
+.r-label { text-align:center; font-size:.75rem; color:var(--muted); } 
 .r-loading { position:absolute; left:0; right:0; bottom:0; top:calc(3rem + var(--sat)); display:flex; gap:.6rem; align-items:center; justify-content:center; background:var(--bg); z-index:2; color:var(--muted); padding:1rem; overflow-y:auto; }   /* below the top bar, so ‹ Back stays tappable while opening */
 .r-load-box { display:flex; flex-direction:column; align-items:center; gap:.7rem; max-width:26rem; text-align:center; } .r-load-text { font-weight:600; color:var(--fg); }
 .r-error { align-items:stretch; text-align:left; color:var(--fg); } .r-err-title { font-weight:700; font-size:1.05rem; } .r-err-actions { display:flex; flex-direction:column; gap:.5rem; } .r-err-actions .btn { width:100%; }
@@ -342,6 +342,7 @@ body.has-mini #toast { bottom:calc(8.2rem + var(--sab)); }
 .an-btn { background: none; border: 0; color: inherit; font: inherit; font-size: .86rem; padding: 6px 7px; border-radius: 12px; white-space: nowrap; }
 .an-btn:active { background: #0002; }
 .an-btn.an-first { font-weight: 700; background: #ffd54f55; }
+.an-btn.an-search { font-weight: 700; background: #64b5f655; }   /* v0.5.19: Search stands out next to Highlight */
 .wl-actions { position: sticky; bottom: -.6rem; background: var(--bg); padding: .45rem 0 .5rem; z-index: 1; } .wl-actions .wl-hl { font-weight: 700; order: -1; background: #ffd54f55; }
 .an-handle { position: absolute; z-index: 61; width: 22px; height: 22px; margin: 3px 0 0 -11px; border-radius: 50%; background: var(--accent, #36c); border: 2px solid #fff; touch-action: none; box-shadow: 0 1px 4px #0006; }
 .an-handle::after { content: ''; position: absolute; inset: -14px; }

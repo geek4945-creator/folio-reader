@@ -64,8 +64,8 @@ async function makeEpub(title) {
     const want = est1 + 0.015; await click('#fp-open-reader'); await page.waitForSelector('#viewer iframe', { timeout: 15000 }); await sleep(2500);
     const b = await bookOf('Lighthouse Years'); assert(b.cfi && Math.abs(b.progress - want) < 0.04, `reader progress ${b.progress} vs ${want}`); const where = await ev(() => document.querySelector('#viewer iframe').contentDocument.body.innerText.slice(0, 80)); return `progress ${(b.progress * 100).toFixed(1)}% · “${where.replace(/\s+/g, ' ').slice(0, 40)}…”`;
   });
-  await step('Ebook → audiobook (from the reader’s 🎧 button): estimate in time, nudge, “Set audiobook here” updates the position', async () => {
-    await page.waitForSelector('#r-link:not([hidden])', { timeout: 5000 }); await click('#r-link'); await page.waitForSelector('#fp-set-audio', { timeout: 30000 });
+  await step('Ebook → audiobook (from the reader menu ☰ → Audiobook sync): estimate in time, nudge, “Set audiobook here” updates the position', async () => {
+    assert(!(await page.$('#r-link')), '🎧 should not be in the top bar'); await click('#r-toc'); await page.waitForSelector('#toc-audiosync', { timeout: 5000 }); assert(/Audiobook sync/.test(await txt('#toc-audiosync'))); await click('#toc-audiosync'); await page.waitForSelector('#fp-set-audio', { timeout: 30000 });
     const info = await ev(() => { const f = window.__findplace; return { bBase: f.st.bBase, m: f.map.method, matched: f.map.matched }; }); assert(info.m === 'chapters' && info.bBase > 0.5, JSON.stringify(info));
     assert(/from the ebook|Ebook is at/.test(await txt('#fp-b-from')) && /Estimate/.test(await txt('#fp-b-method')), await txt('#fp-b-from'));
     const expect = await ev(async () => { const Al = await import('./js/align.js'); const f = window.__findplace; return Al.fracToAudio(f.map, f.st.bBase); });

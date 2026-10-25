@@ -101,13 +101,13 @@ const frameInfo = (page) => page.evaluate(() => { const f = document.querySelect
     await page.evaluate(() => document.querySelectorAll('.toc-item')[3].click()); await sleep(1200);
     await page.waitForFunction(() => !document.querySelector('#overlay .sheet')); return n + ' items; now at ' + (await text(page, '.r-label'));
   });
-  await step('Bookmark add / list / remove', async () => {
-    await click(page, '#r-bm'); await sleep(300); assert((await text(page, '#r-bm')) === '★', 'star not filled');
+  await step('v0.5.19: no ☆ bookmark / 🎧 button in the top bar; an existing bookmark is still listed in Contents and can be removed', async () => {
+    assert(!(await page.$('#r-bm')) && !(await page.$('#r-link')), 'top bar buttons should be gone');
+    await page.evaluate(async () => { const c = window.__reader; const S = await import('./js/store.js'); const bm = await S.addBookmark({ bookId: c.book.id, cfi: c.loc.start.cfi, progress: c.progress, label: 'Old mark' }); c.bookmarks.push(bm); });
     await click(page, '#r-toc'); await clickText(page, '.seg button', 'Bookmarks'); await page.waitForSelector('.list-item'); const n = await page.$$eval('.sheet .list-item', (e) => e.length); assert(n === 1, 'bookmarks ' + n);
-    await page.evaluate(() => document.querySelector('.sheet .btn-icon').click()); await sleep(200);
+    await page.evaluate(() => document.querySelector('.sheet .btn-icon').click()); await sleep(300);
+    const tabs = await page.$$eval('.sheet .seg button', (e) => e.map((x) => x.textContent)); assert(!tabs.some((t) => /Bookmarks/.test(t)), 'Bookmarks tab should hide when empty ' + tabs);
     await clickText(page, '.btn-text', 'Done'); await sleep(200);
-    assert((await text(page, '#r-bm')) === '☆', 'star should be empty');
-    await click(page, '#r-bm'); await sleep(300); // keep one for later
   });
 
   // appearance: global

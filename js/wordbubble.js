@@ -87,7 +87,7 @@ export async function openBubble(info, host) {
       d.status === 'missing' ? null : h('button', { class: 'btn-text small', id: 'wl-retry', onclick: () => run(true) }, 'Try again')));
     kids.push(h('div', { class: 'wl-actions', id: 'wl-actions' },
       host.highlight && info.range ? h('button', { class: 'btn small wl-hl', id: 'wl-hl', onclick: () => { const r = info.range; closeBubble(); host.highlight(r); } }, '🖍 Highlight') : null,
-      host.search ? h('button', { class: 'btn small', id: 'wl-search', onclick: () => { const q = (info.range && String(info.range).trim().length > display.length ? String(info.range).trim() : display); closeBubble(); host.search(q); } }, '🔍 Search') : null,
+      host.search ? h('button', { class: 'btn small primary', id: 'wl-search', onclick: () => { const q = (info.range && String(info.range).trim().length > display.length ? String(info.range).trim() : display); closeBubble(); host.search(q); } }, '🔍 Search') : null,
       h('button', { class: 'btn small' + (st.saved ? ' on' : ''), id: 'wl-save', onclick: toggleSave }, st.saved ? '★ Saved' : '☆ Save to book'),
       h('button', { class: 'btn small', id: 'wl-gadd', onclick: () => { closeBubble(); host.editEntry(g && g.bookKey === G.keyOf(book) ? g : null, g ? g.term : display, ctx, defOf().def); } }, g && g.bookKey === G.keyOf(book) ? '✎ Edit entry' : '＋ Glossary'),
       h('a', { class: 'btn small', id: 'wl-web', href: D.webUrl(display), target: '_blank', rel: 'noopener noreferrer' }, 'Search the web ↗'),

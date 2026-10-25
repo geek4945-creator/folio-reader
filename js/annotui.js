@@ -69,7 +69,7 @@ function ensureTopCss() { if (document.getElementById('an-top-css')) return; con
 export function attachPdf(host, viewer) {
   const contents = host.contents()[0]; let t = 0; if (!document.__anT) { document.__anT = true; trackTouch(document); }
   for (const ev of ['touchend', 'pointerup', 'mouseup']) viewer.addEventListener(ev, () => { clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); }, 380); }, true);
-  document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); else if (ui && ui.contents === contents && !(s && s.rangeCount && !s.isCollapsed)) onSelectionChange(host, contents); }, 220); });
+  document.addEventListener('selectionchange', () => { try { const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) captureNow(window); } catch { /* ignore */ } clearTimeout(t); t = setTimeout(() => { if (!host.ready()) return; const s = window.getSelection(); if (s && s.rangeCount && !s.isCollapsed && viewer.contains(s.anchorNode)) onSelectionChange(host, contents); else if (ui && ui.contents === contents && !(s && s.rangeCount && !s.isCollapsed)) onSelectionChange(host, contents); }, 220); });
   viewer.addEventListener('click', (e) => { if (!host.ready()) return; if (armed) { e.stopPropagation(); e.preventDefault(); armedTap(host, contents, e.clientX, e.clientY); return; } const s = window.getSelection(); if (s && !s.isCollapsed && s.toString().trim()) return; const a = hitTest(contents, e.clientX, e.clientY); if (a) { e.stopPropagation(); e.preventDefault(); openEditor(host, a, {}); } }, true);
   repaintAll(host);
 }
@@ -99,8 +99,31 @@ function trackTouch(target) {
   target.addEventListener('touchend', end, { passive: true, capture: true }); target.addEventListener('touchcancel', end, { passive: true, capture: true });
 }
 
+/* ------------------------------------------------------------------ v0.5.19: the selected text is cached the moment it is selected */
+// iOS Safari clears an iframe's native selection as soon as a finger touches the app document (our bar, the top bar), sometimes before the
+// tap's click is dispatched, and its selectionchange can arrive late. Every action reads this cache, never the live selection at tap time.
+let lastSel = { text: '', at: 0 };
+const remember = (text) => { const t = norm(text); if (t) lastSel = { text: t, at: Date.now() }; };
+function captureNow(win) { try { const s = win.getSelection(); if (s && s.rangeCount && !s.isCollapsed) { const r = s.getRangeAt(0); remember(rangeText(r) || s.toString()); } } catch { /* ignore */ } }
+export const cachedSelection = () => ({ ...lastSel });
+/** Text for the 🔍 toolbar button: the open selection bar's text, a live selection, or one made in the last 15 s (iOS has collapsed it by the time the tap lands). */
+export function searchTextFromSelection(host, maxAge = 15000) {
+  if (ui && ui.text) return ui.text.slice(0, 120);
+  try { for (const c of (host && host.contents ? host.contents() : [])) { const s = c.window.getSelection(); if (s && s.rangeCount && !s.isCollapsed) { const t = rangeText(s.getRangeAt(0).cloneRange()); if (t) return t.slice(0, 120); } } } catch { /* ignore */ }
+  return lastSel.text && Date.now() - lastSel.at < maxAge ? lastSel.text.slice(0, 120) : '';
+}
+/** A button that acts on the finger lifting (touchend, which iOS always delivers) as well as on click (mouse / keyboard), never twice. */
+function tapBtn(attrs, label, fn) {
+  const b = h('button', attrs, label); let start = null, fired = 0;
+  b.addEventListener('touchstart', (e) => { const t = e.changedTouches && e.changedTouches[0]; start = t ? { x: t.clientX, y: t.clientY } : null; }, { passive: true });
+  b.addEventListener('touchend', (e) => { const t = e.changedTouches && e.changedTouches[0]; const s0 = start; start = null; if (!s0 || !t || Math.hypot(t.clientX - s0.x, t.clientY - s0.y) > 14) return; if (e.cancelable) e.preventDefault(); fired = Date.now(); fn(); });
+  b.addEventListener('click', (e) => { if (Date.now() - fired < 900) { e.preventDefault(); return; } fn(); });
+  return b;
+}
+
 /* ------------------------------------------------------------------ selection menu + handles */
 export function closeSelectionUI(clear) {
+  if (clear) lastSel = { text: '', at: 0 };   // dismissed on purpose (✕, an action, Back): nothing to search later
   if (!ui) return; const u = ui; ui = null; clearInterval(u.edge); try { u.unlayer(); } catch { /* ignore */ }
   u.menu.remove(); u.hs.remove(); u.he.remove();
   if (clear) { try { u.contents.window.getSelection().removeAllRanges(); } catch { /* ignore */ } }
@@ -109,18 +132,18 @@ const isOpen = () => !!ui;
 export const selectionActive = () => !!ui;
 
 function showUi(host, contents, range, opts = {}) {
-  const text = rangeText(range); if (!text) { closeSelectionUI(); return; }
+  const text = rangeText(range); if (!text) { closeSelectionUI(); return; } remember(text);
   if (ui && ui.contents !== contents) closeSelectionUI(false);
   if (!ui) {
     const root = host.root();
     const menu = h('div', { class: 'an-menu', id: 'an-menu', role: 'toolbar', 'aria-label': 'Selection' },
-      h('button', { class: 'an-btn an-first', id: 'an-hl', onclick: () => quickFromUi() }, '🖍 Highlight'),
-      ...A.COLORS.map((c) => h('button', { class: 'an-dot', 'data-color': c.id, 'aria-label': 'Highlight ' + c.name.toLowerCase(), style: { background: c.hex }, onclick: () => createFrom(c.id, false) })),
-      host.search ? h('button', { class: 'an-btn', id: 'an-search', onclick: () => searchSel() }, '🔍 Search') : null,
-      h('button', { class: 'an-btn', id: 'an-note', onclick: () => createFrom(A.lastColor(), true) }, '✎ Note'),
-      h('button', { class: 'an-btn', id: 'an-define', onclick: () => define() }, 'Define'),
-      h('button', { class: 'an-btn', id: 'an-copy', onclick: () => copy() }, 'Copy'),
-      h('button', { class: 'an-btn', id: 'an-x', 'aria-label': 'Close', onclick: () => closeSelectionUI(true) }, '✕'));
+      tapBtn({ class: 'an-btn an-first', id: 'an-hl' }, '🖍 Highlight', () => quickFromUi()),
+      host.search ? tapBtn({ class: 'an-btn an-search', id: 'an-search', 'aria-label': 'Search the book for the selected text' }, '🔍 Search', () => searchSel()) : null,   // v0.5.19: second, next to Highlight, always on the first row
+      ...A.COLORS.map((c) => tapBtn({ class: 'an-dot', 'data-color': c.id, 'aria-label': 'Highlight ' + c.name.toLowerCase(), style: { background: c.hex } }, null, () => createFrom(c.id, false))),
+      tapBtn({ class: 'an-btn', id: 'an-note' }, '✎ Note', () => createFrom(A.lastColor(), true)),
+      tapBtn({ class: 'an-btn', id: 'an-define' }, 'Define', () => define()),
+      tapBtn({ class: 'an-btn', id: 'an-copy' }, 'Copy', () => copy()),
+      tapBtn({ class: 'an-btn', id: 'an-x', 'aria-label': 'Close' }, '✕', () => closeSelectionUI(true)));
     menu.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the selection alive
     const mkHandle = (which) => { const el = h('div', { class: 'an-handle ' + which, id: 'an-h-' + which, role: 'slider', 'aria-label': which === 'start' ? 'Selection start' : 'Selection end' }); el.addEventListener('pointerdown', (e) => beginDrag(e, which)); return el; };
     const press = () => { if (ui) ui.pressed = Date.now(); };   // a tap on the bar may collapse the native selection first: don't close the bar under the finger
@@ -193,7 +216,7 @@ export function onSelectionChange(host, contents) {
   let s; try { s = contents.window.getSelection(); } catch { return; }
   if (!s || !s.rangeCount || s.isCollapsed) { if (ui && ui.contents === contents && !ui.rec && Date.now() - ui.pressed > 1200) closeSelectionUI(false); return; }
   if (wordBubbleOpen() || Date.now() - lastWordHold() < 1400) return;
-  const range = s.getRangeAt(0).cloneRange(); if (!rangeText(range)) return;
+  const range = s.getRangeAt(0).cloneRange(); const txt = rangeText(range); if (!txt) return; remember(txt);
   showUi(host, contents, range, { native: ui && (ui.prog || ui.drag) ? ui.native : touchRecent() });
 }
 
@@ -228,8 +251,8 @@ export function extendRec(host, rec) {
     selectRange(host, contents, range); if (ui) { ui.rec = rec; const b = ui.menu.querySelector('#an-hl'); if (b) b.textContent = '✓ Save range'; } return true;
   } catch { return false; }
 }
-function searchSel() {   // v0.5.18: search the whole book for the selected words
-  const u = ui; if (!u) return; const t = u.text.replace(/\s+/g, ' ').trim().slice(0, 120); const host = u.host; closeSelectionUI(true); if (t && host.search) host.search(t);
+function searchSel() {   // v0.5.18: search the whole book for the selected words (v0.5.19: from the text cached at selection time — the live selection may be gone)
+  const u = ui; if (!u) return; const t = (u.text || lastSel.text || '').replace(/\s+/g, ' ').trim().slice(0, 120); const host = u.host; closeSelectionUI(true); if (t && host.search) host.search(t); else if (!t) toast('Select a word first');
 }
 async function copy() {
   const u = ui; if (!u) return; const t = u.text;
@@ -260,7 +283,8 @@ export function hitTest(contents, x, y) {
 export function attach(contents, host) {
   const doc = contents.document; if (doc.__an) return; doc.__an = true;
   let t = 0; const check = (ms) => { clearTimeout(t); t = setTimeout(() => { const hh = host(); if (hh) onSelectionChange(hh, contents); }, ms); };
-  doc.addEventListener('selectionchange', () => check(220));
+  doc.addEventListener('selectionchange', () => { captureNow(contents.window); check(220); });
+  doc.addEventListener('touchstart', () => captureNow(contents.window), { passive: true, capture: true });
   // iOS fires selectionchange late (or only when the loupe is released): look again when the finger / mouse lifts
   for (const ev of ['touchend', 'pointerup', 'mouseup']) doc.addEventListener(ev, () => check(380), true);
   trackTouch(doc);
@@ -318,6 +342,7 @@ export function openEditor(host, rec, opts = {}) {
       h('div', { class: 'row' },
         h('button', { class: 'btn', id: 'an-save', onclick: async () => { await A.update(rec.id, { note: note.value, color }); w.close(); await repaintAll(host); if (opts.onDone) opts.onDone(); } }, 'Save'),
         opts.extend !== false && host.contents && (rec.cfiRange || rec.loc) ? h('button', { class: 'btn', id: 'an-extend', onclick: () => { w.close(); extendRec(host, rec); } }, '↔ Extend range') : null,
+        host.search && rec.text ? h('button', { class: 'btn', id: 'an-ed-search', onclick: () => { w.close(); host.search(norm(rec.text).slice(0, 120)); } }, '🔍 Find in book') : null,
         host.jump ? h('button', { class: 'btn', id: 'an-jump', onclick: () => { w.close(); host.jump(rec); } }, 'Go to') : null,
         h('button', { class: 'btn danger', id: 'an-del', onclick: async () => { await A.remove(rec.id); w.close(); await repaintAll(host); if (opts.onDone) opts.onDone(); toast('Highlight removed'); } }, 'Delete')));
   };

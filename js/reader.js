@@ -29,17 +29,14 @@ export async function openReader(id, opts = {}) {
   const viewer = h('div', { id: 'viewer' });
   const title = h('div', { class: 'r-title ellipsis' }, book.title);
   const ovr = h('span', { class: 'ovr-dot', id: 'r-ovr', hidden: !S.hasOverrides(book), title: 'This book has custom reading settings' }, 'Aa');
-  const bmBtn = h('button', { class: 'btn-icon', id: 'r-bm', 'aria-label': 'Toggle bookmark', onclick: toggleBookmark }, '☆');
   const slider = h('input', { type: 'range', min: 0, max: 1000, value: Math.round((book.progress || 0) * 1000), id: 'r-slider', 'aria-label': 'Reading position', disabled: true });
   const label = h('div', { class: 'r-label ellipsis' }, '');
   const top = h('div', { class: 'r-bar top' },
     h('button', { class: 'btn-icon', id: 'r-back', 'aria-label': 'Close book', onclick: closeReader }, '‹'),
     h('div', { class: 'grow r-titlewrap' }, title, ovr),
-    h('button', { class: 'btn-icon', id: 'r-link', 'aria-label': 'Find my place (audiobook)', title: 'Find my place (audiobook)', hidden: true, onclick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: book.id })) }, '🎧'),
     h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { const a = annotHost(); if (a) AN.toolbarHighlight(a); } }, '🖍'),
-    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this book', title: 'Search', onclick: () => openBookSearch() }, '🔍'),
+    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this book', title: 'Search', onclick: () => openBookSearch(AN.searchTextFromSelection(annotHost()) || undefined) }, '🔍'),   // v0.5.19: a word selected (or just selected — iOS collapses the selection on the tap) is searched at once
     h('button', { class: 'btn-icon', id: 'r-toc', 'aria-label': 'Table of contents', onclick: showToc }, '☰'),
-    bmBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
   const bottom = h('div', { class: 'r-bar bottom' }, slider, label);
@@ -47,10 +44,10 @@ export async function openReader(id, opts = {}) {
   const foot = makeFooter();
   el.replaceChildren(top, viewer, bottom, foot, loading.el); applyFooterSettings(); paintFooter({}); applyScrub(book);
 
-  import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { const b = document.getElementById('r-link'); if (b && l.length) b.hidden = false; }).catch(() => {});   // the 🎧 button only appears once there is an audiobook to link
-  cur = { book, viewer, slider, label, bmBtn, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
+  cur = { book, viewer, slider, label, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
   attachPinch(viewer, pinchHost);   // spread / pinch over the margins (inside the page it is attached per EPUB frame)
-  const mine = cur; const alive = () => cur === mine && !mine.closed;
+  const mine = cur; import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { mine.hasAudio = l.length > 0; }).catch(() => {});   // v0.5.19: "Audiobook sync" lives in the ☰ menu (no 🎧 in the top bar); shown once there is an audiobook to link
+  const alive = () => cur === mine && !mine.closed;
   try {
     loading.stage(book.size > 60 * 1048576 ? 'Reading a large book (' + Math.round(book.size / 1048576) + ' MB), this can take a while…' : 'Reading the book file…'); const buf = await withTimeout(blob.arrayBuffer(), 20000, 'reading the file from storage'); if (!alive()) return;
     loading.stage('Opening the EPUB package…'); mine.epub = patchBook(ePub(buf));
@@ -339,14 +336,8 @@ function pageBookmarks() {
   const cmp = new ePub.CFI();
   return c.bookmarks.filter((bm) => { try { return cmp.compare(bm.cfi, c.loc.start.cfi) >= 0 && cmp.compare(bm.cfi, c.loc.end.cfi) <= 0; } catch { return false; } });
 }
-function refreshBookmarkStar() { const on = pageBookmarks().length > 0; cur.bmBtn.textContent = on ? '★' : '☆'; cur.bmBtn.classList.toggle('on', on); }
-async function toggleBookmark() {
-  const c = cur; if (!c || !c.loc) return;
-  const here = pageBookmarks();
-  if (here.length) { for (const bm of here) await S.removeBookmark(bm.id); c.bookmarks = c.bookmarks.filter((b) => !here.includes(b)); toast('Bookmark removed'); }
-  else { const bm = await S.addBookmark({ bookId: c.book.id, cfi: c.loc.start.cfi, progress: c.progress, label: c.curChapter || ('Page at ' + fmtPct(c.progress)) }); c.bookmarks.push(bm); toast('Bookmarked'); }
-  refreshBookmarkStar();
-}
+// v0.5.19: the ☆ bookmark button is gone from the top bar (highlights cover it). Bookmarks saved earlier stay listed (and syncable / deletable) in Contents → Bookmarks.
+function refreshBookmarkStar() { void pageBookmarks; }
 
 /* ----- TOC & bookmarks sheet ----- */
 /** v0.5.18: index (in the flattened TOC) of the entry the reader is in now — the last entry that starts at or before the current position (deepest wins on ties). -1 when unknown. */
@@ -450,17 +441,19 @@ function showToc() {
   async function AN_count() { try { const n = (await (await import('./annots.js')).forBook(c.book)).length; if (n !== c.annotCount) { c.annotCount = n; return true; } } catch { /* ignore */ } return false; }
   function build() {
     const wrap = h('div');
-    wrap.append(h('div', { class: 'seg wide' }, ['toc', 'bookmarks', 'notes'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; rebuild(); } }, t === 'toc' ? 'Chapters' : t === 'bookmarks' ? 'Bookmarks (' + c.bookmarks.length + ')' : 'Highlights & Notes' + (c.annotCount ? ' (' + c.annotCount + ')' : ''))).concat(h('button', { id: 'toc-words', 'data-tab': 'words', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words'))));
+    if (tab === 'bookmarks' && !c.bookmarks.length) tab = 'toc';
+    wrap.append(h('div', { class: 'seg wide' }, ['toc', ...(c.bookmarks.length ? ['bookmarks'] : []), 'notes'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; rebuild(); } }, t === 'toc' ? 'Chapters' : t === 'bookmarks' ? 'Bookmarks (' + c.bookmarks.length + ')' : 'Highlights & Notes' + (c.annotCount ? ' (' + c.annotCount + ')' : ''))).concat(h('button', { id: 'toc-words', 'data-tab': 'words', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words'))));
     if (tab === 'notes') { const holder = h('div', { id: 'an-pane' }); wrap.append(holder); AN.listTab(annotHost(), rebuild, () => w.close()).then((el) => holder.replaceChildren(el)); }
     else if (tab === 'toc') {
       const list = flat(c.toc); const now = currentTocIndex(c, list);
       wrap.append(h('button', { class: 'list-item bs-open', id: 'toc-search', onclick: () => { w.close(); openBookSearch(); } }, h('span', null, '🔍'), h('span', { class: 'grow muted' }, 'Search in this book…')));
+      if (c.hasAudio) wrap.append(h('button', { class: 'list-item bs-open', id: 'toc-audiosync', onclick: () => { w.close(); import('./findplace.js').then((m) => m.openFindPlace({ bookId: c.book.id })); } }, h('span', null, '🎧'), h('span', { class: 'grow' }, 'Audiobook sync'), h('small', { class: 'muted' }, 'Find my place')));
       wrap.append(h('div', { class: 'list', id: 'toc-list' }, list.length ? list.map(({ it, depth }, i) => h('button', { class: 'list-item toc-item' + (i === now ? ' current' : '') + (now >= 0 && isAncestor(list, i, now) ? ' current-parent' : ''), 'aria-current': i === now ? 'true' : null, style: { paddingLeft: (14 + depth * 16) + 'px' }, onclick: async () => { w.close(); await c.rendition.display(it.href); settleScrolled(c, it.href); } }, h('span', { class: 'grow' }, (it.label || '').trim()), i === now ? h('small', { class: 'toc-now' }, 'Current') : null)) : h('p', { class: 'muted pad' }, 'This book has no table of contents.')));
       scrollTocToCurrent(wrap);
     }
     else wrap.append(h('div', { class: 'list' }, c.bookmarks.length ? [...c.bookmarks].sort((a, b) => a.progress - b.progress).map((bm) => h('div', { class: 'list-item' },
       h('span', { class: 'grow', onclick: async () => { w.close(); await c.rendition.display(bm.cfi); } }, bm.label, h('small', { class: 'muted' }, ' · ' + fmtPct(bm.progress))),
-      h('button', { class: 'btn-icon', 'aria-label': 'Delete bookmark', onclick: async () => { await S.removeBookmark(bm.id); c.bookmarks = c.bookmarks.filter((x) => x.id !== bm.id); refreshBookmarkStar(); rebuild(); } }, '✕'))) : h('p', { class: 'muted pad' }, 'No bookmarks yet. Tap ☆ in the top bar.')));
+      h('button', { class: 'btn-icon', 'aria-label': 'Delete bookmark', onclick: async () => { await S.removeBookmark(bm.id); c.bookmarks = c.bookmarks.filter((x) => x.id !== bm.id); refreshBookmarkStar(); rebuild(); } }, '✕'))) : h('p', { class: 'muted pad' }, 'No bookmarks.')));
     return wrap;
   }
   return w;

@@ -70,11 +70,11 @@ const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const 
   await step('Accent / case-insensitive: "unicode cafe" finds "Ünïcode café"; tapping the bar label reopens the list', async () => {
     await click('#bs-bar-n'); await page.waitForSelector('#bs-input'); await searchFor('unicode cafe'); const r = await results$(); assert(r.length === 1 && r[0].m === 'Ünïcode café' && r[0].ch === 'Chapter 3', JSON.stringify(r)); await closeSheets(); return r[0].snip;
   });
-  await step('Selection bar has 🔍 Search (right after the highlight colours) → searches the selected words', async () => {
+  await step('Selection bar has 🔍 Search (right after 🖍 Highlight) → searches the selected words', async () => {
     await page.evaluate(() => document.querySelector('#bs-close') && document.querySelector('#bs-close').click()); await display('c1.xhtml'); await sleep(700);
     await page.evaluate(() => { const c = window.__reader.rendition.getContents().find((k) => k.document.title === 'Chapter 1'); const doc = c.document; const w = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) { const i = n.data.indexOf('Paragraph 1.2'); if (i >= 0) { c.window.getSelection().setBaseAndExtent(n, i, n, i + 13); return; } } throw new Error('text'); });
     await until(() => page.evaluate(() => { const m = document.querySelector('#an-menu'); return m && m.style.visibility !== 'hidden'; }), 5000, 'selection bar');
-    const order = await page.$$eval('#an-menu > *', (e) => e.map((x) => x.id || x.className)); const iS = order.indexOf('an-search'); assert(iS > 0 && order[iS - 1].includes('an-dot') && order[iS + 1] === 'an-note', order.join(','));
+    const order = await page.$$eval('#an-menu > *', (e) => e.map((x) => x.id || x.className)); const iS = order.indexOf('an-search'); assert(iS === 1 && order[0] === 'an-hl' && order[iS + 1].includes('an-dot'), order.join(','));   // v0.5.19: Search right after Highlight
     await click('#an-search'); await page.waitForSelector('#bs-input'); await until(() => page.evaluate(() => document.querySelector('#bs-cancel')?.hidden && !/Searching/.test(document.querySelector('#bs-status').textContent)), 20000, 'done');
     const q = await page.$eval('#bs-input', (e) => e.value); const r = await results$(); assert(q === 'Paragraph 1.2' && r.length >= 1 && r.every((x) => /Paragraph 1\.2/i.test(x.m)), q + ' ' + JSON.stringify(r)); await closeSheets(); return q + ' → ' + r.length;
   });

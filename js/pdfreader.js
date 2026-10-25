@@ -36,7 +36,7 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'pdf-fit', 'aria-label': 'Fit width', title: 'Fit width', onclick: () => setZoom(1) }, '⤢'),
     h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { if (cur) AN.toolbarHighlight(pdfAnnotHost()); } }, '🖍'),
     h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', onclick: showPdfNotes }, '✎'),
-    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this document', title: 'Search', onclick: () => openPdfSearch() }, '🔍'),
+    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this document', title: 'Search', onclick: () => openPdfSearch(AN.searchTextFromSelection(pdfAnnotHost()) || undefined) }, '🔍'),
     tocBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));

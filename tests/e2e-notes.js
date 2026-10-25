@@ -113,7 +113,7 @@ S.dict = { calls: [], reply() { return { status: 200, body: [{ word: 'harbour', 
   });
   await step('Contents → Highlights & Notes: tab count, excerpts (long ones truncated with Show more), colour stripe, note; filters', async () => {
     await click(A, '#r-toc'); await A.waitForSelector('.seg [data-tab=notes]'); const lab = await A.evaluate(() => document.querySelector('[data-tab=notes]').textContent); assert(/Highlights & Notes/.test(lab), lab);
-    const tabs = await A.evaluate(() => [...document.querySelectorAll('.sheet .seg [data-tab]')].map((b) => b.dataset.tab)); assert(tabs.join() === 'toc,bookmarks,notes,words', tabs.join());
+    const tabs = await A.evaluate(() => [...document.querySelectorAll('.sheet .seg [data-tab]')].map((b) => b.dataset.tab)); assert(tabs.join() === 'toc,notes,words', tabs.join());   // v0.5.19: the Bookmarks tab only shows when there are (legacy) bookmarks
     await click(A, '[data-tab=notes]'); await A.waitForSelector('#an-list .an-item', { timeout: 5000 });
     const items = await A.evaluate(() => [...document.querySelectorAll('#an-list .an-item')].map((e) => ({ t: e.querySelector('.an-text').textContent, c: e.dataset.color, n: e.querySelector('.an-notebox')?.textContent || '', more: !!e.querySelector('.an-more') })));
     assert(items.length === 4, JSON.stringify(items.map((x) => x.t.slice(0, 30)))); const long = items.find((x) => x.more); assert(long && long.t.endsWith('…') && long.t.length < 260, 'long excerpt not truncated: ' + (long && long.t.length));
