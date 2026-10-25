@@ -35,6 +35,15 @@
         </provider>
     </application>
 
+    <!-- v0.5.18: "Open in Chirp" checks whether the Chirp app is installed (Android 11+ package visibility) -->
+    <queries>
+        <package android:name="com.chirpbooks.chirp" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />

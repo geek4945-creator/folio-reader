@@ -12,6 +12,7 @@ import { openCoverEditor } from './covers.js';
 import { openFixMissing } from './enrich.js';
 import { openAudioSources } from './audiosources.js';
 import * as Loans from './loans.js';
+import { openChirpForm, openChirpEntry, chirpLinkEl, openChirp } from './chirp.js';
 
 let view; const covers = new Map();
 let local = { q: '', sel: null, visible: [] };
@@ -47,6 +48,7 @@ async function renderMain(ctx) {
     h('header', { class: 'topbar' }, h('h1', null, 'Audiobooks'),
       h('div', { class: 'top-actions' },
         allBooks.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'audio-select', onclick: () => { local.sel = local.sel ? null : new Set(); rerender(); } }, local.sel ? 'Done' : 'Select') : null,
+        chirpLinkEl(null, { id: 'audio-open-chirp', label: 'Chirp ↗', cls: 'btn-text', title: 'Open Chirp (the app if it’s installed, otherwise chirpbooks.com)' }),
         h('button', { class: 'btn-icon', id: 'audio-add', 'aria-label': 'Add audiobooks', title: 'Import audio files', onclick: pickAudio }, '＋'),
         h('button', { class: 'btn-icon', id: 'audio-menu', 'aria-label': 'Audiobooks menu', onclick: () => audioMenu(ctx) }, '⋯'))),
     h('div', { class: 'pad' }, search), banner,
@@ -97,18 +99,19 @@ function tileEl(b, ctx, mode) {
   const more = h('button', { class: 'tile-more', 'aria-label': 'Audiobook options', onclick: (e) => { e.stopPropagation(); audioBookMenu(b, ctx); } }, '⋯');
   const act = () => { if (local.sel) { toggleSel([b.id]); } else open(b.id); };
   const bar = h('div', { class: 'bar' }, h('i', { style: { width: Math.round((b.status === 'finished' ? 1 : b.progress || 0) * 100) + '%' } }));
+  const chirp = b.external ? h('span', { class: 'pill-pdf pill-chirp', title: 'Chirp audiobook: plays in the Chirp app' }, 'Chirp') : null;
   const cloud = A.hasUrls(b) ? h('span', { class: 'pill-pdf pill-cloud', title: A.isDownloaded(b) ? 'Saved offline' : 'Streams from the internet' }, A.isDownloaded(b) ? '⬇' : '☁') : null;
   const el = h('div', { class: 'tile book audio' + (local.sel && local.sel.has(b.id) ? ' sel' : ''), dataset: { key: 'b:' + b.id, id: b.id }, tabindex: 0, role: 'button', onclick: act, onkeydown: (e) => { if (e.key === 'Enter') act(); } },
     h('div', { class: 'cover' },
       h('div', { class: 'cover-ph', style: { background: `linear-gradient(135deg,hsl(${hue} 45% 38%),hsl(${(hue + 40) % 360} 45% 28%))` } }, h('span', null, b.title), h('small', null, b.author)),
-      u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, badge(b), b.borrowed ? Loans.dueBadge(b) : null, cloud, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null),
+      u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, badge(b), b.borrowed ? Loans.dueBadge(b) : null, cloud, chirp, h('span', { class: 'selmark' }, '✓'), mode === 'grid' ? more : null),
     h('div', { class: 'meta' }, h('div', { class: 't clamp2' }, b.title), h('div', { class: 'a ellipsis muted' }, b.author || 'Unknown author'),
       h('div', { class: 'muted small ellipsis' }, fmtLong(b.duration) + (b.tracks.length > 1 ? ` · ${b.tracks.length} files` : '')), mode === 'list' ? bar : null),
     mode === 'list' ? more : null);
   el.__onHold = () => audioBookMenu(b, ctx);   // press-and-hold = the ⋯ menu
   return el;
 }
-export async function open(id) { const st = getState(); await loadBook(id, { play: true }); openPlayer(); return st; }
+export async function open(id) { const ab = await A.getAudiobook(id); if (ab && ab.external) { openChirpEntry(id, { onChange: rerender }); return getState(); } const st = getState(); await loadBook(id, { play: true }); openPlayer(); return st; }
 
 /* ---------- multi-select ---------- */
 function toggleSel(ids) { const all = ids.every((id) => local.sel.has(id)); for (const id of ids) all ? local.sel.delete(id) : local.sel.add(id); refreshSelection(); }
@@ -165,11 +168,12 @@ async function deleteAllFlow() {
 function emptyState() {
   return h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🎧'), h('h2', null, 'No audiobooks yet'),
     h('p', { class: 'muted' }, 'Import MP3, M4A, M4B, AAC or OGG files (or a folder / zip of chapters), or find free public-domain audiobooks from LibriVox and the Internet Archive.'),
-    h('div', { class: 'row-actions center' }, h('button', { class: 'btn primary', id: 'audio-empty-import', onclick: pickAudio }, 'Import audio files'), h('button', { class: 'btn', id: 'audio-empty-online', onclick: () => openAudioSources() }, 'Find free audiobooks')));
+    h('div', { class: 'row-actions center' }, h('button', { class: 'btn primary', id: 'audio-empty-import', onclick: pickAudio }, 'Import audio files'), h('button', { class: 'btn', id: 'audio-empty-online', onclick: () => openAudioSources() }, 'Find free audiobooks'), h('button', { class: 'btn', id: 'audio-empty-chirp', onclick: () => openChirpForm(null, { onDone: rerender }) }, 'Add Chirp audiobook')));
 }
 function audioMenu(ctx) {
   actionSheet('Audiobooks', [
     { label: '🔎  Free audiobooks (LibriVox, Internet Archive)…', id: 'audio-menu-online', primary: true, onClick: () => openAudioSources() },
+    { label: '🎧  Add Chirp audiobook…', id: 'audio-menu-chirp', onClick: () => openChirpForm(null, { onDone: rerender }) },
     { label: 'Import audio files…', id: 'audio-menu-files', onClick: pickAudio },
     { label: 'Import a folder…', id: 'audio-menu-folder', onClick: () => $('#audio-folder-input').click() },
     { label: 'Import from Google Drive…', id: 'audio-menu-drive', onClick: () => openDriveBrowser({ audio: true }) },
@@ -189,8 +193,14 @@ function manageShelves(ctx) {
 }
 export function audioBookMenu(b, ctx) {
   actionSheet(b.title, [
-    { label: 'Play', id: 'audio-menu-play', onClick: () => open(b.id) },
-    { label: 'Edit details…', id: 'audio-menu-edit', onClick: () => editBook(b) },
+    ...(b.external ? [
+      { label: 'Open in Chirp', id: 'audio-menu-open-chirp', primary: true, onClick: () => { openChirp(A.chirpLink(b)); } },
+      { label: 'Update where I am…', id: 'audio-menu-chirp-pos', onClick: () => openChirpEntry(b.id, { onChange: rerender }) },
+      { label: 'Edit details…', id: 'audio-menu-edit', onClick: () => openChirpForm(b, { onDone: rerender }) },
+    ] : [
+      { label: 'Play', id: 'audio-menu-play', onClick: () => open(b.id) },
+      { label: 'Edit details…', id: 'audio-menu-edit', onClick: () => editBook(b) },
+    ]),
     { label: 'Change cover…', id: 'audio-menu-cover', onClick: () => openCoverEditor('audio', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', id: 'audio-menu-shelf', onClick: () => shelfSheet(b, ctx) },
     { label: '📖  Find my place (ebook)…', id: 'audio-menu-findplace', onClick: () => import('./findplace.js').then((m) => m.openFindPlace({ audioId: b.id })) },

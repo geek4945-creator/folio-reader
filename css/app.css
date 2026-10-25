@@ -402,3 +402,12 @@ body.reading #update-banner { display:none; }
 .bs-open { color:var(--muted); }
 .bs-bar { position:absolute; left:50%; transform:translateX(-50%); bottom:calc(4.2rem + env(safe-area-inset-bottom)); z-index:40; display:flex; align-items:center; gap:.2rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:2rem; padding:.15rem .4rem; box-shadow:0 4px 16px rgba(0,0,0,.25); max-width:94vw; }
 .bs-bar-n { background:none; border:0; color:inherit; font-size:.85rem; padding:.3rem .4rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60vw; }
+/* v0.5.18: Chirp audiobooks (DRM: open in the Chirp app) */
+.pill-chirp { background:#5b2bd6; color:#fff; font-size:.6rem; font-weight:700; padding:.05rem .35rem; border-radius:.3rem; }
+.tile .pill-chirp { position:absolute; right:.3rem; top:.3rem; box-shadow:0 0 0 1px rgba(255,255,255,.6); }
+.tiles.list .tile .pill-chirp { font-size:.5rem; right:.15rem; top:.15rem; padding:0 .2rem; }
+.chirp-entry { display:flex; gap:.8rem; align-items:flex-start; margin-bottom:.6rem; } .chirp-cover { width:4.5rem; border-radius:.3rem; box-shadow:0 1px 4px rgba(0,0,0,.3); }
+.chirp-entry .pill-chirp { display:inline-block; margin-top:.3rem; }
+.chirp-bar { height:.4rem; } a.chirp-link { text-decoration:none; text-align:center; } a.btn.chirp-link { display:block; margin:.5rem 0; }
+.top-actions a.chirp-link { color:var(--accent); font-weight:600; padding:.3rem .4rem; white-space:nowrap; }
+#chirp-pos, #chirp-d-pos { width:100%; }

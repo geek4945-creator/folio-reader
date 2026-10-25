@@ -146,6 +146,44 @@ export async function addRemoteAudiobook(info, fetchCover) {
   await DB.put('audiobooks', book); emitAudio(); autoEnrichLater(book); return book;
 }
 
+/* ---------- v0.5.18: Chirp audiobooks (DRM: listened to in the Chirp app; Folio only keeps title / cover / length / position) ---------- */
+export const CHIRP_HOME = 'https://www.chirpbooks.com/library';
+export const isExternal = (b) => !!(b && b.external);
+/** A Chirp link the user pasted: only https links on chirpbooks.com are kept (anything else → null). */
+export function cleanChirpUrl(u) {
+  u = String(u || '').trim(); if (!u) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+  try { const x = new URL(u); if (x.protocol !== 'https:' && x.protocol !== 'http:') return null; if (!/(^|\.)chirpbooks\.com$/i.test(x.hostname)) return null; x.protocol = 'https:'; return x.href; } catch { return null; }
+}
+export const chirpLink = (b) => (b && b.chirpUrl) || CHIRP_HOME;
+export const chirpKey = (title, author) => ('chirp|' + (title || '').trim() + '|' + (author || '').trim()).toLowerCase();
+/** info: { title, author, duration (s), position (s), chirpUrl, description? }. */
+export async function addChirpAudiobook(info) {
+  const title = (info.title || '').trim(); if (!title) throw new AudioImportError('A title is needed', 'title');
+  const url = cleanChirpUrl(info.chirpUrl); if (url === null) throw new AudioImportError('That doesn’t look like a Chirp link (chirpbooks.com)', 'url');
+  const duration = Math.max(0, Math.round(+info.duration || 0)); const position = Math.max(0, Math.min(duration || Infinity, Math.round(+info.position || 0)));
+  const syncKey = info.syncKey || chirpKey(title, info.author);
+  if ((await getAudiobooks()).some((b) => audioKey(b) === syncKey)) throw new AudioImportError('Already in your audiobooks', 'dupe');
+  const book = { id: uid(), kind: 'audio', external: 'chirp', title, author: (info.author || '').trim(), description: info.description || '', addedAt: Date.now(), lastOpened: position ? Date.now() : 0, position, progress: duration ? position / duration : 0,
+    status: position ? 'reading' : 'want', shelves: [], speed: null, source: 'chirp', sourceKey: null, sourceUrl: url || '', chirpUrl: url || '', syncKey, coverBlob: null, coverSource: null, tracks: [], chapters: [], duration, size: 0 };
+  if (!info.syncKey) { const t = tombs(); if (t.some((x) => x.t === 'audio' && x.id === syncKey)) setTombs(t.filter((x) => !(x.t === 'audio' && x.id === syncKey))); }   // re-added after a delete: outranks the tombstone
+  applyPendingAudio(book);
+  await DB.put('audiobooks', book); emitAudio(); return book;
+}
+/** Update a Chirp entry: { title, author, duration, position, chirpUrl }. Position changes stamp posAt (db.js) so they sync like playback. */
+export async function updateChirpAudiobook(id, patch) {
+  const b = await getAudiobook(id); if (!b || !b.external) return null;
+  if ('chirpUrl' in patch) { const u = cleanChirpUrl(patch.chirpUrl); if (u === null) throw new AudioImportError('That doesn’t look like a Chirp link (chirpbooks.com)', 'url'); b.chirpUrl = u || ''; b.sourceUrl = u || ''; }
+  if (patch.title != null && patch.title.trim()) b.title = patch.title.trim();
+  if (patch.author != null) b.author = patch.author.trim();
+  if (patch.duration != null) b.duration = Math.max(0, Math.round(+patch.duration || 0));
+  if (patch.position != null) {
+    b.position = Math.max(0, Math.min(b.duration || Infinity, Math.round(+patch.position || 0))); b.progress = b.duration ? b.position / b.duration : 0; b.lastOpened = Date.now();
+    if (b.progress >= 0.999 && b.status !== 'finished') { b.status = 'finished'; b.finishedAt = Date.now(); } else if (b.position && b.status === 'want') b.status = 'reading';
+  } else if (b.duration) b.progress = Math.min(1, (b.position || 0) / b.duration);
+  await saveAudiobook(b); return b;
+}
+
 /** Save every streamed track for offline play. onProgress(doneTracks, total, fraction). Resolves to the updated book. */
 export async function downloadOffline(id, onProgress, signal = { cancelled: false }) {
   let book = await getAudiobook(id); const total = book.tracks.length;
@@ -183,7 +221,7 @@ export async function restoreAudiobooks(snap) {
   { const keys = new Set(snap.books.map(audioKey)); setTombs(tombs().filter((t) => !(t.t === 'audio' && keys.has(t.id)))); }
   emitAudio();
 }
-export async function deleteAllAudiobooks() { const n = (await getAudiobooks()).length; await DB.clear('audiobooks'); await DB.clear('audiofiles'); emitAudio(); return n; }
+export async function deleteAllAudiobooks() { const all = await getAudiobooks(); const n = all.length; { const ext = all.filter(isExternal); if (ext.length) { const t = tombs(); for (const b of ext) t.push({ t: 'audio', id: audioKey(b), at: Date.now() }); setTombs(t); } } await DB.clear('audiobooks'); await DB.clear('audiofiles'); emitAudio(); return n; }
 export async function setAudioStatusMany(ids, status) {
   for (const id of ids) { const b = await getAudiobook(id); if (!b) continue; b.status = status; if (status === 'finished') { b.finishedAt = Date.now(); b.progress = 1; } await DB.put('audiobooks', b); }
   emitAudio();

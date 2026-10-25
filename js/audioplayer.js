@@ -56,7 +56,7 @@ export async function loadBook(id, { play = false } = {}) {
   if (cur && cur.book.id === id) { closed = false; if (play) await playNow(); emit('state'); return cur; }
   await save(true);
   await beforeOpen('audio', id);   // v0.5.5: latest listening position from other devices
-  const book = await A.getAudiobook(id); if (!book) return null;
+  const book = await A.getAudiobook(id); if (!book || book.external) return null;   // Chirp entries (DRM) are listened to in the Chirp app
   const lay = layout(book); const speed = clampSpeed(book.speed ?? settings.get('audioSpeed') ?? 1);
   cur = { book, ...lay, ti: 0, url: null, speed }; closed = false;
   if (coverUrl) URL.revokeObjectURL(coverUrl); coverUrl = book.coverBlob ? URL.createObjectURL(book.coverBlob) : null;

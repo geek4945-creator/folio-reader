@@ -225,8 +225,8 @@ async function restoreAudiobooks(man, zip, mode, merged, rep) {
       if (mode === 'replace' || (r.lastOpened || 0) > (m.lastOpened || 0)) { for (const k of AUDIO_STATE) if (r[k] !== undefined) m[k] = r[k]; m.shelves = shelves; await DB.put('audiobooks', { ...m, _noTouch: true }); }
       rep.audiobooks++;
     } else {
-      const streamable = (r.tracks || []).length && r.tracks.every((t) => t.url);
-      if (streamable) { const rec = { ...r, shelves, tracks: r.tracks.map((t) => ({ ...t, stored: false })) }; delete rec.coverFile; if (r.coverFile && zip.has(r.coverFile)) rec.coverBlob = await zip.blob(r.coverFile, 'image/jpeg'); if (await DB.get('audiobooks', rec.id)) rec.id = crypto.randomUUID ? crypto.randomUUID() : rec.id + '-b'; await DB.put('audiobooks', { ...rec, _noTouch: true }); rep.audiobooks++; }
+      const streamable = ((r.tracks || []).length && r.tracks.every((t) => t.url)) || r.external;   // v0.5.18: Chirp entries have no files: recreate them as they were
+      if (streamable) { const rec = { ...r, shelves, tracks: r.tracks.map((t) => ({ ...t, stored: false })) }; delete rec.coverFile; if (r.coverFile && zip.has(r.coverFile)) rec.coverBlob = await zip.blob(r.coverFile, 'image/jpeg'); if (await DB.get('audiobooks', rec.id)) rec.id = crypto.randomUUID ? crypto.randomUUID() : rec.id + '-b'; await DB.put('audiobooks', { ...rec, ...(r.external ? { structAt: Date.now() } : {}), _noTouch: true }); if (r.external) { const k = r.syncKey || r.id; try { const t = JSON.parse(localStorage.getItem('folio.tombs') || '[]'); localStorage.setItem('folio.tombs', JSON.stringify(t.filter((x) => !(x.t === 'audio' && x.id === k)))); } catch { /* ignore */ } } rep.audiobooks++; }   // a restored Chirp entry outranks an older deletion
       else { const st = {}; for (const k of AUDIO_STATE) if (r[k] !== undefined) st[k] = r[k]; st.shelves = shelves; st.title = r.title; pend[r.syncKey || r.id] = st; rep.audiobooksPending++; }
     }
   }

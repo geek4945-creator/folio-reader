@@ -259,7 +259,7 @@ export async function buildSnapshot() {
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
   const audioState = {};
-  for (const a of audio) audioState[a.syncKey || a.id] = { title: a.title, author: a.author || '', addedAt: a.addedAt || 0, status: a.status, shelves: a.shelves || [], finishedAt: a.finishedAt || 0, speed: a.speed ?? null, position: a.position || 0, progress: a.progress || 0, track: a.track ?? null, trackIndex: a.trackIndex ?? null, lastOpened: a.lastOpened || 0, updatedAt: structAtOf(a), gAt: gAtsOf(a), posAt: posAtOf(a), dev: a.posDev || '', devName: a.posDevName || '' };
+  for (const a of audio) audioState[a.syncKey || a.id] = { title: a.title, author: a.author || '', addedAt: a.addedAt || 0, status: a.status, shelves: a.shelves || [], finishedAt: a.finishedAt || 0, speed: a.speed ?? null, position: a.position || 0, progress: a.progress || 0, track: a.track ?? null, trackIndex: a.trackIndex ?? null, lastOpened: a.lastOpened || 0, updatedAt: structAtOf(a), gAt: gAtsOf(a), posAt: posAtOf(a), dev: a.posDev || '', devName: a.posDevName || '', ...(a.external ? { ext: { kind: a.external, url: a.chirpUrl || '', duration: a.duration || 0 } } : {}) };   // v0.5.18: Chirp entries have no files, so other devices recreate them from this
   const meta = {}; for (const b of books) { const e = localMeta(b); if (e) meta[keyOf.get(b.id)] = e; }
   const audioMeta = {}; for (const a of audio) { const e = localMeta(a); if (e) audioMeta[a.syncKey || a.id] = e; }
   const loans = {};   // Borrowed flag + due date, last-writer-wins on loanAt: 'book:<key>' / 'audio:<key>'
@@ -343,6 +343,7 @@ export function mergeSnapshots(local, remote) {
   out.books = {}; const deadBooks = new Set();
   for (const k of new Set([...Object.keys(L.books), ...Object.keys(R.books)])) { const st = mergeState(L.books[k], R.books[k], POS_STATE); if (dead('book', k, Math.max(st.updatedAt || 0, st.addedAt || 0))) deadBooks.add(k); else out.books[k] = st; }   // deleted on some device → gone everywhere
   out.audioState = {}; for (const k of new Set([...Object.keys(L.audioState || {}), ...Object.keys(R.audioState || {})])) out.audioState[k] = mergeState((L.audioState || {})[k], (R.audioState || {})[k], AUDIO_POS_STATE);
+  for (const [k, st] of Object.entries(out.audioState)) if (st.ext && dead('audio', k, Math.max(st.updatedAt || 0, st.posAt || 0, st.addedAt || 0))) delete out.audioState[k];   // v0.5.18: a deleted Chirp entry is gone everywhere
   out.bookmarks = {};
   for (const k of new Set([...Object.keys(L.bookmarks), ...Object.keys(R.bookmarks)])) {
     const m = new Map(); for (const x of [...(L.bookmarks[k] || []), ...(R.bookmarks[k] || [])]) m.set(x.id, lww(m.get(x.id), x));
@@ -436,9 +437,12 @@ export async function applySnapshot(m, ctx = {}) {
 
 /** Audiobooks: status / shelves (structure) and listening position, same rules as books. Audiobooks not on this device yet are kept pending. */
 async function applyAudioState(m, doms, ctx) {
-  const audio = await A.getAudiobooks(), states = m.audioState || {}, have = new Set(); let posApplied = 0, posConflicts = 0;
+  const states = m.audioState || {}; let posApplied = 0, posConflicts = 0;
+  if (doms.library) await syncExternalAudio(m, states);
+  const audio = await A.getAudiobooks(), have = new Set();
   for (const a of audio) {
     const key = a.syncKey || a.id; have.add(key); const st = states[key]; if (!st) continue; let dirty = false;
+    if (a.external && st.ext && (st.updatedAt || 0) > structAtOf(a)) { if (st.ext.url !== undefined) { a.chirpUrl = st.ext.url; a.sourceUrl = st.ext.url; } if (st.ext.duration) a.duration = st.ext.duration; if (st.title) a.title = st.title; if (st.author !== undefined) a.author = st.author; dirty = true; }
     if (doms.library && (ctx.force || Object.keys(GROUPS).some((g) => stGroupAt(st, g) > gAtOf(a, g)))) {
       a.gAt = { ...(a.gAt || {}) };
       for (const g of ['status', 'shelves']) { if (!(ctx.force || stGroupAt(st, g) > gAtOf(a, g))) continue; for (const f of GROUPS[g].fields) { if (st[f] === undefined) delete a[f]; else a[f] = st[f]; } a.gAt[g] = stGroupAt(st, g); dirty = true; }
@@ -451,6 +455,21 @@ async function applyAudioState(m, doms, ctx) {
   for (const [k, st] of Object.entries(states)) if (!have.has(k) && (st.posAt || st.updatedAt || st.position)) pend[k] = { ...(pend[k] || {}), ...st };
   localStorage.setItem('folio.pendingAudio', JSON.stringify(pend));
   return { posApplied, posConflicts };
+}
+
+/** v0.5.18: Chirp (external) audiobooks have no files to import, so they're recreated from the synced state, and deleted when another device deleted them. */
+async function syncExternalAudio(m, states) {
+  const tombs = m.tombstones || []; const dead = (k, ts) => tombs.some((t) => t.t === 'audio' && t.id === k && t.at >= ts);
+  const local = await A.getAudiobooks(); const keys = new Set(local.map((a) => a.syncKey || a.id));
+  for (const a of local) { if (!a.external) continue; const k = a.syncKey || a.id; if (!states[k] && dead(k, Math.max(structAtOf(a), posAtOf(a), a.addedAt || 0))) await DB.del('audiobooks', a.id); }
+  for (const [k, st] of Object.entries(states)) {
+    if (!st.ext || keys.has(k) || dead(k, Math.max(st.updatedAt || 0, st.posAt || 0, st.addedAt || 0))) continue;
+    const dur = st.ext.duration || 0; const pos = st.position || 0;
+    await DB.put('audiobooks', { id: (crypto.randomUUID ? crypto.randomUUID() : 'a' + Date.now() + Math.random().toString(36).slice(2)), kind: 'audio', external: st.ext.kind || 'chirp', title: st.title || 'Audiobook', author: st.author || '', description: '', addedAt: st.addedAt || Date.now(),
+      lastOpened: st.lastOpened || 0, position: pos, progress: st.progress ?? (dur ? pos / dur : 0), status: st.status || 'want', shelves: st.shelves || [], speed: null, finishedAt: st.finishedAt || 0, source: 'chirp', sourceKey: null, sourceUrl: st.ext.url || '', chirpUrl: st.ext.url || '', syncKey: k,
+      coverBlob: null, coverSource: null, tracks: [], chapters: [], duration: dur, size: 0, structAt: st.updatedAt || 0, gAt: { ...(st.gAt || {}) }, posAt: st.posAt || 0, posDev: st.dev || '', posDevName: st.devName || '', _noTouch: true });
+    keys.add(k);
+  }
 }
 
 /** Borrowed flag + due date from another device (newest change wins). */
