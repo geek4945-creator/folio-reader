@@ -37,6 +37,7 @@ export async function openReader(id, opts = {}) {
     h('div', { class: 'grow r-titlewrap' }, title, ovr),
     h('button', { class: 'btn-icon', id: 'r-link', 'aria-label': 'Find my place (audiobook)', title: 'Find my place (audiobook)', hidden: true, onclick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: book.id })) }, '🎧'),
     h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { const a = annotHost(); if (a) AN.toolbarHighlight(a); } }, '🖍'),
+    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this book', title: 'Search', onclick: () => openBookSearch() }, '🔍'),
     h('button', { class: 'btn-icon', id: 'r-toc', 'aria-label': 'Table of contents', onclick: showToc }, '☰'),
     bmBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
@@ -151,6 +152,7 @@ function glossaryCtx() {
 const wordActions = () => ({
   editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def, onDone: () => {} }),
   openWords: () => openGlossary(glossaryCtx(), 'words'),
+  search: (text) => openBookSearch(text),
   highlight: (range) => { const c = cur; if (!c) return; const k = c.rendition.getContents().find((x) => x.document === range.startContainer.ownerDocument); if (k) AN.quickHighlight(annotHost(), k, range); },
   select: (range) => { const c = cur; if (!c) return; const k = c.rendition.getContents().find((x) => x.document === range.startContainer.ownerDocument); if (k) AN.selectRange(annotHost(), k, range); },
 });
@@ -172,6 +174,7 @@ function annotHost() {
     next: () => c.rendition.next(), prev: () => c.rendition.prev(), scroller: () => c.rendition.manager && c.rendition.manager.container,
     describe: (contents, range) => ({ fmt: 'epub', cfiRange: contents.cfiFromRange(range), chapter: (() => { try { const href = c.epub.spine.get(contents.sectionIndex).href; const it = c.epub.navigation.get(href); return it ? (it.label || '').trim() : chapterOf({ start: { href } }); } catch { return ''; } })(), sec: contents.sectionIndex || 0, off: secOff(contents.document, range), progress: c.loc && c.loc.start ? c.loc.start.percentage || 0 : 0 }),
     jump: (a) => c.rendition.display(a.cfiRange),
+    search: (text) => openBookSearch(text),
     define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, wordActions())); },
   };
 }
@@ -346,6 +349,97 @@ async function toggleBookmark() {
 }
 
 /* ----- TOC & bookmarks sheet ----- */
+/** v0.5.18: index (in the flattened TOC) of the entry the reader is in now — the last entry that starts at or before the current position (deepest wins on ties). -1 when unknown. */
+/* v0.5.18: in continuous-scroll flow epub.js sometimes lands one section late after display(href) (neighbouring sections are prepended / trimmed
+   and the scroll offset is not compensated), e.g. a short chapter near the end opened from Contents showed the next chapter. Re-align the target to the top. */
+export function settleScrolled(c, href) {
+  if (settings.get('flow') !== 'scrolled' || !href) return;
+  const [file, frag] = String(href).split('#'); let sec = null; try { sec = c.epub.spine.get(file); } catch { /* bad href */ } if (!sec) return;
+  const fix = () => { try {
+    const m = c.rendition.manager; const sc = m && m.container; if (!sc || cur !== c) return; const views = m.views.all ? m.views.all() : m.views._views || [];
+    const v = views.find((x) => x.section && x.section.index === sec.index); if (!v) return;
+    let y = v.element.getBoundingClientRect().top;
+    if (frag) { const doc = v.contents && v.contents.document; const el = doc && (doc.getElementById(decodeURIComponent(frag)) || doc.getElementsByName(frag)[0]); if (el) y = (v.iframe || v.element).getBoundingClientRect().top + el.getBoundingClientRect().top; }
+    const d = y - sc.getBoundingClientRect().top; if (Math.abs(d) > 4) sc.scrollTop += d;
+  } catch { /* ignore */ } };
+  fix(); [120, 300, 600, 1000].forEach((ms) => setTimeout(fix, ms));
+}
+function scrolledTop(c) {
+  try {
+    if (settings.get('flow') !== 'scrolled') return null; const m = c.rendition.manager; const box = m && m.container && m.container.getBoundingClientRect(); if (!box) return null;
+    const y = box.top + 8; const views = (m.views && (m.views.all ? m.views.all() : m.views._views)) || [];
+    for (const v of views) { const r = v.element.getBoundingClientRect(); if (r.top <= y && r.bottom > y && v.section) return { index: v.section.index, frameTop: (v.iframe || v.element).getBoundingClientRect().top, y: box.top, h: box.height }; }
+  } catch { /* fall back to loc */ }
+  return null;
+}
+export function currentTocIndex(c, list) {
+  const loc = c.loc; if (!loc || !loc.start || !list.length) return -1;
+  // scrolled flow: epub.js reports a short section's *neighbour* as loc.start, so read what is actually at the top of the viewer instead
+  const top = scrolledTop(c); const ci = top ? top.index : loc.start.index; let bestIdx = -1; let group = [];
+  list.forEach(({ it }, i) => {
+    let sec = null; try { sec = c.epub.spine.get((it.href || '').split('#')[0]) || c.epub.spine.get(it.href); } catch { /* bad href */ }
+    const idx = sec ? sec.index : -1; if (idx < 0 || idx > ci) return;
+    if (idx > bestIdx) { bestIdx = idx; group = []; } if (idx === bestIdx) group.push(i);
+  });
+  if (!group.length) return -1; if (group.length === 1 || bestIdx < ci) return group[group.length - 1];
+  // several entries in the current file: compare each anchor's position with the start of the page
+  let best = group[0]; let contents = null; try { contents = c.rendition.getContents().find((x) => x.sectionIndex === ci); } catch { /* none */ }
+  const sec = c.epub.spine.get(ci);
+  for (const i of group) {
+    const frag = (list[i].it.href || '').split('#')[1]; if (!frag) { best = i; continue; }
+    const el = contents && contents.document && (contents.document.getElementById(decodeURIComponent(frag)) || contents.document.getElementsByName(frag)[0]); if (!el || !sec) continue;
+    if (top) { if (el.getBoundingClientRect().top + top.frameTop <= top.y + top.h * 0.33) best = i; continue; }   // heading at/above the upper third of the screen
+    try { const cfi = new ePub.CFI(el, sec.cfiBase).toString(); if (new ePub.CFI().compare(cfi, loc.start.cfi) <= 0) best = i; } catch { /* ignore */ }
+  }
+  return best;
+}
+/** True when entry i is a TOC ancestor of entry k (nested entries: its depth is smaller and nothing shallower sits in between). */
+function isAncestor(list, i, k) { if (i >= k) return false; let d = list[k].depth; for (let j = k - 1; j >= i; j--) { if (list[j].depth < d) { if (j === i) return true; d = list[j].depth; } } return false; }
+/** Scroll the open Contents list so the current entry is in view (centred). */
+export function scrollTocToCurrent(root) {
+  const go = () => { const el = root.querySelector('.toc-item.current'); if (el && el.isConnected) { el.scrollIntoView({ block: 'center' }); return true; } return false; };
+  requestAnimationFrame(() => { if (!go()) setTimeout(go, 60); });
+}
+function openBookSearch(query) { closeBubble(); AN.closeSelectionUI(true); import('./booksearch.js').then((m) => m.openSearch(searchHost(), query)).catch((e) => toast('Search failed to load: ' + e.message)); }
+/** v0.5.18: search adapter for EPUB (and MOBI / KF8, which open as converted EPUB): one unit per spine section, loaded straight from the book archive. */
+function searchHost() {
+  const c = cur; if (!c || !c.epub) return null; if (c.__search) return c.__search;
+  const items = c.epub.spine.spineItems || []; const flat = (xs, d = 0) => xs.flatMap((it) => [{ it, depth: d }, ...flat(it.subitems || [], d + 1)]);
+  const toc = flat(c.toc || []); const labels = new Array(items.length).fill('');
+  const starts = toc.map(({ it }) => { try { const sec = c.epub.spine.get((it.href || '').split('#')[0]); return sec ? sec.index : -1; } catch { return -1; } });
+  for (let i = 0; i < items.length; i++) { let best = -1, bi = -1; starts.forEach((x, k) => { if (x >= 0 && x <= i && x >= best) { if (x > best || bi < 0) { best = x; bi = k; } } }); labels[i] = bi >= 0 ? (toc[bi].it.label || '').trim() : ''; }
+  let SB = null; const B = () => SB || import('./booksearch.js').then((m) => (SB = m));
+  const flashOld = { cfi: null };
+  const ad = {
+    key: c.book.id, units: items.length, root: () => c.el, label: (i) => labels[i] || ('Section ' + (i + 1)),
+    async scan(i, q) {
+      const sec = items[i]; if (!sec) return []; const M = await B();
+      const doc = await c.epub.load(sec.url); const body = doc && (doc.body || doc.getElementsByTagName('body')[0] || doc.documentElement); if (!body) return [];
+      const nodes = []; let text = ''; const w = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (/^(script|style)$/i.test(n.parentNode.nodeName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) }); let n;
+      while ((n = w.nextNode())) { nodes.push([n, text.length]); text += n.data; }
+      const at = (pos, end) => { let lo = 0, hi = nodes.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (nodes[mid][1] < pos || (!end && nodes[mid][1] === pos)) lo = mid; else hi = mid - 1; } const [node, base] = nodes[lo]; return [node, Math.min(node.data.length, pos - base)]; };
+      // entries with #anchors inside this file (e.g. Chapter 2 › Section 2.2): label each hit with the deepest one before it
+      const anchors = []; toc.forEach(({ it }, k) => { const [f, frag] = (it.href || '').split('#'); if (!frag || starts[k] !== i) return; const el = doc.getElementById(decodeURIComponent(frag)) || doc.getElementsByName(frag)[0]; if (el) anchors.push({ el, label: (it.label || '').trim() }); });
+      const labelAt = (node) => { let l = null; for (const a of anchors) if (a.el === node || (a.el.compareDocumentPosition(node) & 4 /* FOLLOWING */) || a.el.contains(node)) l = a.label; return l; };
+      return M.findAll(text, q).map((m) => { let cfi = null; const lab = anchors.length ? labelAt(at(m.start, false)[0]) : null; try { const r = doc.createRange(); r.setStart(...at(m.start, false)); r.setEnd(...at(m.end, true)); cfi = new ePub.CFI(r, sec.cfiBase).toString(); } catch { /* odd markup */ } return { target: { cfi, index: i, href: sec.href }, text, start: m.start, end: m.end, label: lab || undefined }; });
+    },
+    async show(hit) {
+      const M = await B(); ad.clearFlash(); const t = hit.target;
+      await c.rendition.display(t.cfi || t.href);
+      if (!t.cfi) return;
+      for (let k = 0; k < 20; k++) {
+        const contents = (() => { try { return c.rendition.getContents().find((x) => x.sectionIndex === t.index); } catch { return null; } })();
+        if (contents) { let r = null; try { r = new ePub.CFI(t.cfi).toRange(contents.document); } catch { /* ignore */ }
+          if (r) { if (!M.flashRange(r)) { try { c.rendition.annotations.highlight(t.cfi, {}, () => {}, 'bs-flash', { fill: '#ffb300', 'fill-opacity': '0.5', 'mix-blend-mode': 'multiply' }); flashOld.cfi = t.cfi; setTimeout(() => ad.clearFlash(), 4000); } catch { /* ignore */ } }
+            if (settings.get('flow') === 'scrolled') { const fix = () => { try { if (!r.startContainer.isConnected) return; const rect = r.getBoundingClientRect(); const sc = c.rendition.manager && c.rendition.manager.container; const fr = contents.document.defaultView.frameElement; if (sc && fr) { const top = fr.getBoundingClientRect().top + rect.top - sc.getBoundingClientRect().top; if (top < 40 || top > sc.clientHeight - 60) sc.scrollTop += top - sc.clientHeight * 0.3; } } catch { /* ignore */ } }; fix(); [120, 300, 600, 1000].forEach((ms) => setTimeout(fix, ms)); }   // epub.js may add/trim neighbouring sections (shifting the scroll) right after display()
+            return; } }
+        await new Promise((res) => setTimeout(res, 100));
+      }
+    },
+    clearFlash() { if (SB) SB.clearAllFlashes(); if (flashOld.cfi) { try { c.rendition.annotations.remove(flashOld.cfi, 'highlight'); } catch { /* ignore */ } flashOld.cfi = null; } },
+  };
+  c.__search = ad; return ad;
+}
 function showToc() {
   const c = cur;
   const flat = (items, depth = 0) => items.flatMap((it) => [{ it, depth }, ...flat(it.subitems || [], depth + 1)]);
@@ -358,7 +452,12 @@ function showToc() {
     const wrap = h('div');
     wrap.append(h('div', { class: 'seg wide' }, ['toc', 'bookmarks', 'notes'].map((t) => h('button', { class: tab === t ? 'on' : '', 'data-tab': t, onclick: () => { tab = t; rebuild(); } }, t === 'toc' ? 'Chapters' : t === 'bookmarks' ? 'Bookmarks (' + c.bookmarks.length + ')' : 'Highlights & Notes' + (c.annotCount ? ' (' + c.annotCount + ')' : ''))).concat(h('button', { id: 'toc-words', 'data-tab': 'words', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words'))));
     if (tab === 'notes') { const holder = h('div', { id: 'an-pane' }); wrap.append(holder); AN.listTab(annotHost(), rebuild, () => w.close()).then((el) => holder.replaceChildren(el)); }
-    else if (tab === 'toc') wrap.append(h('div', { class: 'list' }, flat(c.toc).length ? flat(c.toc).map(({ it, depth }) => h('button', { class: 'list-item toc-item', style: { paddingLeft: (14 + depth * 16) + 'px' }, onclick: async () => { w.close(); await c.rendition.display(it.href); } }, (it.label || '').trim())) : h('p', { class: 'muted pad' }, 'This book has no table of contents.')));
+    else if (tab === 'toc') {
+      const list = flat(c.toc); const now = currentTocIndex(c, list);
+      wrap.append(h('button', { class: 'list-item bs-open', id: 'toc-search', onclick: () => { w.close(); openBookSearch(); } }, h('span', null, '🔍'), h('span', { class: 'grow muted' }, 'Search in this book…')));
+      wrap.append(h('div', { class: 'list', id: 'toc-list' }, list.length ? list.map(({ it, depth }, i) => h('button', { class: 'list-item toc-item' + (i === now ? ' current' : '') + (now >= 0 && isAncestor(list, i, now) ? ' current-parent' : ''), 'aria-current': i === now ? 'true' : null, style: { paddingLeft: (14 + depth * 16) + 'px' }, onclick: async () => { w.close(); await c.rendition.display(it.href); settleScrolled(c, it.href); } }, h('span', { class: 'grow' }, (it.label || '').trim()), i === now ? h('small', { class: 'toc-now' }, 'Current') : null)) : h('p', { class: 'muted pad' }, 'This book has no table of contents.')));
+      scrollTocToCurrent(wrap);
+    }
     else wrap.append(h('div', { class: 'list' }, c.bookmarks.length ? [...c.bookmarks].sort((a, b) => a.progress - b.progress).map((bm) => h('div', { class: 'list-item' },
       h('span', { class: 'grow', onclick: async () => { w.close(); await c.rendition.display(bm.cfi); } }, bm.label, h('small', { class: 'muted' }, ' · ' + fmtPct(bm.progress))),
       h('button', { class: 'btn-icon', 'aria-label': 'Delete bookmark', onclick: async () => { await S.removeBookmark(bm.id); c.bookmarks = c.bookmarks.filter((x) => x.id !== bm.id); refreshBookmarkStar(); rebuild(); } }, '✕'))) : h('p', { class: 'muted pad' }, 'No bookmarks yet. Tap ☆ in the top bar.')));
@@ -427,7 +526,7 @@ export function showSettings() {
 /* ----- close ----- */
 export async function closeReader() {
   if (pdfCurrent()) return closePdf();
-  const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true); AN.disarm();
+  const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   c.closed = true; c.pager && c.pager.stop(); if (c.grabResize) { window.removeEventListener('resize', c.grabResize, true); window.removeEventListener('orientationchange', c.grabResize, true); }
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;

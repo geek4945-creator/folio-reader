@@ -23,7 +23,7 @@ export function rangeText(range) {
   }
   return norm(out);
 }
-export const hlCss = () => A.COLORS.map((c) => `::highlight(folio-hl-${c.id}) { background-color: ${c.hex}8c; color: inherit; }`).join('\n') + '\n::highlight(folio-hl-noted) { text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 2px; text-underline-offset: 3px; }\n';
+export const hlCss = () => '::highlight(folio-search) { background-color: #ffb300; color: #000; }\n' + A.COLORS.map((c) => `::highlight(folio-hl-${c.id}) { background-color: ${c.hex}8c; color: inherit; }`).join('\n') + '\n::highlight(folio-hl-noted) { text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 2px; text-underline-offset: 3px; }\n';
 
 /* ------------------------------------------------------------------ painting */
 const nameOf = (id) => 'folio-hl-' + id;
@@ -116,6 +116,7 @@ function showUi(host, contents, range, opts = {}) {
     const menu = h('div', { class: 'an-menu', id: 'an-menu', role: 'toolbar', 'aria-label': 'Selection' },
       h('button', { class: 'an-btn an-first', id: 'an-hl', onclick: () => quickFromUi() }, '🖍 Highlight'),
       ...A.COLORS.map((c) => h('button', { class: 'an-dot', 'data-color': c.id, 'aria-label': 'Highlight ' + c.name.toLowerCase(), style: { background: c.hex }, onclick: () => createFrom(c.id, false) })),
+      host.search ? h('button', { class: 'an-btn', id: 'an-search', onclick: () => searchSel() }, '🔍 Search') : null,
       h('button', { class: 'an-btn', id: 'an-note', onclick: () => createFrom(A.lastColor(), true) }, '✎ Note'),
       h('button', { class: 'an-btn', id: 'an-define', onclick: () => define() }, 'Define'),
       h('button', { class: 'an-btn', id: 'an-copy', onclick: () => copy() }, 'Copy'),
@@ -226,6 +227,9 @@ export function extendRec(host, rec) {
     if (!contents || !range) { toast('Go to that highlight first (it isn’t on screen)'); return false; }
     selectRange(host, contents, range); if (ui) { ui.rec = rec; const b = ui.menu.querySelector('#an-hl'); if (b) b.textContent = '✓ Save range'; } return true;
   } catch { return false; }
+}
+function searchSel() {   // v0.5.18: search the whole book for the selected words
+  const u = ui; if (!u) return; const t = u.text.replace(/\s+/g, ' ').trim().slice(0, 120); const host = u.host; closeSelectionUI(true); if (t && host.search) host.search(t);
 }
 async function copy() {
   const u = ui; if (!u) return; const t = u.text;

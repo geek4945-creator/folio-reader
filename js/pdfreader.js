@@ -36,6 +36,7 @@ export async function openPdf(book, blob, opts = {}) {
     h('button', { class: 'btn-icon', id: 'pdf-fit', 'aria-label': 'Fit width', title: 'Fit width', onclick: () => setZoom(1) }, '⤢'),
     h('button', { class: 'btn-icon', id: 'r-hl', 'aria-label': 'Highlight selected text (or turn on select mode)', title: 'Highlight', onclick: () => { if (cur) AN.toolbarHighlight(pdfAnnotHost()); } }, '🖍'),
     h('button', { class: 'btn-icon', id: 'r-notes', 'aria-label': 'Highlights and notes', onclick: showPdfNotes }, '✎'),
+    h('button', { class: 'btn-icon', id: 'r-search', 'aria-label': 'Search in this document', title: 'Search', onclick: () => openPdfSearch() }, '🔍'),
     tocBtn,
     fsButton({ class: 'btn-icon', id: 'r-fs' }, { icon: true }),
     h('button', { class: 'btn-icon', id: 'r-aa', 'aria-label': 'Appearance', onclick: showSettings }, 'Aa'));
@@ -46,7 +47,7 @@ export async function openPdf(book, blob, opts = {}) {
   const c = cur;
   const gctx = () => ({ book: cur.book, epub: null, toc: [], getSelection: () => (window.getSelection ? window.getSelection().toString() : ''), goto: (x) => { if (x.page) goTo(x.page); } });
   attachWordHold(viewer, { book: () => (cur && cur.book), ready: () => !!(cur && cur.ready), page: (node) => +((node.parentElement && node.parentElement.closest('.pdf-tpage, .pdf-page'))?.dataset.page || 0),
-    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); }, select: (range) => { if (cur) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
+    actions: { editEntry: (entry, term, _ctx, def) => openTermEditor(cur.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(gctx(), 'words'), search: (t) => openPdfSearch(t), highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); }, select: (range) => { if (cur) AN.selectRange(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); } } });   // word lookup works in the Text (reflow) view
   AN.attachPdf(pdfAnnotHost(), viewer);
   c.glossaryCtx = gctx;
   try {
@@ -167,7 +168,8 @@ function pdfAnnotHost() {
       if (!c.textMode || !a.loc.sp) { goTo(pg); return; } goTo(a.loc.sp.page);
       for (let i = 0; i < 30; i++) { const l = pdfAnnotHost().locate(a.loc.sp); if (l) { const el = l.n.parentElement; c.viewer.scrollTo({ top: Math.max(0, el.offsetTop + (el.offsetParent ? el.offsetParent.offsetTop : 0) - c.viewer.clientHeight * 0.3) }); return; } await new Promise((r) => setTimeout(r, 100)); }
     },
-    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words') })); },
+    define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words'), search: (t) => openPdfSearch(t) })); },
+    search: (t) => openPdfSearch(t),
   };
   return c.__ah;
 }
@@ -273,7 +275,7 @@ function onScroll() {
 /** Outline entries → sorted 1-based start pages (for "pages left in section"). Empty when the PDF has no usable outline. */
 async function resolveSections(c) {
   const starts = new Set(); const walk = async (items) => { for (const it of items || []) {
-    try { let dest = it.dest; if (typeof dest === 'string') dest = await c.pdf.getDestination(dest); if (dest) { const ref = dest[0]; const idx = typeof ref === 'object' ? await c.pdf.getPageIndex(ref) : ref; if (Number.isInteger(idx)) starts.add(idx + 1); } } catch { /* unresolved entry */ }
+    try { let dest = it.dest; if (typeof dest === 'string') dest = await c.pdf.getDestination(dest); if (dest) { const ref = dest[0]; const idx = typeof ref === 'object' ? await c.pdf.getPageIndex(ref) : ref; if (Number.isInteger(idx)) { starts.add(idx + 1); it.__page = idx + 1; } } } catch { /* unresolved entry */ }
     await walk(it.items); } };
   await walk(c.outline); c.sections = [...starts].filter((p) => p >= 1 && p <= c.n).sort((a, b) => a - b);
 }
@@ -352,6 +354,42 @@ async function savePosition() {
   if (moved) toast('Finished — moved to the Finished shelf');
 }
 
+/* ---------- v0.5.18 search inside the document (page text; highlights in the page text layer or in Text view) ---------- */
+async function openPdfSearch(query) {
+  const c = cur; if (!c || !c.pdf) return; closeBubble(); AN.closeSelectionUI(true);
+  try { if (c.outline && c.outline.length && !c.sections) await resolveSections(c); } catch { /* no outline pages */ }
+  const M = await import('./booksearch.js'); if (cur !== c) return; M.openSearch(pdfSearchHost(M), query);
+}
+function pdfSearchHost(M) {
+  const c = cur; if (c.__search) return c.__search;
+  const flat = (items, d = 0) => (items || []).flatMap((it) => [it, ...flat(it.items, d + 1)]);
+  const label = (i) => { const pg = i + 1; let t = ''; for (const it of flat(c.outline)) if (it.__page && it.__page <= pg) t = (it.title || '').trim(); return (t ? t + ' · ' : '') + 'Page ' + pg; };
+  const pageText = async (n) => { c.textCache = c.textCache || new Map(); let blocks = c.textCache.get(n); if (!blocks) { const page = await c.pdf.getPage(n); blocks = await pageBlocks(page); page.cleanup(); c.textCache.set(n, blocks); } return blocks.map((b) => b.text).join('\n'); };
+  const ad = {
+    key: c.book.id, units: c.n, root: () => c.el, label,
+    async scan(i, q) { const text = await pageText(i + 1); const hs = M.findAll(text, q); return hs.map((m, k) => ({ target: { page: i + 1, k, of: hs.length, ratio: text.length ? m.start / text.length : 0, q }, text, start: m.start, end: m.end })); },
+    async show(hit) {
+      const t = hit.target; ad.clearFlash(); goTo(t.page);
+      for (let k = 0; k < 50; k++) {
+        if (cur !== c) return;
+        const slot = c.pages[t.page - 1]; const root = slot && (c.textMode ? (slot.dataset.filled ? slot : null) : (slot.dataset.tl ? slot.querySelector('.pdf-tl') : null));
+        if (root) {
+          const f = flatten(root); const F = M.fold(f.str); const needle = M.fold(squash(t.q)).s; const occ = [];
+          if (needle) for (let j = F.s.indexOf(needle); j >= 0; j = F.s.indexOf(needle, j + 1)) occ.push(j);
+          if (!occ.length) return;
+          let j = occ.length === t.of ? occ[t.k] : occ.reduce((b, x) => (Math.abs(x / F.s.length - t.ratio) < Math.abs(b / F.s.length - t.ratio) ? x : b), occ[0]);
+          const r = rangeBetween(f.map, F.map[j], F.map[j + needle.length - 1]); if (!r) return;
+          M.flashRange(r);
+          try { const rr = r.getBoundingClientRect(), vr = c.viewer.getBoundingClientRect(); if (rr.top < vr.top + 40 || rr.bottom > vr.bottom - 40) c.viewer.scrollTop += rr.top - vr.top - c.viewer.clientHeight * 0.3; } catch { /* ignore */ }
+          return;
+        }
+        await new Promise((res) => setTimeout(res, 100));
+      }
+    },
+    clearFlash() { M.clearAllFlashes(); },
+  };
+  c.__search = ad; return ad;
+}
 /* ---------- outline + appearance ---------- */
 function showOutline() {
   const c = cur; if (!c || !c.outline) return;
@@ -359,7 +397,14 @@ function showOutline() {
   const go = async (it) => {
     try { let dest = it.dest; if (typeof dest === 'string') dest = await c.pdf.getDestination(dest); if (!dest) return; const ref = dest[0]; const idx = typeof ref === 'object' ? await c.pdf.getPageIndex(ref) : ref; w.close(); goTo(idx + 1); } catch { toast('Couldn’t jump to that section'); }
   };
-  const w = sheet('Outline', () => h('div', { class: 'list' }, flat(c.outline).map(({ it, d }) => h('button', { class: 'list-item toc-item', style: { paddingLeft: (14 + d * 16) + 'px' }, onclick: () => go(it) }, (it.title || '').trim() || 'Untitled'))), { tall: true });
+  // v0.5.18: mark + scroll to the section the current page is in (last entry starting at or before it; deeper entries win on ties)
+  const list = flat(c.outline); const nowIdx = () => { let k = -1; list.forEach(({ it }, i) => { if (it.__page && it.__page <= c.page) k = i; }); return k; };
+  const build = () => { const now = nowIdx(); const parents = new Set(); if (now > 0) { let d = list[now].d; for (let i = now - 1; i >= 0 && d > 0; i--) if (list[i].d < d) { parents.add(i); d = list[i].d; } } return h('div', null,
+    h('button', { class: 'list-item bs-open', id: 'toc-search', onclick: () => { w.close(); openPdfSearch(); } }, h('span', null, '🔍'), h('span', { class: 'grow muted' }, 'Search in this document…')),
+    h('div', { class: 'list', id: 'toc-list' }, list.map(({ it, d }, i) => h('button', { class: 'list-item toc-item' + (i === now ? ' current' : '') + (parents.has(i) ? ' current-parent' : ''), 'aria-current': i === now ? 'true' : null, style: { paddingLeft: (14 + d * 16) + 'px' }, onclick: () => go(it) }, h('span', { class: 'grow' }, (it.title || '').trim() || 'Untitled'), i === now ? h('small', { class: 'toc-now' }, 'Current') : null)))); };
+  const w = sheet('Outline', () => build(), { tall: true });
+  const scroll = () => requestAnimationFrame(() => { const el = w.body.querySelector('.toc-item.current'); if (el) el.scrollIntoView({ block: 'center' }); });
+  if (list.some(({ it }) => it.__page)) scroll(); else resolveSections(c).then(() => { if (!w.closed) { w.body.replaceChildren(build()); scroll(); } });
 }
 export function showSettings() {
   const c = cur; c.scopeBook = S.hasOverrides(c.book); const w = sheet('Appearance', () => build(), { noDim: true });
@@ -409,7 +454,7 @@ settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.text
 
 /* ---------- close ---------- */
 export async function closePdf() {
-  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true); AN.disarm();
+  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
   cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }
