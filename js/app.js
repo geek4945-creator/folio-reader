@@ -108,7 +108,7 @@ function renderSettings() {
         h('button', { class: 'btn', id: 'saved-words-all', onclick: () => openAllWords() }, 'Saved words & glossaries'),
         h('button', { class: 'btn', id: 'dict-clear', onclick: async () => { const n = await Dict.cacheSize(); await Dict.clearCache(); toast(n ? 'Cleared ' + n + ' saved definition' + (n === 1 ? '' : 's') : 'Nothing to clear'); } }, 'Clear offline definitions'))),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Library sorting'),
-      h('p', { class: 'muted small' }, 'Each shelf (All, Currently Reading, Want to Read, Finished, your own shelves) and each set remembers its own sort. This default applies to any that don’t have one yet.'),
+      h('p', { class: 'muted small' }, 'Each shelf (All, Want to Read, Finished, your own shelves) and each set remembers its own sort. This default applies to any that don’t have one yet.'),
       h('div', { class: 'row-ctl' }, h('label', null, 'Default sort'),
         h('div', { class: 'row-actions' },
           h('select', { class: 'field', id: 'default-sort-field', onchange: (e) => { setDefaultSort({ field: e.target.value }); renderSettings(); } }, SORT_FIELDS.filter(([k]) => k !== 'custom').map(([v, n]) => h('option', { value: v, selected: v === s.defaultSort.field }, n))),

@@ -46,14 +46,14 @@ const rerender = () => renderLibrary();
 async function renderMain(ctx) {
   const { shelves } = ctx; sortCtx = ctx;
   const allBooks = ctx.books; const books = Loans.owned(allBooks), borrowedBooks = Loans.borrowedOf(allBooks);   // Borrowed (library loans) stay out of the owned library, its chips and its counts
-  let chip = settings.get('chip'); if (chip === 'borrowed' && !borrowedBooks.length) chip = 'all'; const sortKey = 'shelf:' + chip; const gb = chip === 'all' ? (settings.get('groupBy') || 'status') : null;
+  let chip = settings.get('chip'); if ((chip === 'borrowed' && !borrowedBooks.length) || chip === 'reading') chip = 'all';   /* 'reading': the removed Currently Reading shelf (old / synced / restored settings) */ const sortKey = 'shelf:' + chip; const gb = chip === 'all' ? (settings.get('groupBy') || 'status') : null;
   const grouped = setsGrouped(sortKey);   // v0.5.8: series sets per view (its own choice, else the global default)
   const orderKey = sortKey + (gb === 'none' || !grouped ? ':flat' : '');   // the flat list keeps its own custom order
   const spec = getSort(sortKey); const sort = spec.field; const viewMode = settings.get('view');
   const search = h('input', { type: 'search', class: 'field search', placeholder: 'Search title, author or series', value: local.q, enterkeyhint: 'search' });
   search.addEventListener('input', () => { local.q = search.value; drawBody(); });
 
-  const chips = [{ id: 'all', name: 'All' }, ...S.STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true })), ...(borrowedBooks.length ? [{ id: 'borrowed', name: 'Borrowed', borrowed: true }] : [])];
+  const chips = [{ id: 'all', name: 'All' }, ...S.SHELF_STATUSES, ...shelves.map((s) => ({ id: s.id, name: s.name, custom: true })), ...(borrowedBooks.length ? [{ id: 'borrowed', name: 'Borrowed', borrowed: true }] : [])];
   const banner = await Loans.loanBanner('book', rerender);
   put(view, 
     h('header', { class: 'topbar' }, h('h1', null, 'Library'),

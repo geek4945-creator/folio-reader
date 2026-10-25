@@ -12,6 +12,8 @@ export const STATUSES = [
   { id: 'want', name: 'Want to Read' },
   { id: 'finished', name: 'Finished' },
 ];
+// v0.5.18: "Currently Reading" is no longer a Library shelf (the Reading now tab covers it). It stays a status (sorting, grouping, sync, Reading now).
+export const SHELF_STATUSES = STATUSES.filter((s) => s.id !== 'reading');
 export const statusName = (id) => STATUSES.find((s) => s.id === id)?.name || id;
 
 const bus = new EventTarget();

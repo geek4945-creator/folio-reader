@@ -55,20 +55,20 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await page.select('#sort-sel', 'type'); await sleep(400); const t = await titles(); // asc: AZW3, EPUB..., PDF
     assert(t[0] === 'Kindle Saga Two' && t.slice(-1)[0] === 'Folio Test PDF', t.join('|')); return t.join(' | ');
   });
-  await step('Each shelf keeps its own sort (All=type; Want/Reading/Finished/custom shelf independent)', async () => {
-    await page.evaluate(async () => { const S = await import('./js/store.js'); const bs = await S.getBooks(); const f = (t) => bs.find((b) => b.title.startsWith(t)); await S.setStatus(f('Saga Book Two').id, 'reading'); await S.setStatus(f('Saga Book One').id, 'reading'); await S.setStatus(f('A Standalone').id, 'finished'); const sh = await S.createShelf('Faves'); await S.toggleShelf(f('Frankenstein').id, sh.id); await S.toggleShelf(f('Folio').id, sh.id); await S.toggleShelf(f('Kindle').id, sh.id); window.__shelf = sh.id; });
-    await chip('reading'); let s = await sortState(); assert(s.field === 'recent' && s.dir === 'desc', 'reading default ' + JSON.stringify(s));
+  await step('Each shelf keeps its own sort (All=type; Want/Finished/custom shelf independent)', async () => {
+    await page.evaluate(async () => { const S = await import('./js/store.js'); const bs = await S.getBooks(); const f = (t) => bs.find((b) => b.title.startsWith(t)); await S.setStatus(f('Saga Book Two').id, 'finished'); await S.setStatus(f('Saga Book One').id, 'finished'); await S.setStatus(f('A Standalone').id, 'reading'); const sh = await S.createShelf('Faves'); await S.toggleShelf(f('Frankenstein').id, sh.id); await S.toggleShelf(f('Folio').id, sh.id); await S.toggleShelf(f('Kindle').id, sh.id); window.__shelf = sh.id; });
+    await chip('finished'); let s = await sortState(); assert(s.field === 'recent' && s.dir === 'desc', 'finished default ' + JSON.stringify(s));
     await page.select('#sort-sel', 'title'); await sleep(300); let t = await titles(); assert(t.join('|') === 'Saga Book One|Saga Book Two', t.join('|'));
-    await page.click('#sort-dir'); await sleep(300); t = await titles(); assert(t.join('|') === 'Saga Book Two|Saga Book One', 'reading desc ' + t.join('|'));
+    await page.click('#sort-dir'); await sleep(300); t = await titles(); assert(t.join('|') === 'Saga Book Two|Saga Book One', 'finished desc ' + t.join('|'));
     await chip('want'); s = await sortState(); assert(s.field === 'recent', 'want kept default ' + JSON.stringify(s));
     await chip('all'); s = await sortState(); assert(s.field === 'type', 'all kept type ' + JSON.stringify(s));
     await page.waitForSelector('[data-chip]:not([data-chip=all]):not([data-chip=reading]):not([data-chip=want]):not([data-chip=finished])', { timeout: 15000 }); await page.evaluate(() => document.querySelector('[data-chip]:not([data-chip=all]):not([data-chip=reading]):not([data-chip=want]):not([data-chip=finished])').click()); await sleep(500);
     s = await sortState(); assert(s.field === 'recent', 'custom shelf default'); await page.select('#sort-sel', 'author'); await sleep(300);
-    await chip('reading'); s = await sortState(); assert(s.field === 'title' && s.dir === 'desc', 'reading still title desc ' + JSON.stringify(s));
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('folio.settings')).sorts); assert(stored['shelf:all'].field === 'type' && stored['shelf:reading'].dir === 'desc' && Object.keys(stored).length === 3, JSON.stringify(stored)); return JSON.stringify(stored);
+    await chip('finished'); s = await sortState(); assert(s.field === 'title' && s.dir === 'desc', 'finished still title desc ' + JSON.stringify(s));
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('folio.settings')).sorts); assert(stored['shelf:all'].field === 'type' && stored['shelf:finished'].dir === 'desc' && Object.keys(stored).length === 3, JSON.stringify(stored)); return JSON.stringify(stored);
   });
   await step('Sorts persist across reload', async () => {
-    await page.reload({ waitUntil: 'networkidle0' }); await sleep(500); await chip('reading'); const s = await sortState(); assert(s.field === 'title' && s.dir === 'desc', JSON.stringify(s));
+    await page.reload({ waitUntil: 'networkidle0' }); await sleep(500); await chip('finished'); const s = await sortState(); assert(s.field === 'title' && s.dir === 'desc', JSON.stringify(s));
   });
   await step('Sets: per-set sort — volume / title / recently added / custom, with direction', async () => {
     await page.evaluate(async () => { const st = await import('./js/settings.js'); st.settings.set({ groupSets: true, chip: 'all' }); }); await show();
@@ -87,7 +87,7 @@ const assert = (c, m) => { if (!c) throw new Error(m || 'assertion failed'); };
     await page.evaluate(() => window.__folio.show('settings')); await page.waitForSelector('#default-sort-field');
     await page.select('#default-sort-field', 'title'); await sleep(300); await page.click('#default-sort-dir'); await sleep(300);
     const d = await page.evaluate(() => JSON.parse(localStorage.getItem('folio.settings')).defaultSort); assert(d.field === 'title', JSON.stringify(d));
-    await show(); await chip('want'); const s = await sortState(); assert(s.field === 'title', 'want uses default ' + JSON.stringify(s)); await chip('reading'); assert((await sortState()).field === 'title' && (await sortState()).dir === 'desc', 'reading own');
+    await show(); await chip('want'); const s = await sortState(); assert(s.field === 'title', 'want uses default ' + JSON.stringify(s)); await chip('finished'); assert((await sortState()).field === 'title' && (await sortState()).dir === 'desc', 'finished own');
     await chip('all'); assert((await sortState()).field === 'type', 'all own kept'); return JSON.stringify(d);
   });
   await step('"Reset all shelves to default sort" clears every per-shelf and per-set sort', async () => {

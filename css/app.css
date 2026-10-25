@@ -51,7 +51,10 @@ body.reading #tabbar { display:none; }
 .cover-ph small { opacity:.8; font-weight:400; margin-top:.4rem; }
 .tile .meta { padding:.35rem .1rem 0; } .tile .t { font-size:.85rem; font-weight:600; line-height:1.2; } .tile .a { font-size:.75rem; }
 .pbadge { position:absolute; left:.3rem; bottom:.3rem; background:rgba(0,0,0,.72); color:#fff; font-size:.68rem; padding:.1rem .4rem; border-radius:.8rem; }
-.pbadge.new { background:var(--accent); } .pbadge.done { background:#2e9d5b; } .pbadge.set { background:var(--accent); }
+.pbadge.done { background:#2e9d5b; }
+/* v0.5.18: NEW and the series/set book count look clearly different in every theme (fixed colours, not the theme accent; white text + a thin light ring for dark covers) */
+.pbadge.new { background:#15803d; color:#fff; font-weight:700; letter-spacing:.04em; box-shadow:0 0 0 1px rgba(255,255,255,.7); }
+.pbadge.set { background:#1e3a5f; color:#fff; font-weight:600; box-shadow:0 0 0 1px rgba(255,255,255,.55); }
 .tile-more { position:absolute; right:.25rem; top:.25rem; background:rgba(0,0,0,.55); color:#fff; border:0; width:1.6rem; height:1.6rem; border-radius:50%; line-height:1; font-size:1rem; padding:0; }
 .ovr { position:absolute; left:.3rem; top:.3rem; background:#f4b400; color:#222; font-size:.65rem; font-weight:700; padding:.05rem .3rem; border-radius:.3rem; }
 .vol { position:absolute; right:.3rem; bottom:.3rem; background:rgba(255,255,255,.9); color:#222; font-size:.65rem; font-weight:700; padding:.05rem .35rem; border-radius:.3rem; }
