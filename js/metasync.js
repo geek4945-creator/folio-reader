@@ -43,7 +43,9 @@ export function applyTextFields(it, rm) {
   let changed = false; it.metaAt = it.metaAt || {}; it.userSet = it.userSet || {};
   for (const f of TEXT_FIELDS) {
     const r = rm?.[f]; if (!r) continue;
-    if (it.uo?.[f]) continue;   // v0.5.21: a per-field user edit (synced with the book state) always decides this field
+    const uo = it.uo?.[f];   // v0.5.21: a per-field user edit always decides this field; only a NEWER user edit (from either channel) replaces it
+    if (uo) { if (!r.u || (r.at || 0) <= (uo.at || 0) || String(r.v ?? '') === String(uo.v ?? '')) continue;
+      it.uo = { ...it.uo, [f]: { v: f === 'year' ? (parseInt(r.v, 10) || null) : (r.v ?? null), at: r.at, d: uo.d === 'meta' ? 'meta' : 'meta:' + (uo.d || '') } }; }
     const loc = it.metaAt[f] ? { v: it[f] ?? '', at: it.metaAt[f], u: !!it.userSet[f] } : null;
     if (loc && pickText(loc, r) !== r) continue; if (loc && loc.at === r.at && !!loc.u === !!r.u && String(loc.v) === String(r.v)) continue;
     it[f] = f === 'year' ? (parseInt(r.v, 10) || null) : (r.v ?? ''); it.metaAt[f] = r.at; if (r.u) it.userSet[f] = true; else delete it.userSet[f]; changed = true;

@@ -316,7 +316,7 @@ export function applyPending(book) {
   for (const g of Object.keys(GROUPS)) book.gAt[g] = gat(g);
   if (gat('series') > 0 || st.uo?.setId) { book.setId = st.setId || null; book.seriesIndex = st.seriesIndex ?? null; dec.series = true; }
   if (st.title) book.title = st.title; if (st.author) book.author = st.author;
-  if (st.uo) { book.uo = structuredClone(st.uo); forceUo(book); if (book.uo.setId) dec.series = true; }
+  if (st.uo) { book.uo = structuredClone(st.uo); forceUo(book); if (book.uo.setId) dec.series = true; book.userSet = book.userSet || {}; for (const f of Object.keys(book.uo)) if (book.uo[f]) book.userSet[f === 'setId' || f === 'seriesIndex' ? 'series' : f] = true; }
   if (st.nowHiddenAt) book.nowHiddenAt = st.nowHiddenAt;
   if (st.pdfPage) Object.assign(book, { pdfPage: st.pdfPage, pdfZoom: st.pdfZoom || 1, pdfText: !!st.pdfText }); if (st.finishedAt) book.finishedAt = st.finishedAt;
   if (st.loan && (st.loan.at || 0) > (book.loanAt || 0)) Object.assign(book, { borrowed: !!st.loan.b, dueAt: st.loan.due || null, loanAt: st.loan.at, ...(st.loan.src ? { loanSource: st.loan.src } : {}) });   // Borrowed flag + due date kept for a book that wasn't here yet

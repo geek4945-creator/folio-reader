@@ -445,7 +445,7 @@ export async function applySnapshot(m, ctx = {}) {
         const cur = b.uo?.[f]; if (!o || (cur && cur.at === o.at && cur.d === o.d && !!cur.m === !!o.m && sameV(cur.v, o.v))) continue;
         if (!(ctx.force || lu?.has(f) || uoBeats(o, cur))) continue;
         b.uo = { ...(b.uo || {}) }; if (!sameV(b[f] ?? null, o.v ?? null)) pushHist(b, f, cur || { v: b[f] ?? null, at: 0, d: '' });
-        b.uo[f] = structuredClone(o); if (!(f === 'title' && !o.v)) b[f] = o.v ?? null; dirty = true;
+        b.uo[f] = structuredClone(o); if (!(f === 'title' && !o.v)) b[f] = o.v ?? null; dirty = true; if (['description', 'year', 'language'].includes(f)) { b.userSet = { ...(b.userSet || {}), [f]: true }; b.metaAt = { ...(b.metaAt || {}), [f]: Math.max(b.metaAt?.[f] || 0, o.at || 0) }; }
       }
     }
     if (doms.positions && (st.posAt !== undefined || st.progress !== undefined)) { const r = applyPosition('book', b, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }

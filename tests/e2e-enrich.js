@@ -184,7 +184,7 @@ const syncNow = (page, force = false) => page.evaluate(async (force) => { const 
     const a2 = await odOf(A), b2 = await odOf(B); assert(a2.year === 2002 && b2.year === 2002, JSON.stringify({ a: a2.year, b: b2.year })); return 'user beats auto; newest user edit wins';
   });
 
-  await step('Tombstones + cover GC: deleting items drops their synced metadata; orphaned covers are deleted only once older than an hour', async () => {
+  await step('Tombstones + cover GC: deleting items drops their synced metadata; orphaned covers are deleted only once older than a week', async () => {
     // a unique custom cover on Wrong Match
     const wm = await book(A, 'Wrong Match'); await A.evaluate(async (id) => { const C = await import('/js/covers.js'); const r = await fetch('./tests/fixtures/img/big.jpg'); await C.setUserCover('book', id, await C.resizeCover(await r.blob())); }, wm.id); await syncNow(A);
     const cid = (await book(A, 'Wrong Match')).coverId; assert(cid && S.cloud.covers.has(`cover-${cid}.jpg`), 'unique cover not uploaded');
@@ -194,7 +194,7 @@ const syncNow = (page, force = false) => page.evaluate(async (force) => { const 
     assert(!Object.keys(snap.meta).some((k) => /Wrong Match|Saga/.test(k)) && !Object.keys(snap.audioMeta).length, JSON.stringify(Object.keys(snap.meta)));
     assert(snap.tombstones.some((t) => t.t === 'book') && snap.tombstones.some((t) => t.t === 'audio'), 'tombstones missing: ' + JSON.stringify(snap.tombstones.map((t) => t.t)));
     assert(S.cloud.covers.has(`cover-${cid}.jpg`) && !S.cloud.deletes.length, 'a fresh orphan cover must not be deleted yet');
-    S.cloud.covers.get(`cover-${cid}.jpg`).createdTime = new Date(Date.now() - 2 * 3600e3).toISOString(); await syncNow(A, true);
+    S.cloud.covers.get(`cover-${cid}.jpg`).createdTime = new Date(Date.now() - 8 * 86400e3).toISOString(); await syncNow(A, true);   // v0.5.21: orphans are kept a week
     assert(S.cloud.deletes.includes(`cover-${cid}.jpg`) && !S.cloud.covers.has(`cover-${cid}.jpg`), 'old orphan cover not garbage-collected'); assert(S.cloud.covers.size >= 1, 'referenced covers must survive GC');
     await syncNow(B); snap = JSON.parse(S.cloud.sync); assert(!Object.keys(snap.audioMeta).length, 'device B re-published metadata of an audiobook deleted on A'); return 'meta removed, tombstones kept, orphan cover GC\'d after 1 h';
   });
