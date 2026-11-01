@@ -2,7 +2,7 @@
 // (device picker, Google Drive image, pasted URL, search Open Library + Google Books, Google Images in a new tab, revert to automatic).
 import { h, sheet, toast, $, put } from './util.js';
 import { fetchSmart, SiteError } from './net.js';
-import { DB } from './db.js';
+import { DB, trueNow } from './db.js';
 import * as S from './store.js';
 import * as A from './audiostore.js';
 import { parseEpub } from './epubmeta.js';
@@ -55,7 +55,7 @@ export async function renderCrop(bmp, opts = {}) {
 const adapt = (kind) => (kind === 'audio' ? { get: A.getAudiobook, save: async (b) => { await A.saveAudiobook(b); S.emitChange(); } } : { get: S.getBook, save: (b) => S.saveBook(b) });
 export async function setUserCover(kind, id, blob) {
   const a = adapt(kind); const it = await a.get(id); if (!it) throw new Error('That item no longer exists');
-  it.coverBlob = blob; it.coverSource = 'user'; it.coverId = null; it.userSet = { ...(it.userSet || {}), cover: true }; it.metaAt = { ...(it.metaAt || {}), cover: Date.now() };
+  it.coverBlob = blob; it.coverSource = 'user'; it.coverId = null; it.userSet = { ...(it.userSet || {}), cover: true }; it.metaAt = { ...(it.metaAt || {}), cover: trueNow() };
   await a.save(it); return it;
 }
 /** The "automatic" cover = the one inside the file (EPUB / PDF / audio tags). Null when the file has none. */
@@ -66,7 +66,7 @@ export async function extractFileCover(kind, it) {
     const m = isPdf(buf) ? await parsePdf(buf, '') : await parseEpub(buf); return m.coverBlob || null;
   } catch { return null; }
 }
-export async function revertCover(kind, id, { at = Date.now(), quiet = false } = {}) {
+export async function revertCover(kind, id, { at = trueNow(), quiet = false } = {}) {
   const a = adapt(kind); const it = await a.get(id); if (!it) return null;
   let cover = await extractFileCover(kind, it);
   if (!cover && it.coverUrl) { try { cover = await fetchImage(it.coverUrl); } catch { cover = null; } }   // online audiobooks: the catalog's own cover

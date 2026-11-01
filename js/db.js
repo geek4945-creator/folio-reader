@@ -2,10 +2,11 @@
 // Stores: books (metadata + cover blob), files (epub blobs), bookmarks, sets (series),
 // shelves (custom), orders (manual order per context), sources (catalog sources).
 const NAME = 'folio-reader';
-const VERSION = 6;   // v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only); v6: glossary (per-book glossary entries + saved words, synced) + dict (offline dictionary cache, device-only)
+const VERSION = 7;   // v7: metahist (v0.5.21: local snapshots of book info before a sync changes it, device-only); v2: pagecache (page-count caches for the reader footer); v3: audiobooks + audiofiles; v4: links (audiobook ↔ ebook, synced); v5: undo (pre-import snapshot, device-only); v6: glossary (per-book glossary entries + saved words, synced) + dict (offline dictionary cache, device-only)
 let dbp;
 const TRACKED = new Set(['books', 'bookmarks', 'sets', 'shelves', 'orders', 'links', 'glossary']);
 import { deviceId, deviceName } from './device.js';
+import { UO_FIELDS, pushHist, sameV, norm } from './bookinfo.js';
 
 /* Fine-grained change stamps for cross-device sync. A book / audiobook has three independent kinds of change:
  *   structAt – shelves, status, series, titles   (library file)      posAt – where you are in it + when last opened (positions file)
@@ -29,8 +30,8 @@ export const structAtOf = (b) => b.structAt ?? b.updatedAt ?? 0;
 export const gAtOf = (b, g) => b.gAt?.[g] ?? (GROUPS[g] && GROUPS[g].noLegacy ? 0 : structAtOf(b));
 export const posAtOf = (b) => b.posAt ?? Math.max(b.lastOpened || 0, b.updatedAt || 0);   // legacy records: their last touch
 export const posAtOfState = (st) => st.posAt ?? Math.max(st.lastOpened || 0, st.updatedAt || 0);
-function stamp(val, old) {
-  const now = trueNow();
+function stamp(val, old, s) {
+  const now = trueNow(); const auto = val._auto; delete val._auto;
   if (!old) { val.structAt = 0; val.gAt = {}; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
   const g = {}; let top = 0;
   for (const [n, d] of Object.entries(GROUPS)) { g[n] = d.sig(old) === d.sig(val) ? gAtOf(old, n) : now; top = Math.max(top, g[n]); }
@@ -41,6 +42,16 @@ function stamp(val, old) {
     const a = old.overrides || {}, b = val.overrides || {}, at = { ...(old.ovAt || {}) };
     for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (J(a[k]) !== J(b[k])) at[k] = now;
     val.ovAt = at;
+  }
+  if (s === 'books') {   // v0.5.21: every book-info field the user changes becomes a per-field override with its own stamp + device (see bookinfo.js)
+    const autoF = new Set(auto === true ? UO_FIELDS : auto || []);
+    for (const f of UO_FIELDS) {
+      if (autoF.has(f) || sameV(norm(f, old[f]), norm(f, val[f]))) continue;
+      val.uo = { ...(val.uo || old.uo || {}) }; const prev = val.uo[f] || { v: norm(f, old[f]), at: 0, d: '' };
+      pushHist(val, f, prev); val.uo[f] = { v: norm(f, val[f]), at: now, d: deviceId() };
+    }
+    if (!val.uo && old.uo) val.uo = old.uo;
+    if (!val.uoHist && old.uoHist) val.uoHist = old.uoHist;
   }
 }
 
@@ -58,6 +69,7 @@ function open() {
       mk('undo', { keyPath: 'id' });   // one record: the library state before the last backup import (Undo)
       mk('glossary', { keyPath: 'id' }, (o) => o.createIndex('bookKey', 'bookKey'));   // v0.5.6: glossary terms, saved words and per-book share flags (synced; see glossary.js)
       mk('dict', { keyPath: 'word' });   // v0.5.6: offline cache of dictionary lookups (device-only)
+      mk('metahist', { keyPath: 'id' });   // v0.5.21: book info as it was before a sync changed it (Settings → Sync → Restore book info)
       mk('pagecache', { keyPath: 'key' });   // not synced: {key: '<bookId>|chars' | '<bookId>|k' | '<bookId>|cal|<layout>', bookId, v}
     };
     req.onsuccess = () => { const db = req.result; db.onversionchange = () => { try { db.close(); } catch { /* ignore */ } dbp = null; }; resolve(db); };   // let a newer version of the app (another tab / window) upgrade the database instead of blocking it
@@ -85,7 +97,8 @@ export const DB = {
   async all(s) { return wrap((await store(s)).getAll()); },
   // Records in synced stores get an updatedAt stamp (used for last-writer-wins sync) unless _noTouch is set.
   async put(s, val) {
-    if (val && STAMPED.has(s) && !val._noTouch) stamp(val, await wrap((await store(s)).get(val.id)));
+    if (val && STAMPED.has(s) && !val._noTouch) stamp(val, await wrap((await store(s)).get(val.id)), s);
+    if (val && '_auto' in val) delete val._auto;
     if (val && TRACKED.has(s)) { if (val._noTouch) delete val._noTouch; else val.updatedAt = trueNow(); }
     else if (val && val._noTouch) delete val._noTouch;
     return wrap((await store(s, 'readwrite')).put(val));

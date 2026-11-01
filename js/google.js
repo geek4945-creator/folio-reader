@@ -1,7 +1,8 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
 import { capOwnFuture, settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups, NESTED } from './settings.js';
-import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS } from './db.js';
+import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS, trueNow } from './db.js';
+import { UO_FIELDS, UO_GROUP, uoBeats, mergeUo, pushHist, sameV } from './bookinfo.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
 import { APP_VERSION } from './device.js';
@@ -270,7 +271,8 @@ export async function buildSnapshot() {
   await S.fixKeyCollisions(books);   // v0.5.20: two different books must never share one sync entry (that silently merged them and lowered counts)
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}), ...(srcOf(b) ? { src: srcOf(b) } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}), ...(srcOf(b) ? { src: srcOf(b) } : {}), ...(b.uo ? { uo: b.uo } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const [k, st] of Object.entries(S.getPending())) if (st && !bookState[k]) bookState[k] = st;   // v0.5.21: books not downloaded here yet keep their synced state (a push must never drop them from the cloud)
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
@@ -278,6 +280,10 @@ export async function buildSnapshot() {
   for (const a of audio) audioState[a.syncKey || a.id] = { title: a.title, author: a.author || '', addedAt: a.addedAt || 0, status: a.status, shelves: a.shelves || [], finishedAt: a.finishedAt || 0, speed: a.speed ?? null, position: a.position || 0, progress: a.progress || 0, track: a.track ?? null, trackIndex: a.trackIndex ?? null, lastOpened: a.lastOpened || 0, updatedAt: structAtOf(a), gAt: gAtsOf(a), posAt: posAtOf(a), dev: a.posDev || '', devName: a.posDevName || '', ...(a.external ? { ext: { kind: a.external, url: a.chirpUrl || '', duration: a.duration || 0 } } : {}) };   // v0.5.18: Chirp entries have no files, so other devices recreate them from this
   const meta = {}; for (const b of books) { const e = localMeta(b); if (e) meta[keyOf.get(b.id)] = e; }
   const audioMeta = {}; for (const a of audio) { const e = localMeta(a); if (e) audioMeta[a.syncKey || a.id] = e; }
+  for (const [k, e] of Object.entries(getPendingMeta('book'))) if (e && !meta[k]) meta[k] = e;   // v0.5.21: …and their covers / info
+  for (const [k, e] of Object.entries(getPendingMeta('audio'))) if (e && !audioMeta[k]) audioMeta[k] = e;
+  for (const [k, list] of Object.entries(S.getPendingBookmarks())) if (list && !bookmarks[k]) bookmarks[k] = list;
+  const usedSets = new Set(Object.values(bookState).map((x) => x && x.setId).filter(Boolean));
   const loans = {};   // Borrowed flag + due date, last-writer-wins on loanAt: 'book:<key>' / 'audio:<key>'
   for (const b of books) if (b.loanAt) loans['book:' + keyOf.get(b.id)] = { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt };
   for (const a of audio) if (a.loanAt) loans['audio:' + (a.syncKey || a.id)] = { b: a.borrowed ? 1 : 0, due: a.dueAt || null, src: a.loanSource || '', at: a.loanAt };
@@ -286,9 +292,9 @@ export async function buildSnapshot() {
     glossary: gloss.map((x) => ({ ...x, updatedAt: x.updatedAt || x.at || 0 })).sort((a, b) => (a.id < b.id ? -1 : 1)),
     savedAt: Date.now(), settings: buildSettingsPart(),
     shelves: shelves.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
-    sets: sets.map((x) => ({ id: x.id, name: x.name, auto: !!x.auto, createdAt: x.createdAt, updatedAt: x.updatedAt || x.createdAt })),
+    sets: sets.filter((x) => !x.auto || usedSets.has(x.id)).map((x) => ({ id: x.id, name: x.name, auto: !!x.auto, createdAt: x.createdAt, updatedAt: x.updatedAt ?? x.createdAt ?? 0, ...(x.orig ? { orig: x.orig } : {}) })),   // v0.5.21: an empty automatic set is not synced; a fresh one is stamped 0 (never beats a set someone edited)
     orders: orders.map((o) => ({ key: o.key, ids: o.ids.map(mapOrderId), updatedAt: o.updatedAt || 0 })),
-    books: bookState, bookmarks, tombstones: S.getTombs() };
+    books: bookState, bookmarks, tombstones: S.getTombs(), ...(lsj(TRUTH, null) ? { truth: lsj(TRUTH, null) } : {}) };
 }
 
 /** v0.5.20: where the book's file came from, so another device can fetch the same file (only Google Drive files can be fetched; others are named). */
@@ -297,7 +303,7 @@ function srcOf(b) {
   return { kind: b.source === 'Google Drive' ? 'gdrive' : 'file', name: b.filename || '', size: b.size || 0, fmt: b.format || '' };
 }
 function canonicalize(snap, idmap) {   // unify duplicate sets/shelves with the same name created independently on two devices
-  const m = (id) => idmap.get(id) || id;
+  const m = (id) => { let x = id; for (let i = 0; i < 6 && idmap.has(x); i++) x = idmap.get(x); return x; };
   snap.shelves = snap.shelves.map((x) => ({ ...x, id: m(x.id) }));
   snap.sets = snap.sets.map((x) => ({ ...x, id: m(x.id) }));
   for (const st of Object.values(snap.books)) { if (st.setId) st.setId = m(st.setId); st.shelves = (st.shelves || []).map(m); }
@@ -317,8 +323,12 @@ function mergeState(a, b, posFields) {
   if (!a || !b) { const x = structuredClone(a || b); return x; }
   const st = structuredClone((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a);
   st.gAt = {};   // each group of structure (status / shelves / series / name) is last-writer-wins on its own stamp
-  for (const [g, d] of Object.entries(GROUPS)) { const w = stGroupAt(b, g) > stGroupAt(a, g) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
-  st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+  for (const [g, d] of Object.entries(GROUPS)) { const ta = stGroupAt(a, g), tb = stGroupAt(b, g); const w = tb > ta ? b : tb < ta ? a : JSON.stringify(d.fields.map((f) => b[f] ?? null)) > JSON.stringify(d.fields.map((f) => a[f] ?? null)) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
+  if (a.uo || b.uo) {   // v0.5.21: per-field user edits beat everything else, field by field (newest edit wins)
+    st.uo = mergeUo(a.uo, b.uo);
+    for (const [f, o] of Object.entries(st.uo)) { const g = UO_GROUP[f]; if (!o || !g || (f === 'title' && !o.v)) continue; st[f] = o.v ?? null; st.gAt[g] = Math.max(st.gAt[g] || 0, o.at || 0); }
+  }
+  st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0, ...Object.values(st.gAt || {}));
   if (a.src || b.src) { const pickSrc = (x) => (x && x.src && x.src.id ? 2 : x && x.src ? 1 : 0); st.src = structuredClone(pickSrc(b) > pickSrc(a) ? b.src : a.src || b.src); }   // a Drive file id beats "imported from a file"
   if (a.addedAt || b.addedAt) st.addedAt = Math.min(...[a.addedAt, b.addedAt].filter(Boolean));   // the same book imported on two devices: one agreed date, so neither device keeps rewriting the file
   const posA = posAtOfState(a), posB = posAtOfState(b);
@@ -351,6 +361,7 @@ export function mergeSnapshots(local, remote) {
     const all = [...local[kind], ...remote[kind]].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
     const byName = new Map();
     for (const x of all) { const n = x.name.trim().toLowerCase(); if (!byName.has(n)) byName.set(n, x.id); else if (byName.get(n) !== x.id) idmap.set(x.id, byName.get(n)); }
+    if (kind === 'sets') for (const x of all) { if (!x.auto || idmap.has(x.id)) continue; const r = all.find((y) => y !== x && !y.auto && y.orig && y.orig === x.name.trim().toLowerCase()); if (r && byName.get(x.name.trim().toLowerCase()) === x.id) idmap.set(x.id, idmap.get(r.id) || r.id); }   // v0.5.21: an automatic set another device renamed joins the renamed one
   }
   const L = canonicalize(structuredClone(local), idmap), R = canonicalize(structuredClone(remote), idmap);
   const tombs = [...(L.tombstones || []), ...(R.tombstones || [])];
@@ -383,6 +394,7 @@ export function mergeSnapshots(local, remote) {
   out.links = mergeList('links', (x) => x.id);   // audiobook ↔ ebook links + remembered rejections (older snapshots have none)
   out.loans = {}; for (const k of new Set([...Object.keys(L.loans || {}), ...Object.keys(R.loans || {})])) { const a = (L.loans || {})[k], b = (R.loans || {})[k]; out.loans[k] = !a ? b : !b ? a : (b.at || 0) > (a.at || 0) ? b : a; }
   out.idmap = [...idmap.entries()];
+  const tr = [L.truth, R.truth].filter(Boolean).sort((x, y) => (y.at || 0) - (x.at || 0))[0]; if (tr) out.truth = tr;
   return out;
 }
 
@@ -427,6 +439,15 @@ export async function applySnapshot(m, ctx = {}) {
         if (ch) { b.overrides = Object.keys(ov).length ? ov : null; b.ovAt = ovAt; dirty = true; }
       }
     }
+    if (doms.library && st.uo) {   // v0.5.21: per-field user edits — the newer edit of each field wins; the value it replaces goes to this device's history
+      const lu = ctx.lose?.uo?.get(key);
+      for (const [f, o] of Object.entries(st.uo)) {
+        const cur = b.uo?.[f]; if (!o || (cur && cur.at === o.at && cur.d === o.d && !!cur.m === !!o.m && sameV(cur.v, o.v))) continue;
+        if (!(ctx.force || lu?.has(f) || uoBeats(o, cur))) continue;
+        b.uo = { ...(b.uo || {}) }; if (!sameV(b[f] ?? null, o.v ?? null)) pushHist(b, f, cur || { v: b[f] ?? null, at: 0, d: '' });
+        b.uo[f] = structuredClone(o); if (!(f === 'title' && !o.v)) b[f] = o.v ?? null; dirty = true;
+      }
+    }
     if (doms.positions && (st.posAt !== undefined || st.progress !== undefined)) { const r = applyPosition('book', b, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }
     if (dirty) await DB.put('books', { ...b, _noTouch: true });
   }
@@ -466,6 +487,7 @@ export async function applySnapshot(m, ctx = {}) {
     if (Object.keys(patch).length) settings.set(patch, { remote: true }); localStorage.setItem('folio.settings.keyAt', JSON.stringify(at));
   }
   localStorage.setItem('folio.tombs', JSON.stringify(m.tombstones || []));
+  if (m.truth && (m.truth.at || 0) > (lsj(TRUTH, null)?.at || 0)) localStorage.setItem(TRUTH, JSON.stringify(m.truth));
   return { appliedBooks, deletedBooks, posApplied: posApplied + audioRes.posApplied, posConflicts: posConflicts + audioRes.posConflicts, pending: Object.keys(pending).length, ...metaRes };
 }
 
@@ -529,12 +551,14 @@ async function applyMeta(m, keyToId, ctx) {
       let ch = applyTextFields(it, e);
       if (e.cover && remoteCoverWins(it, e.cover)) {
         const c = e.cover; it.metaAt = it.metaAt || {}; it.userSet = it.userSet || {};
-        if (c.id) { const blob = ctx.getCover ? await ctx.getCover(c.id) : null; if (blob) { it.coverBlob = blob; it.coverId = c.id; it.coverSource = c.u ? 'user' : 'enrich'; it.metaAt.cover = c.at; if (c.u) it.userSet.cover = true; else delete it.userSet.cover; it.revertedAt = Math.max(it.revertedAt || 0, c.rv || 0); ch = true; coversApplied++; } }
+        if (c.id) { const blob = ctx.getCover ? await ctx.getCover(c.id) : null; if (!blob) coverQueue.want(kind, k, c); else coverQueue.got(kind, k);   // v0.5.21: a cover that isn't on Drive yet (or failed) is fetched by a later sync
+          if (blob) { it.coverBlob = blob; it.coverId = c.id; it.coverSource = c.u ? 'user' : 'enrich'; it.metaAt.cover = c.at; if (c.u) it.userSet.cover = true; else delete it.userSet.cover; it.revertedAt = Math.max(it.revertedAt || 0, c.rv || 0); ch = true; coversApplied++; } }
         else { await revertCover(kind, it.id, { at: c.at, quiet: true }); const fresh = await (kind === 'book' ? S.getBook(it.id) : A.getAudiobook(it.id)); if (fresh) { Object.assign(it, fresh); it.revertedAt = Math.max(it.revertedAt || 0, c.rv || 0, c.at || 0); ch = true; coversApplied++; } }
       }
+      // (a queued download is re-checked by coverPass, which drops it only when the local cover already wins)
       if (ch) { await DB.put(store, { ...it, _noTouch: true }); metaApplied++; }
     }
-    setPendingMeta(kind, pend);
+    if (ctx.sync || ctx.force) setPendingMeta(kind, pend);
   }
   return { metaApplied, coversApplied };
 }
@@ -560,7 +584,68 @@ async function localCoverBlobs() {
   return out;
 }
 const coverIdsIn = (snap) => new Set([...Object.values(snap.meta || {}), ...Object.values(snap.audioMeta || {})].map((e) => e.cover?.id).filter(Boolean));
-export const COVER_GC_AGE = 3600e3;
+export const COVER_GC_AGE = 7 * 864e5;   // v0.5.21: an unreferenced cover stays a week (a device that is mid-download or offline may still need it)
+
+/* v0.5.21: covers waiting to go up (this device has the image, Drive doesn't yet) or come down (the synced info names a cover this device couldn't fetch yet).
+   Both are retried on every sync — even when nothing else changed — and shown in Settings → Sync. */
+const COVERQ = 'folio.coverQ', COVERSESS = 'folio.coverSess';
+export const coverQueue = {
+  get: () => { const q = lsj(COVERQ, {}); q.up = Array.isArray(q.up) ? q.up : []; q.down = q.down || {}; return q; },
+  save(q) { localStorage.setItem(COVERQ, JSON.stringify(q)); try { window.dispatchEvent(new Event('folio-covers')); } catch { /* not in a window */ } },
+  want(kind, key, c) { const q = this.get(); q.down[kind + ':' + key] = { ...c }; this.save(q); },
+  got(kind, key) { const q = this.get(); if (q.down[kind + ':' + key]) { delete q.down[kind + ':' + key]; this.save(q); } },
+  setUp(ids) { const q = this.get(); q.up = [...ids]; this.save(q); },
+  counts() { const q = this.get(); return { up: q.up.length, down: Object.keys(q.down).length }; },
+};
+/** Resumable cover upload (Drive "resumable" protocol): the session is remembered per cover, so an upload cut off (network, app closed) continues where it stopped. */
+async function uploadCoverResumable(cid, blob) {
+  const sess = lsj(COVERSESS, {}); const size = blob.size; let url = sess[cid] && Date.now() - sess[cid].at < 6 * 864e5 ? sess[cid].url : null; let tries = 0;
+  const done = (j) => { const s2 = lsj(COVERSESS, {}); delete s2[cid]; localStorage.setItem(COVERSESS, JSON.stringify(s2)); return j; };
+  const put = async (headers, body) => fetch(url, { method: 'PUT', headers: { ...headers, Authorization: 'Bearer ' + await getToken() }, body });
+  for (;;) {
+    try {
+      let offset = 0;
+      if (!url) {
+        const r0 = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,createdTime', { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'image/jpeg' }, body: JSON.stringify({ name: `cover-${cid}.jpg`, parents: ['appDataFolder'], mimeType: 'image/jpeg' }), retries: 2 });
+        url = r0.headers.get('location') || r0.headers.get('Location'); if (!url) throw new Error('Google Drive did not start the cover upload');
+        const s2 = lsj(COVERSESS, {}); s2[cid] = { url, at: Date.now() }; localStorage.setItem(COVERSESS, JSON.stringify(s2));
+      } else {   // ask Drive how much of it arrived
+        const q = await put({ 'Content-Range': `bytes */${size}` });
+        if (q.status === 200 || q.status === 201) return done(await q.json());
+        if (q.status === 404 || q.status === 410) { url = null; continue; }
+        if (q.status !== 308) throw Object.assign(new Error('Google Drive error ' + q.status), { status: q.status });
+        const m = /bytes=0-(\d+)/.exec(q.headers.get('range') || q.headers.get('Range') || ''); offset = m ? +m[1] + 1 : 0;
+      }
+      const r = await put({ 'Content-Type': 'image/jpeg', 'Content-Range': `bytes ${offset}-${size - 1}/${size}` }, blob.slice(offset));
+      if (r.status === 200 || r.status === 201) return done(await r.json());
+      if (r.status === 404 || r.status === 410) { url = null; }
+      if (r.status !== 308) throw Object.assign(new Error('Google Drive error ' + r.status), { status: r.status });
+    } catch (e) { if (++tries >= 4) throw e; await wait(400 * tries); }
+  }
+}
+/** Upload what Drive lacks and fetch what this device lacks. covers = Map(name → file) from listCoverFiles. */
+async function coverPass(covers, refIds, res) {
+  const blobs = await localCoverBlobs(); const failedUp = []; let up = 0, fetched = 0;
+  for (const cid of refIds) { const name = `cover-${cid}.jpg`; if (covers.has(name) || !blobs.has(cid)) continue; try { covers.set(name, await uploadCoverResumable(cid, blobs.get(cid))); up++; } catch { failedUp.push(cid); } }
+  coverQueue.setUp(failedUp);
+  const q = coverQueue.get();
+  for (const [qk, c] of Object.entries(q.down)) {
+    const i = qk.indexOf(':'), kind = qk.slice(0, i), key = qk.slice(i + 1);
+    const items = kind === 'book' ? await S.getBooks() : await A.getAudiobooks(); const it = items.find((x) => (kind === 'book' ? S.bookSyncKey(x) : (x.syncKey || x.id)) === key);
+    if (!it || !remoteCoverWins(it, c)) { coverQueue.got(kind, key); continue; }
+    const f = covers.get(`cover-${c.id}.jpg`); if (!f) continue;
+    try {
+      const blob = await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 2 })).blob();
+      const cur = (await DB.get(kind === 'book' ? 'books' : 'audiobooks', it.id)) || it; cur.metaAt = cur.metaAt || {}; cur.userSet = cur.userSet || {};
+      Object.assign(cur, { coverBlob: blob, coverId: c.id, coverSource: c.u ? 'user' : 'enrich' }); cur.metaAt.cover = c.at; if (c.u) cur.userSet.cover = true; else delete cur.userSet.cover; cur.revertedAt = Math.max(cur.revertedAt || 0, c.rv || 0);
+      await DB.put(kind === 'book' ? 'books' : 'audiobooks', { ...cur, _noTouch: true }); coverQueue.got(kind, key); fetched++;
+    } catch { /* next sync */ }
+  }
+  res.coversUploaded = (res.coversUploaded || 0) + up; res.coversFetched = (res.coversFetched || 0) + fetched; if (failedUp.length) res.coverRetry = true;
+  return { up, fetched, failedUp };
+}
+/** Cover ids that must never be garbage-collected: everything the synced info references, plus what this device still waits for. */
+const coverKeep = (snap) => { const k = coverIdsIn(snap); for (const c of Object.values(coverQueue.get().down)) if (c && c.id) k.add(c.id); return k; };
 
 /* ---------- splitting a snapshot into the per-domain files, and joining them again ---------- */
 const stable = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
@@ -631,7 +716,7 @@ export async function forgetDevice(id) {
    shelves, series, name, per-book reading settings) or conflictTuning.settings settings. Then nothing is applied or uploaded until the reader picks Keep this
    device / Use the other device / Merge both (shown on the library screen, never inside a book). No choice deletes anything: Keep / Use only decide which side
    wins the fields that differ (its stamps move to "now" so every device follows); Merge keeps the newest change of each field. */
-export const conflictTuning = { books: 10, settings: 5 };
+export const conflictTuning = { books: 10, settings: 5, meta: 5 };
 const CONFLICT_KEY = 'folio.sync.conflict', CONFLICT_PREF = 'folio.sync.conflictPref';
 export const pendingConflict = () => lsj(CONFLICT_KEY, null);
 export const conflictPref = () => localStorage.getItem(CONFLICT_PREF) || '';
@@ -654,23 +739,27 @@ export function detectConflict(local, remote, base, mode = { library: 'merge', s
 }
 /** Make W win every field where it differs from O (W is changed in place): its stamps move just past both sides'. */
 function favor(W, O) {
+  const favored = [];
   for (const [k, a] of realBooks(W)) {
     const b = O.books?.[k]; if (!b || b.title === undefined) continue; a.gAt = { ...(a.gAt || {}) };
     for (const g of Object.keys(GROUPS)) if (groupDiffers(a, b, g)) { a.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g), Date.now()) + 1; a.updatedAt = Math.max(a.updatedAt || 0, a.gAt[g]); }
     for (const ok of new Set([...Object.keys(a.overrides || {}), ...Object.keys(b.overrides || {})])) if (!jeq(a.overrides?.[ok] ?? null, b.overrides?.[ok] ?? null)) { a.ovAt = { ...(a.ovAt || {}) }; a.ovAt[ok] = Math.max(ovAtOf(a, ok), ovAtOf(b, ok), Date.now()) + 1; }
+    for (const f of Object.keys(a.uo || {})) { const lo = a.uo[f], ro = b.uo?.[f]; if (lo && ro && !sameV(lo.v, ro.v)) { a.uo = { ...a.uo, [f]: { v: lo.v, at: Math.max(lo.at || 0, ro.at || 0, trueNow()) + 1, d: deviceId() } }; favored.push([k, f, a.uo[f]]); } }   // v0.5.21: per-field edits too
   }
   const fa = { ...settingsFlat(W.settings) }, fb = settingsFlat(O.settings);
   for (const [k, e] of Object.entries(fa)) { const r = fb[k]; if (r && !jeq(e.v ?? null, r.v ?? null)) fa[k] = { ...e, at: Math.max(e.at || 0, r.at || 0, Date.now()) + 1 }; }
   W.settings = { flat: fa, updatedAt: Math.max(W.settings?.updatedAt || 0, Date.now()) };
+  return favored;
 }
 /** "Use the other device": W (this device) loses every contested field to O WITHOUT re-stamping O, so no other device sees a fake new change.
  *  Returns what was contested, so applySnapshot takes O's value there even though this device's own stamp is newer. */
 function demote(W, O) {
-  const lose = { books: new Map(), ov: new Map(), settings: new Set() };
+  const lose = { books: new Map(), ov: new Map(), uo: new Map(), settings: new Set() };
   for (const [k, a] of realBooks(W)) {
     const b = O.books?.[k]; if (!b || b.title === undefined) continue; a.gAt = { ...(a.gAt || {}) };
     for (const g of Object.keys(GROUPS)) if (groupDiffers(a, b, g)) { a.gAt[g] = Math.max(0, stGroupAt(b, g) - 1); if (!lose.books.has(k)) lose.books.set(k, new Set()); lose.books.get(k).add(g); }
     for (const ok of new Set([...Object.keys(a.overrides || {}), ...Object.keys(b.overrides || {})])) if (!jeq(a.overrides?.[ok] ?? null, b.overrides?.[ok] ?? null)) { a.ovAt = { ...(a.ovAt || {}) }; a.ovAt[ok] = Math.max(0, ovAtOf(b, ok) - 1); if (!lose.ov.has(k)) lose.ov.set(k, new Set()); lose.ov.get(k).add(ok); }
+    for (const f of Object.keys(a.uo || {})) { const lo = a.uo[f], ro = b.uo?.[f]; if (lo && ro && !sameV(lo.v, ro.v)) { a.uo = { ...a.uo }; delete a.uo[f]; if (!lose.uo.has(k)) lose.uo.set(k, new Set()); lose.uo.get(k).add(f); } }
   }
   const fa = { ...settingsFlat(W.settings) }, fb = settingsFlat(O.settings);
   for (const [k, e] of Object.entries(fa)) { const r = fb[k]; if (r && !jeq(e.v ?? null, r.v ?? null)) { fa[k] = { ...e, at: Math.max(0, (r.at || 0) - 1) }; lose.settings.add(k); } }
@@ -683,6 +772,58 @@ function capFuture(part, f) {   // v0.5.20: a future stamp counts as no newer th
   const cred = Math.min(t, Math.max(0, ...es.map((e) => e.at || 0).filter((a) => a <= lim)));
   for (const e of es) if ((e.at || 0) > lim) e.at = cred;
 }
+/** v0.5.21: the same for the library file — book structure stamps, per-field edits, sets, orders, covers / info (a fast phone clock can't revert the laptop). */
+function libStamps(part) {
+  const out = [];
+  for (const st of Object.values(part.books || {})) { if (!st) continue; out.push([st, 'updatedAt']); for (const g of Object.keys(st.gAt || {})) out.push([st.gAt, g]); for (const f of Object.keys(st.uo || {})) if (st.uo[f]) out.push([st.uo[f], 'at']); }
+  for (const x of [...(part.sets || []), ...(part.shelves || []), ...(part.orders || [])]) out.push([x, 'updatedAt']);
+  for (const e of [...Object.values(part.meta || {}), ...Object.values(part.audioMeta || {})]) for (const v of Object.values(e || {})) if (v && typeof v === 'object' && 'at' in v) out.push([v, 'at']);
+  return out;
+}
+function capLibFuture(part, f) {
+  const t = Date.parse(f && f.modifiedTime); if (!t || !part) return 0; const lim = t + 120000; const all = libStamps(part);
+  const cred = Math.min(t, Math.max(0, ...all.map(([o, k]) => o[k] || 0).filter((a) => a <= lim))); let n = 0;
+  for (const [o, k] of all) if ((o[k] || 0) > lim) { o[k] = cred; n++; }
+  return n;
+}
+/** This device's own book stamps from before its clock was found fast: bring them back to the newest believable time (else they'd keep beating newer real edits). */
+async function capOwnLibFuture(limit) {
+  if (!clockSkew()) return 0; let n = 0; const books = await S.getBooks();
+  const stamps = (b) => [b.structAt, b.updatedAt, ...Object.values(b.gAt || {}), ...Object.values(b.uo || {}).map((o) => o && o.at), ...Object.values(b.metaAt || {})].filter((x) => typeof x === 'number');
+  const all = books.flatMap(stamps); const cred = Math.max(0, ...all.filter((a) => a <= limit));
+  for (const b of books) {
+    if (!stamps(b).some((a) => a > limit)) continue; const c = (x) => (typeof x === 'number' && x > limit ? cred : x);
+    b.structAt = c(b.structAt); b.updatedAt = c(b.updatedAt); if (b.gAt) for (const g of Object.keys(b.gAt)) b.gAt[g] = c(b.gAt[g]);
+    if (b.uo) for (const o of Object.values(b.uo)) if (o) o.at = c(o.at); if (b.metaAt) for (const k of Object.keys(b.metaAt)) b.metaAt[k] = c(b.metaAt[k]);
+    await DB.put('books', { ...b, _noTouch: true }); n++;
+  }
+  for (const store of ['sets', 'orders']) for (const x of await DB.all(store)) if ((x.updatedAt || 0) > limit) { await DB.put(store, { ...x, updatedAt: cred, _noTouch: true }); n++; }
+  return n;
+}
+
+/* ---------- v0.5.21: never silently undo many of this device's book-info edits ----------
+   Before a pull is applied: if more than conflictTuning.meta books would lose a book-info edit made on THIS device since its last sync (title, author, set, order,
+   description…) to a different value from the cloud, nothing is applied and the reader is asked — "Keep this device's edits" is the default. A device that was
+   made the source of truth (Settings → Sync) is exempt: its values are meant to replace the others. */
+const TRUTH = 'folio.truth';
+const UO_LABEL = { title: 'title', author: 'author', setId: 'set', seriesIndex: 'order in set', description: 'description', year: 'year', language: 'language' };
+export function metaGuard(local, remote, base) {
+  const me = deviceId(); const out = { books: 0, sample: [] }; const tr = remote.truth;
+  const setName = (id) => (id && ([...(local.sets || []), ...(remote.sets || [])].find((x) => x.id === id) || {}).name) || 'no set';
+  const show = (f, v) => (f === 'setId' ? setName(v) : v == null || v === '' ? '(empty)' : String(v).slice(0, 60));
+  for (const [k, a] of realBooks(local)) {
+    const b = remote.books?.[k]; if (!b || !a.uo || !b.uo) continue; let hit = null;
+    for (const [f, lo] of Object.entries(a.uo)) {
+      const ro = b.uo[f]; if (!lo || lo.m || lo.d !== me || (lo.at || 0) <= base || !ro || sameV(ro.v, lo.v) || !uoBeats(ro, lo)) continue;
+      if (tr && tr.dev !== me && (tr.at || 0) > base && (ro.at || 0) <= (tr.at || 0) + 1000) continue;   // the other device was made the source of truth after these edits
+      hit = { f, mine: show(f, lo.v), theirs: show(f, ro.v), title: a.title }; break;
+    }
+    if (hit) { out.books++; out.sample.push(hit); }
+  }
+  out.sample = out.sample.sort((x, y) => String(x.title || '').localeCompare(String(y.title || ''), undefined, { numeric: true })).slice(0, 4);   // stable, readable examples
+  out.major = out.books > conflictTuning.meta;
+  return out;
+}
 const deviceNameOf = (id) => { const d = lsj('folio.sync.devices', {}); return (id && d[id] && d[id].name) || ''; };
 /** Book counts for Settings → Sync: this device, the synced library, and how many synced books have no file here yet. */
 export function syncCounts() { return lsj('folio.sync.counts', null); }
@@ -693,14 +834,37 @@ async function doSync(quiet, only, force, resolve = null) {
     const doms = SYNC_DOMAINS.map((d) => d.id).filter((d) => domainEnabled(d) && (!only || only.includes(d)));
     const st = syncState(); const files = await listSyncFiles();
     capOwnFuture(Date.now() + clockSkew() + 120000);   // this device's clock was found fast: its old stamps must not beat real newer changes
+    await capOwnLibFuture(Date.now() + clockSkew() + 120000);
     const local = await buildSnapshot(); const lp = splitSnapshot(local);
     const mode = {};   // per domain: skip (nothing changed anywhere) | push (only this device changed) | merge (the file changed on Drive)
     for (const d of doms) { const f = files.get(FILES[d]); mode[d] = !f ? 'push' : force || revOf(f) !== st.rev[d] ? 'merge' : hashPart(lp[d]) !== st.hash[d] ? 'push' : 'skip'; }
     const res = { domains: mode, uploaded: [], downloaded: [] };
-    if (doms.every((d) => mode[d] === 'skip')) { finishOk(st, res, files, only); return res; }
+    if (doms.every((d) => mode[d] === 'skip')) {
+      const cq = coverQueue.counts();
+      if (doms.includes('library') && (cq.up || cq.down)) {   // v0.5.21: nothing else changed, but covers are still waiting to go up / come down
+        try { const covers = await listCoverFiles(); const q = coverQueue.get(); await coverPass(covers, new Set([...q.up, ...coverIdsIn(local)]), res); if (res.coversFetched) { internalEmit = true; try { S.emitChange(); } finally { internalEmit = false; } } } catch { /* next time */ }
+      }
+      finishOk(st, res, files, only); return res;
+    }
     const read = {}; await Promise.all(doms.filter((d) => mode[d] === 'merge' && files.get(FILES[d])).map(async (d) => { read[d] = await readFile(files.get(FILES[d])); res.downloaded.push(d); }));
     if (read.settings) capFuture(read.settings, files.get(FILES.settings));
+    if (read.library) capLibFuture(read.library, files.get(FILES.library));   // v0.5.21
     const remote = joinParts({ library: read.library, positions: read.positions, settings: read.settings, glossary: read.glossary });
+    if (!resolve && status.lastSync && mode.library === 'merge') {   // v0.5.21: many of this device's book-info edits would be replaced → ask first
+      const g = metaGuard(local, remote, status.lastSync || 0);
+      if (g.major) {
+        if (conflictPref() === 'local') resolve = 'local';
+        else {
+          const by = read.library?.by || null; const f = files.get(FILES.library);
+          const info = { kind: 'meta', at: Date.now(), books: g.books, settings: 0, sample: g.sample, keys: [], me: { name: deviceName(), lastSync: status.lastSync || 0, books: realBooks(local).length },
+            other: { id: by?.id || '', name: (by && (deviceNameOf(by.id) || by.name)) || 'your other device', at: Date.parse(f?.modifiedTime || '') || read.library?.savedAt || 0, books: realBooks(remote).length } };
+          localStorage.setItem(CONFLICT_KEY, JSON.stringify(info));
+          setStatus('conflict', 'Waiting for you to choose which book info to keep');
+          window.dispatchEvent(new CustomEvent('folio-sync-conflict', { detail: info }));
+          return { ...res, conflict: info };
+        }
+      }
+    }
     if (!resolve && status.lastSync && (mode.library === 'merge' || mode.settings === 'merge')) {   // a device that never synced has nothing to conflict with: it just merges
       const c = detectConflict(local, remote, status.lastSync || 0, mode);
       if (c.major) {
@@ -721,25 +885,23 @@ async function doSync(quiet, only, force, resolve = null) {
     if (resolve === 'local') { L0 = structuredClone(local); favor(L0, remote); } else if (resolve === 'cloud') { L0 = structuredClone(local); lose = demote(L0, remote); }
     if (resolve) localStorage.removeItem(CONFLICT_KEY);
     const merged = mergeSnapshots(L0, R0);
-    let covers = null; if (doms.includes('library') && mode.library !== 'skip') { try { covers = await listCoverFiles(); } catch { /* covers are best-effort: metadata still syncs */ } }
+    if (mode.library === 'merge') await saveMetaHistory(local, merged);   // v0.5.21: what the book info looked like before this sync (Settings → Sync → Restore)
+    let covers = null; if (doms.includes('library')) { try { covers = await listCoverFiles(); } catch { /* covers are best-effort: metadata still syncs */ } }
     const getCover = async (cid) => { const f = covers?.get(`cover-${cid}.jpg`); if (!f) return null; try { return await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 1 })).blob(); } catch { return null; } };
     Object.assign(res, await applySnapshot(merged, { getCover, sync: true, lose, domains: { glossary: mode.glossary === 'merge', library: mode.library === 'merge', positions: mode.positions === 'merge' || (mode.library === 'merge' && domainEnabled('positions') && !files.get(FILES.positions)), settings: mode.settings === 'merge' || (mode.library === 'merge' && domainEnabled('settings') && !files.get(FILES.settings) && !!read.library?.settings) } }));   // a v0.5.4 library file still holds positions + settings
+    if (mode.library === 'merge') { try { await S.pruneSets(); } catch { /* best effort */ } }
     const finalSnap = await buildSnapshot();   // re-read so ids/timestamps are consistent
     const toPush = mergeSnapshots(finalSnap, merged); const pp = splitSnapshot(toPush), fp = splitSnapshot(finalSnap);
-    for (const d of doms) {   // v0.5.20: the small state files first (they are what other devices wait for); covers after
+    if (covers) await coverPass(covers, new Set([...coverIdsIn(toPush), ...coverQueue.get().up]), res);   // v0.5.21: covers go up BEFORE the info that names them, resumable, retried next sync if cut off
+    for (const d of doms) {
       if (mode[d] === 'skip') continue;
       const f = files.get(FILES[d]); const same = read[d] && stable(bare(pp[d])) === stable(bare(read[d]));
       if (same) st.rev[d] = revOf(f); else { const nf = await writeFile(FILES[d], f, pp[d]); st.rev[d] = revOf(nf); files.set(FILES[d], nf); res.uploaded.push(d); }
       st.hash[d] = hashPart(fp[d]);
     }
     saveSyncState(st);
-    if (covers) {
-      const blobs = await localCoverBlobs(); let up = 0, failed = 0;
-      for (const cid of coverIdsIn(toPush)) { const name = `cover-${cid}.jpg`; if (covers.has(name) || !blobs.has(cid)) continue; try { covers.set(name, await uploadCover(cid, blobs.get(cid))); up++; } catch { failed++; /* retried next sync */ } }
-      res.coversUploaded = up; if (failed) { res.coverRetry = true; st.hash.library = 'retry-covers'; }
-    }
-    if (covers) {   // garbage-collect covers nothing references any more (never ones younger than an hour: another device may be mid-sync)
-      const keep = coverIdsIn(toPush); let gc = 0;
+    if (covers) {   // garbage-collect covers nothing references any more (never ones younger than a week: another device may be mid-download)
+      const keep = coverKeep(toPush); for (const id of coverQueue.get().up) keep.add(id); let gc = 0;
       for (const [name, f] of covers) { const m = /^cover-([0-9a-f]+)\.jpg$/.exec(name); if (!m || keep.has(m[1])) continue; if (Date.now() - Date.parse(f.createdTime || 0) < COVER_GC_AGE) continue; try { await drive(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE' }); gc++; } catch { /* ignore */ } }
       res.coversDeleted = gc;
     }
@@ -792,3 +954,96 @@ export function initSync() {
   window.addEventListener('offline', () => { if (isSignedIn() && isDirty()) setStatus('offline', 'Offline — your changes are saved here and will sync when you’re back online'); });
   if (isSignedIn() && navigator.onLine) setTimeout(() => syncNow({ quiet: true }), 1500);
 }
+
+/* ---------- v0.5.21: book-info recovery ---------- */
+const HIST_KEEP = 10;
+/** Book info (title, author, set, order, description, year, language) of the books in a snapshot / library file, keyed by sync key. */
+function infoOf(snap, only) {
+  const setName = new Map((snap.sets || []).map((x) => [x.id, x.name])); const out = {};
+  for (const [k, st] of Object.entries(snap.books || {})) {
+    if (!st || st.title === undefined || (only && !only.has(k))) continue; const me = snap.meta?.[k] || {};
+    out[k] = { title: st.title, author: st.author ?? '', set: st.setId ? setName.get(st.setId) || null : null, seriesIndex: st.seriesIndex ?? null };
+    for (const f of ['description', 'year', 'language']) if (st.uo?.[f]) out[k][f] = st.uo[f].v ?? null; else if (me[f]) out[k][f] = me[f].v ?? null;
+  }
+  return out;
+}
+const INFO_F = ['title', 'author', 'set', 'seriesIndex', 'description', 'year', 'language'];
+const infoDiff = (cur, old) => INFO_F.filter((f) => f in old && !sameV(old[f] ?? null, cur[f] ?? null));
+/** Before a sync changes book info here, keep what it looked like (this device's own history; the last HIST_KEEP syncs that changed something). */
+async function saveMetaHistory(local, merged) {
+  try {
+    const mine = new Set((await S.getBooks()).map((b) => S.bookSyncKey(b))); const a = infoOf(local, mine), b = infoOf(merged, mine);
+    if (!Object.keys(a).some((k) => b[k] && infoDiff(b[k], a[k]).length)) return;
+    const at = Date.now(); await DB.put('metahist', { id: 'h' + at, at, books: a });
+    const all = (await DB.all('metahist')).sort((x, y) => y.at - x.at); for (const old of all.slice(HIST_KEEP)) await DB.del('metahist', old.id);
+  } catch { /* history is a safety net, never a reason for a sync to fail */ }
+}
+/** Restore points up to a moment: this device's own history + Drive's earlier versions of the library file (Drive keeps them ~30 days / up to 100). */
+export async function listRestorePoints(untilMs = Date.now()) {
+  const out = [];
+  try { for (const h of await DB.all('metahist')) if (h.at <= untilMs) out.push({ src: 'local', id: h.id, at: h.at, label: 'Before the sync at ' + new Date(h.at).toLocaleString() }); } catch { /* none */ }
+  if (isSignedIn()) {
+    try {
+      const f = (await listSyncFiles()).get(FILES.library);
+      if (f) { const r = await drive(`https://www.googleapis.com/drive/v3/files/${f.id}/revisions?fields=revisions(id,modifiedTime,keepForever)&pageSize=200`, { retries: 1 });
+        const revs = ((await r.json()).revisions || []).filter((x) => Date.parse(x.modifiedTime) <= untilMs).sort((x, y) => Date.parse(y.modifiedTime) - Date.parse(x.modifiedTime)).slice(0, 8);
+        for (const x of revs) out.push({ src: 'drive', id: x.id, file: f.id, at: Date.parse(x.modifiedTime), label: 'Synced copy from ' + new Date(x.modifiedTime).toLocaleString() }); }
+    } catch { /* offline: only this device's history */ }
+  }
+  return out.sort((x, y) => y.at - x.at);
+}
+async function pointInfo(p) {
+  if (p.src === 'local') return (await DB.get('metahist', p.id))?.books || {};
+  const snap = await (await drive(`https://www.googleapis.com/drive/v3/files/${p.file}/revisions/${p.id}?alt=media`, { retries: 2 })).json();
+  return infoOf(snap);
+}
+async function restorePlan(p) {
+  const info = await pointInfo(p); const books = await S.getBooks(); const sets = new Map((await S.getSets()).map((x) => [x.id, x.name])); const plan = [];
+  for (const b of books) {
+    const old = info[S.bookSyncKey(b)]; if (!old) continue;
+    const cur = { title: b.title, author: b.author ?? '', set: b.setId ? sets.get(b.setId) || null : null, seriesIndex: b.seriesIndex ?? null, description: b.description ?? null, year: b.year ?? null, language: b.language ?? null };
+    const fs = infoDiff(cur, old).filter((f) => !(f === 'title' && !old.title)); if (fs.length) plan.push({ b, old, cur, fs });
+  }
+  return plan;
+}
+export async function previewRestore(p) {
+  const plan = await restorePlan(p); if (!plan.length) return { count: 0, text: 'Nothing would change — the book info here already matches that time.' };
+  const ex = plan.slice(0, 3).map(({ old, cur, fs }) => { const f = fs[0]; return `“${String(cur[f] ?? '(empty)').slice(0, 40)}” → “${String(old[f] ?? '(empty)').slice(0, 40)}”`; });
+  return { count: plan.length, text: `${plan.length} book${plan.length === 1 ? '' : 's'} would change, e.g. ${ex.join(', ')}` };
+}
+/** Put the book info back as it was, as fresh edits made on this device (so they reach every device), then sync. */
+export async function applyRestore(p) {
+  const plan = await restorePlan(p);
+  for (const { b, old, fs } of plan) {
+    const nb = { ...(await S.getBook(b.id)) };
+    for (const f of fs) {
+      if (f === 'set') { if (!old.set) { nb.setId = null; } else { const ex = (await S.getSets()).find((x) => x.name.trim().toLowerCase() === old.set.trim().toLowerCase()); nb.setId = ex ? ex.id : (await S.ensureSet(old.set, false)).id; } }
+      else nb[f] = old[f] ?? (f === 'author' ? '' : null);
+    }
+    if (fs.some((f) => ['description', 'year', 'language'].includes(f))) { nb.metaAt = { ...(nb.metaAt || {}) }; nb.userSet = { ...(nb.userSet || {}) }; for (const f of fs) if (['description', 'year', 'language'].includes(f)) { nb.metaAt[f] = trueNow(); nb.userSet[f] = true; } }
+    await DB.put('books', nb);
+  }
+  localStorage.setItem(TRUTH, JSON.stringify({ at: trueNow(), dev: deviceId(), name: deviceName() }));
+  S.emitChange();
+  if (isSignedIn()) await syncNow({ force: true, quiet: true });
+  return plan.length;
+}
+/** Settings → Sync → "Make this device the source of truth for book info": every title, author, set, order (and description / year / language this device
+ *  has an edit for) and every chosen cover here is re-stamped as a fresh edit, so it replaces the other devices' values on their next sync. */
+export async function makeSourceOfTruth() {
+  const now = trueNow(), me = deviceId(); let n = 0;
+  for (const b0 of await S.getBooks()) {
+    const b = { ...b0 }; b.uo = { ...(b.uo || {}) };
+    for (const f of UO_FIELDS) { const has = b.uo[f] || b.userSet?.[f] || ['title', 'author', 'setId', 'seriesIndex'].includes(f); if (!has) continue; b.uo[f] = { v: f === 'title' ? b.title : (b[f] ?? null) === '' ? null : b[f] ?? null, at: now, d: me }; }
+    b.gAt = { ...(b.gAt || {}), name: now, series: now }; b.structAt = now; b.updatedAt = Math.max(b.updatedAt || 0, now);
+    if (b.userSet?.cover && b.coverId) b.metaAt = { ...(b.metaAt || {}), cover: now };
+    for (const f of ['description', 'year', 'language']) if (b.userSet?.[f] && b.metaAt?.[f]) b.metaAt = { ...b.metaAt, [f]: now };
+    await DB.put('books', { ...b, _noTouch: true }); n++;
+  }
+  for (const store of ['sets', 'orders']) for (const x of await DB.all(store)) await DB.put(store, { ...x, updatedAt: now, _noTouch: true });
+  localStorage.setItem(TRUTH, JSON.stringify({ at: now, dev: me, name: deviceName() }));
+  localStorage.removeItem(CONFLICT_KEY);
+  if (isSignedIn()) await syncNow({ force: true, quiet: true });
+  return n;
+}
+export const sourceOfTruth = () => lsj(TRUTH, null);

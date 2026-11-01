@@ -43,6 +43,7 @@ export function applyTextFields(it, rm) {
   let changed = false; it.metaAt = it.metaAt || {}; it.userSet = it.userSet || {};
   for (const f of TEXT_FIELDS) {
     const r = rm?.[f]; if (!r) continue;
+    if (it.uo?.[f]) continue;   // v0.5.21: a per-field user edit (synced with the book state) always decides this field
     const loc = it.metaAt[f] ? { v: it[f] ?? '', at: it.metaAt[f], u: !!it.userSet[f] } : null;
     if (loc && pickText(loc, r) !== r) continue; if (loc && loc.at === r.at && !!loc.u === !!r.u && String(loc.v) === String(r.v)) continue;
     it[f] = f === 'year' ? (parseInt(r.v, 10) || null) : (r.v ?? ''); it.metaAt[f] = r.at; if (r.u) it.userSet[f] = true; else delete it.userSet[f]; changed = true;
@@ -65,7 +66,11 @@ export const getPendingMeta = (kind) => { try { return JSON.parse(localStorage.g
 export const setPendingMeta = (kind, p) => localStorage.setItem(PKEY[kind], JSON.stringify(p));
 export function applyPendingMeta(it, kind, key) {
   const p = getPendingMeta(kind); const e = p[key]; if (!e) return false;
-  applyTextFields(it, e); return true;   // the cover (if any) arrives with the next sync, which finds the item and downloads cover-<id>.jpg
+  applyTextFields(it, e);
+  if (e.cover && e.cover.id && remoteCoverWins(it, e.cover)) {   // v0.5.21: the cover comes down with the next sync (queued, so it is fetched even when nothing else changed)
+    try { const q = JSON.parse(localStorage.getItem('folio.coverQ') || '{}'); q.down = q.down || {}; q.down[kind + ':' + key] = { ...e.cover }; localStorage.setItem('folio.coverQ', JSON.stringify(q)); } catch { /* no storage */ }
+  }
+  return true;
 }
 
 /** Hash + remember the id of every custom (enriched / user) cover, so it can be synced as cover-<id>.jpg. */
@@ -77,7 +82,7 @@ export const isbnFrom = (id) => { const m = /(?:isbn[:\s]*)?(97[89][0-9]{10}|[0-
 
 /** Hand edits: any changed field is marked user-set (automatic lookups never touch it again) and stamped for sync. */
 export function markEdits(it, vals) {
-  it.userSet = it.userSet || {}; it.metaAt = it.metaAt || {}; const now = Date.now(); let n = 0;
+  it.userSet = it.userSet || {}; it.metaAt = it.metaAt || {}; let sk = 0; try { sk = +(localStorage.getItem('folio.clockSkew') || 0) || 0; } catch { /* no storage */ } const now = Date.now() + sk; let n = 0;   // v0.5.21: Drive-corrected clock, like every other edit stamp
   for (const [f, v] of Object.entries(vals)) {
     const nv = f === 'year' ? (parseInt(v, 10) || null) : String(v ?? '').trim();
     if (String(nv ?? '') === String(it[f] ?? '')) continue;

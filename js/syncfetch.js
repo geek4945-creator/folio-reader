@@ -57,6 +57,21 @@ export function maybeShowConflict(force = false) {
     chosen = true; close(); try { await G.syncNow({ resolve: how, remember: rem.checked }); toast(how === 'merge' ? 'Merged both' : how === 'local' ? 'Kept this device’s version' : 'Using the other device’s version'); }
     catch (e) { toast(e.message, 5000); }
   };
+  if (c.kind === 'meta') {   // v0.5.21: many of this device's book-info edits would be replaced
+    const ex = (c.sample || []).map((x) => h('li', null, `“${x.title}” ${x.f === 'setId' ? 'set' : x.f === 'seriesIndex' ? 'order in set' : x.f}: here “${x.mine}” → ${c.other.name}: “${x.theirs}”`));
+    open = sheet('Book info changed on both devices', (close) => [h('div', { id: 'sync-conflict', class: 'sc-meta' },
+      h('p', null, `${c.books} book${c.books === 1 ? '' : 's'} you edited on this device since ${fmtWhen(c.me.lastSync)} have different info on ${c.other.name}. Nothing has been changed yet.`),
+      ex.length ? h('ul', { class: 'small', id: 'sc-examples' }, ...ex) : null,
+      h('div', { class: 'sc-choices' },
+        h('button', { class: 'btn primary', id: 'sc-local', onclick: () => choose('local', close) }, 'Keep this device’s edits (recommended)'),
+        h('p', { class: 'muted small' }, `Your edits here are kept and sent to ${c.other.name}. Its other changes still come in.`),
+        h('button', { class: 'btn', id: 'sc-merge', onclick: () => choose('merge', close) }, 'Use the newest edit for each book'),
+        h('button', { class: 'btn', id: 'sc-cloud', onclick: () => choose('cloud', close) }, 'Use the other device’s edits'),
+        h('p', { class: 'muted small' }, 'Whatever you pick, Settings → Sync → “Restore book info from an earlier sync” can bring the previous info back.')),
+      h('label', { class: 'check-row' }, rem, ' Remember my choice (change it in Settings → Sync)'))],
+    { closeLabel: 'Decide later', onClose: () => { open = null; if (!chosen) snoozed = Date.now(); } });
+    return true;
+  }
   const what = [c.books ? `${c.books} book${c.books === 1 ? '' : 's'}` : '', c.settings ? `${c.settings} setting${c.settings === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
   open = sheet('Your devices disagree', (close) => [h('div', { id: 'sync-conflict' },
     h('p', null, `Since this device last synced, ${what} were changed differently here and on ${c.other.name}. Nothing has been changed yet. How should Folio combine them?`),

@@ -1,5 +1,6 @@
 // Library data layer: books, sets (series), shelves, manual orders, per-book style overrides.
-import { DB, uid } from './db.js';
+import { DB, uid, GROUPS } from './db.js';
+import { forceUo } from './bookinfo.js';
 import { parseEpub, shrinkCover } from './epubmeta.js';
 import { settings, clampPt, clearSort } from './settings.js';
 import { fetchSmart, openLibraryCover } from './net.js';
@@ -45,8 +46,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
 
   const series = meta.series || hints.series || '';
   const seriesIndex = meta.series ? meta.seriesIndex : (hints.series ? hints.seriesIndex : null);
-  let setId = null;
-  if (series) setId = (await ensureSet(series, true)).id;
+  const setId = null;   // v0.5.21: the file's series is only used when no other device has already decided this book's set (see applyPending below)
 
   const book = {
     id: uid(), title: (meta.title && !/^untitled$/i.test(meta.title.trim()) ? meta.title : (hints.title || meta.title || 'Untitled')), author: meta.author !== 'Unknown author' ? meta.author : (hints.author || meta.author),
@@ -57,7 +57,9 @@ export async function addBookFromBuffer(buffer, hints = {}) {
     sourceKey: hints.sourceKey || null, source: hints.source || 'import', origFormat, overrides: null, locations: null,
   };
   if (hints.borrowed) Object.assign(book, { borrowed: true, dueAt: hints.dueAt || null, loanAt: Date.now(), loanSource: hints.source || '' });   // library loan: lands in the Borrowed filter
-  applyPending(book); book.posAt ??= 0;   // a fresh import has no position of its own (never outranks another device's)
+  const dec = applyPending(book); book.posAt ??= 0;
+  if (series && !dec.series) book.setId = (await ensureSet(series, true)).id;
+  if (dec.series && book.setId && !(await DB.get('sets', book.setId))) { book.setId = null; book.seriesIndex = null; }   // a fresh import has no position of its own (never outranks another device's)
   await DB.put('files', { id: book.id, blob: new Blob([buffer], { type: pdfMeta ? 'application/pdf' : 'application/epub+zip' }) });
   // A fresh import is not a user edit (keeps cross-device merge fair), unless the book was deleted before: then it must outrank the deletion tombstone.
   const tombed = getTombs().some((t) => t.t === 'book' && t.id === book.syncKey);
@@ -143,10 +145,11 @@ export async function getFile(id) { return (await DB.get('files', id))?.blob; }
 export const getSets = () => DB.all('sets');
 export async function ensureSet(name, auto = false) {
   const sets = await getSets();
-  const hit = sets.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
+  const n = name.trim().toLowerCase();
+  const hit = sets.find((s) => s.name.toLowerCase() === n) || (auto ? sets.find((s) => s.orig === n) : null);   // v0.5.21: a series the user renamed ("Default Saga 1" → "Correct Saga 1") keeps catching that series' books
   if (hit) return hit;
-  const s = { id: uid(), name: name.trim(), auto, createdAt: Date.now() };
-  await DB.put('sets', s); await adoptSetMemory(s); return s;
+  const s = { id: uid(), name: name.trim(), auto, createdAt: Date.now(), ...(auto ? { orig: n, updatedAt: 0, _noTouch: true } : {}) };   // v0.5.21: a set made from a file's series is not an edit: any other device's version of it wins
+  await DB.put('sets', s); delete s._noTouch; await adoptSetMemory(s); return s;
 }
 /* A set that is deleted, pruned (auto sets without books) or removed by a sync keeps its manual order and sort mode in a small device-local memory, keyed by name,
    so making the set again (enrichment, regrouping, "New set…") brings the arrangement back instead of starting over. */
@@ -163,10 +166,10 @@ async function adoptSetMemory(set) {
   const mem = readMem(), k = memKey(set.name), m = mem[k]; if (!m) return;
   delete mem[k]; try { localStorage.setItem(MEM, JSON.stringify(mem)); } catch { /* quota */ }
   const byKey = new Map((await getBooks()).map((b) => ['k:' + bookSyncKey(b), 'b:' + b.id]));
-  if (m.ids.length) await DB.put('orders', { key: 'set:' + set.id, ids: m.ids.map((x) => byKey.get(x) || x) });
+  if (m.ids.length) { const cur = await DB.get('orders', 'set:' + set.id); if (!cur) await DB.put('orders', { key: 'set:' + set.id, ids: m.ids.map((x) => byKey.get(x) || x), updatedAt: 0, _noTouch: true }); }   // v0.5.21: a remembered arrangement is not a new edit (never beats one synced from another device)
   if (m.sort && m.sort.field) settings.set({ sorts: { ...(settings.get('sorts') || {}), ['set:' + set.id]: m.sort } });
 }
-export async function renameSet(id, name) { const s = await DB.get('sets', id); s.name = name; s.auto = false; await DB.put('sets', s); emitChange(); }
+export async function renameSet(id, name) { const s = await DB.get('sets', id); if (s.auto && !s.orig) s.orig = s.name.trim().toLowerCase(); s.name = name; s.auto = false; await DB.put('sets', s); emitChange(); }
 export async function deleteSet(id) {
   await rememberSet(await DB.get('sets', id));
   for (const b of await getBooks()) if (b.setId === id) { b.setId = null; b.seriesIndex = null; await DB.put('books', b); }
@@ -180,7 +183,8 @@ export async function assignSet(bookId, setId, index) {
 /** Remove auto-created sets that no longer have books. */
 export async function pruneSets() {
   const [sets, books] = await Promise.all([getSets(), getBooks()]);
-  for (const s of sets) if (s.auto && !books.some((b) => b.setId === s.id)) { await rememberSet(s); await DB.del('sets', s.id); }
+  const waiting = new Set(Object.values(getPending()).map((st) => st.setId).filter(Boolean));   // v0.5.21: a set that books still to be downloaded belong to stays
+  for (const s of sets) if (s.auto && !waiting.has(s.id) && !books.some((b) => b.setId === s.id)) { await rememberSet(s); await DB.del('sets', s.id); }
 }
 
 /* ---------- shelves ---------- */
@@ -301,18 +305,26 @@ export async function fixKeyCollisions(books) {
 export const bookSyncKey = (b) => b.syncKey || (b.identifier ? 'id:' + b.identifier : 'ti:' + (b.title + '|' + b.author).toLowerCase());
 export const getPending = () => { try { return JSON.parse(localStorage.getItem('folio.pending') || '{}'); } catch { return {}; } };
 export const setPending = (p) => localStorage.setItem('folio.pending', JSON.stringify(p));
+/** Apply the state another device synced for a book that wasn't here yet. Returns {series: true} when that state decided the book's set (so the file's series is not used).
+ *  v0.5.21: exactly the other device's values and stamps, group by group (a set it cleared stays cleared), plus its per-field user edits. */
 export function applyPending(book) {
-  const p = getPending(); const st = p[bookSyncKey(book)]; if (!st) return;
-  Object.assign(book, { status: st.status || book.status, shelves: st.shelves || [], setId: st.setId || book.setId, seriesIndex: st.seriesIndex ?? book.seriesIndex, overrides: st.overrides || null, progress: st.progress || 0, cfi: st.cfi || null, lastOpened: st.lastOpened || 0 });
+  const p = getPending(); const st = p[bookSyncKey(book)]; if (!st) return {};
+  Object.assign(book, { status: st.status || book.status, shelves: st.shelves || [], overrides: st.overrides || null, progress: st.progress || 0, cfi: st.cfi || null, lastOpened: st.lastOpened || 0 });
   if (st.posAt) Object.assign(book, { posAt: st.posAt, posDev: st.dev || '', posDevName: st.devName || '' }); if (st.ovAt) book.ovAt = st.ovAt; if (st.updatedAt) book.structAt = st.updatedAt;
+  const gat = (g) => st.gAt?.[g] ?? (GROUPS[g].noLegacy ? 0 : st.updatedAt || 0); const dec = {};
+  book.gAt = {};
+  for (const g of Object.keys(GROUPS)) book.gAt[g] = gat(g);
+  if (gat('series') > 0 || st.uo?.setId) { book.setId = st.setId || null; book.seriesIndex = st.seriesIndex ?? null; dec.series = true; }
   if (st.title) book.title = st.title; if (st.author) book.author = st.author;
-  if (st.nowHiddenAt) { book.nowHiddenAt = st.nowHiddenAt; if (st.gAt && st.gAt.now) book.gAt = { ...(book.gAt || {}), now: st.gAt.now }; }
+  if (st.uo) { book.uo = structuredClone(st.uo); forceUo(book); if (book.uo.setId) dec.series = true; }
+  if (st.nowHiddenAt) book.nowHiddenAt = st.nowHiddenAt;
   if (st.pdfPage) Object.assign(book, { pdfPage: st.pdfPage, pdfZoom: st.pdfZoom || 1, pdfText: !!st.pdfText }); if (st.finishedAt) book.finishedAt = st.finishedAt;
   if (st.loan && (st.loan.at || 0) > (book.loanAt || 0)) Object.assign(book, { borrowed: !!st.loan.b, dueAt: st.loan.due || null, loanAt: st.loan.at, ...(st.loan.src ? { loanSource: st.loan.src } : {}) });   // Borrowed flag + due date kept for a book that wasn't here yet
   applyPendingMeta(book, 'book', bookSyncKey(book)); { const pm = getPendingMeta('book'); delete pm[bookSyncKey(book)]; setPendingMeta('book', pm); }
   const bms = (getPendingBookmarks()[bookSyncKey(book)] || []);
   bms.forEach((bm) => DB.put('bookmarks', { ...bm, bookId: book.id, _noTouch: true }));
   delete p[bookSyncKey(book)]; setPending(p);
+  return dec;
 }
 const getPendingBookmarks = () => { try { return JSON.parse(localStorage.getItem('folio.pendingBm') || '{}'); } catch { return {}; } };
 export const setPendingBookmarks = (p) => localStorage.setItem('folio.pendingBm', JSON.stringify(p));
@@ -336,7 +348,7 @@ async function restoreSlots(book) {
     const i = m.ids.indexOf(me); if (i < 0) continue;
     const o = await DB.get('orders', key); if (o && !o.ids.includes('b:' + book.id) && !o.ids.includes(me)) {
       let at = 0; for (let j = i - 1; j >= 0; j--) { const id = idOf.get(m.ids[j]) || m.ids[j]; const p = o.ids.indexOf(id); if (p >= 0) { at = p + 1; break; } }
-      o.ids = [...o.ids.slice(0, at), 'b:' + book.id, ...o.ids.slice(at)]; await DB.put('orders', o);
+      o.ids = [...o.ids.slice(0, at), 'b:' + book.id, ...o.ids.slice(at)]; o._noTouch = true; await DB.put('orders', o);
     }
     m.ids = m.ids.filter((x) => x !== me); if (!m.ids.length) delete mem[key]; ch = true;
   }

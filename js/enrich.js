@@ -209,7 +209,11 @@ export async function applyProposal(p, accepted, edits = {}) {
     if (typed) it.userSet[f] = true; else it.enriched[f] = { src: fld?.source, conf: fld?.conf, at: now };
     it.metaAt[f] = now; wrote.push(f);
   }
-  if (wrote.length) { if (it.enrichMissing) it.enrichMissing = missingFields(it, p.kind); await a.save(it); }
+  if (wrote.length) {
+    if (it.enrichMissing) it.enrichMissing = missingFields(it, p.kind);
+    const auto = wrote.filter((f) => !(f in edits)).flatMap((f) => (f === 'series' ? ['setId', 'seriesIndex'] : [f])); if (auto.length) it._auto = auto;   // v0.5.21: automatic lookups are not user edits (never become overrides)
+    await a.save(it);
+  }
   return wrote;
 }
 

@@ -98,6 +98,23 @@ async function install(page, S) {
     const cm = /\/drive\/v3\/files\/(C\d+)\?alt=media/.exec(u); if (cm) { const f = [...C.covers.values()].find((x) => x.id === cm[1]); return f ? req.respond({ status: 200, headers: CORS, contentType: 'image/jpeg', body: f.buf }) : req.respond({ status: 404, headers: CORS, body: 'nf' }); }
     if (/\/drive\/v3\/files\/C\d+$/.test(u.split('?')[0]) && req.method() === 'DELETE') { const id = u.split('?')[0].split('/').pop(); for (const [k, f] of C.covers) if (f.id === id) { C.covers.delete(k); C.deletes.push(k); } return req.respond({ status: 204, headers: CORS }); }
     if (S.userDrive) { const um = /\/drive\/v3\/files\/(D\d+)\?alt=media/.exec(u); if (um) { const f = S.userDrive.get(um[1]); S.userDriveGets = (S.userDriveGets || 0) + 1; return f ? req.respond({ status: 200, headers: CORS, contentType: 'application/epub+zip', body: f }) : req.respond({ status: 404, headers: CORS, body: 'nf' }); } }   // v0.5.20: book files in the user's own Drive
+    if (u.includes('/upload/drive/v3/files') && /uploadType=resumable/.test(u) && req.method() === 'POST') {   // v0.5.21: covers go up as resumable uploads (retried / resumed)
+      let body = {}; try { body = JSON.parse((C.lastBody || Buffer.from(req.postData() || '{}')).toString('utf8') || '{}'); } catch { /* not json */ }
+      if (/^cover-/.test(body.name || '')) { C.coverSess = C.coverSess || new Map(); const sid = 'CS' + (C.coverSess.size + 1); C.coverSess.set(sid, { name: body.name, got: Buffer.alloc(0) }); C.coverStarts = (C.coverStarts || 0) + 1;
+        return req.respond({ status: 200, headers: { ...CORS, 'Access-Control-Expose-Headers': 'Location', Location: 'https://www.googleapis.com/upload/drive/v3/files/session/' + sid }, contentType: 'application/json', body: '' }); }
+    }
+    { const cs = /\/upload\/drive\/v3\/files\/session\/(CS\d+)/.exec(u); if (cs && req.method() === 'PUT') {
+      const ss = C.coverSess.get(cs[1]); const range = req.headers()['content-range'] || ''; const exp = { ...CORS, 'Access-Control-Expose-Headers': 'Range' };
+      if (!ss) return req.respond({ status: 404, headers: CORS, body: 'nf' });
+      const done = () => { const id = 'C' + (++C.seq); C.uploads++; const f = { id, buf: ss.got, createdTime: new Date(C.coverAge ? Date.now() - C.coverAge : Date.now()).toISOString() }; C.covers.set(ss.name, f); ss.file = f; return json({ id, name: ss.name, createdTime: f.createdTime }); };
+      if (/^bytes \*\/\d+$/.test(range)) { C.coverStatusChecks = (C.coverStatusChecks || 0) + 1; if (ss.file) return json({ id: ss.file.id, name: ss.name, createdTime: ss.file.createdTime }); return req.respond({ status: 308, headers: ss.got.length ? { ...exp, Range: 'bytes=0-' + (ss.got.length - 1) } : exp, body: '' }); }
+      const buf = C.lastBody || Buffer.alloc(0); const mm = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range); const from = mm ? +mm[1] : 0, total = mm ? +mm[3] : buf.length;
+      if (from !== ss.got.length) return req.respond({ status: 400, headers: CORS, body: 'bad offset ' + from + ' have ' + ss.got.length });
+      if (C.coverFailPuts > 0) { C.coverFailPuts--; C.coverCuts = (C.coverCuts || 0) + 1; ss.got = Buffer.concat([ss.got, buf.subarray(0, Math.floor(buf.length / 2))]); return req.respond({ status: 503, headers: CORS, body: 'cut' }); }   // the connection dropped half-way
+      if (from > 0) C.coverResumed = (C.coverResumed || 0) + 1;
+      ss.got = Buffer.concat([ss.got, buf]); if (ss.got.length >= total) return done();
+      return req.respond({ status: 308, headers: { ...exp, Range: 'bytes=0-' + (ss.got.length - 1) }, body: '' });
+    } }
     if (await DF.handle(req, u, C, json, CORS)) return;
     if (u.includes('/drive/v3/files?') && !u.includes('/upload/')) {
       const q = decodeURIComponent(u).replace(/\+/g, ' ');

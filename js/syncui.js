@@ -1,5 +1,6 @@
 // Settings → Sync (v0.5.5): status, what to sync, this device's name, other devices, device-specific settings.
-import { h, toast, confirmDlg } from './util.js';
+import { h, toast, confirmDlg, sheet } from './util.js';
+import { deviceId } from './device.js';
 import * as G from './google.js';
 import { SETTING_GROUPS, deviceOnlyGroups, setDeviceOnlyGroups } from './settings.js';
 import { deviceName, setDeviceName, guessDeviceName } from './device.js';
@@ -39,11 +40,13 @@ export function syncDetails(redraw) {
   const skew = G.clockSkew();
   box.append(...[
     h('p', { class: 'small', id: 'sync-counts' }, counts ? `This device: ${counts.local} book${counts.local === 1 ? '' : 's'} · Synced library: ${counts.cloud}` + (miss.count ? ` · ${miss.count} not on this device` : '') : 'Book counts appear after the first sync.'),
+    coverLine(),
     miss.count ? h('div', { class: 'row-actions wrap' }, h('button', { class: 'btn small', id: 'sync-get-missing', onclick: () => openMissing(redraw) }, `Get ${miss.count} missing book${miss.count === 1 ? '' : 's'}`)) : null,
     G.pendingConflict() ? h('div', { class: 'plib-warn', id: 'sync-conflict-pending' }, 'Sync is paused: this device and another one disagree about many things. ', h('button', { class: 'btn small primary', id: 'sync-conflict-open', onclick: () => maybeShowConflict(true) }, 'Choose')) : null,
     pref ? h('p', { class: 'muted small', id: 'sync-conflict-pref' }, `Big disagreements between devices: always “${PREF[pref] || pref}”. `, h('button', { class: 'btn-text', id: 'sync-conflict-ask', onclick: () => { G.setConflictPref(''); toast('Folio will ask next time'); redraw(); } }, 'Ask again')) : null,
     Math.abs(skew) > 120000 ? h('p', { class: 'plib-warn', id: 'sync-skew' }, `This device’s clock is about ${Math.round(Math.abs(skew) / 60000)} min ${skew > 0 ? 'behind' : 'ahead'}. Turn on “Set automatically” in the system date settings so the newest change always wins.`) : null,
     lastTxt ? h('p', { class: 'muted small', id: 'sync-last' }, lastTxt) : null,
+    bookInfoBox(),
     conflictCount() ? h('p', { class: 'plib-warn', id: 'sync-conflicts' }, `${conflictCount()} book${conflictCount() > 1 ? 's were' : ' was'} read on another device too — you’ll be asked which place to continue from when you open ${conflictCount() > 1 ? 'them' : 'it'}.`) : null,
     h('details', { open: optionsOpen, id: 'sync-options', ontoggle: (e) => { optionsOpen = e.target.open; } }, h('summary', null, 'What to sync & devices'),
       h('h4', null, 'What to sync'), ...toggles,
@@ -52,4 +55,57 @@ export function syncDetails(redraw) {
       h('h4', null, 'This device'), nm, h('p', { class: 'muted small' }, 'Shown to your other devices in “Continue from …”.'),
       h('h4', null, 'Your devices'), devList, h('button', { class: 'btn small', id: 'devices-refresh', onclick: () => paintDevices(true) }, 'Refresh'))].filter(Boolean));
   return box;
+}
+
+/* ---------- v0.5.21: covers waiting, source of truth, restore ---------- */
+function coverLine() {
+  if (!G.isSignedIn()) return null; const c = G.coverQueue.counts(); if (!c.up && !c.down) return null;
+  return h('p', { class: 'muted small', id: 'sync-covers' }, 'Covers: ' + [c.up ? `${c.up} waiting to upload` : '', c.down ? `${c.down} waiting to download` : ''].filter(Boolean).join(' · ') + ' — retried on every sync.');
+}
+const localDT = (t) => { const d = new Date(t); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+function bookInfoBox() {
+  if (!G.isSignedIn()) return null; const tr = G.sourceOfTruth();
+  return h('div', { id: 'sync-bookinfo', class: 'list-item' },
+    h('strong', null, 'Book info (titles, authors, sets, order, covers)'),
+    h('p', { class: 'muted small' }, 'Each edit you make is kept per field and wins over the info inside the book file. When two devices edited the same field, the newer edit wins.'),
+    tr ? h('p', { class: 'muted small', id: 'sync-truth-info' }, `Last made the reference: ${tr.dev === deviceId() ? 'this device' : (tr.name || 'another device')}, ${new Date(tr.at).toLocaleString()}.`) : null,
+    h('div', { class: 'row-actions wrap' },
+      h('button', { class: 'btn small', id: 'sync-truth', onclick: openTruth }, 'Make this device the source of truth for book info'),
+      h('button', { class: 'btn small', id: 'sync-restore', onclick: openRestore }, 'Restore book info from an earlier sync')));
+}
+function openTruth() {
+  sheet('Use this device’s book info everywhere?', (close) => [h('div', { id: 'truth-sheet' },
+    h('p', null, 'Every title, author, set, order in set and chosen cover on this device replaces the one on your other devices the next time they sync. Reading progress, shelves and settings are not touched.'),
+    h('p', { class: 'muted small' }, 'Use it on the device whose book info is right. Check a few books first.'),
+    h('button', { class: 'btn primary', id: 'truth-go', onclick: async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Working…';
+      try { const n = await G.makeSourceOfTruth(); close(); toast(`This device is now the source of truth for book info (${n} book${n === 1 ? '' : 's'})`, 8000); }
+      catch (err) { e.target.disabled = false; e.target.textContent = 'Try again'; toast(err.message, 5000); }
+    } }, 'Make this device the source of truth'))]);
+}
+function openRestore() {
+  const list = h('div', { id: 'rs-list', class: 'list' }); const prev = h('p', { id: 'rs-preview', class: 'small' }); let point = null;
+  const apply = h('button', { class: 'btn primary', id: 'rs-apply', disabled: true, onclick: async () => {
+    if (!point) return; apply.disabled = true; apply.textContent = 'Restoring…';
+    try { const n = await G.applyRestore(point); prev.textContent = `Restored ${n} book${n === 1 ? '' : 's'}. Your other devices follow on their next sync.`; apply.textContent = 'Done'; toast(`Restored ${n} book${n === 1 ? '' : 's'}`, 6000); }
+    catch (e) { prev.textContent = 'Couldn’t restore: ' + e.message; apply.disabled = false; apply.textContent = 'Restore'; }
+  } }, 'Restore');
+  const pick = async (p, btn) => {
+    point = null; apply.disabled = true; prev.textContent = 'Checking…'; for (const b of list.querySelectorAll('button')) b.classList.toggle('primary', b === btn);
+    try { const r = await G.previewRestore(p); prev.textContent = r.text; if (r.count) { point = p; apply.disabled = false; } } catch (e) { prev.textContent = 'Couldn’t read it: ' + e.message; }
+  };
+  const date = h('input', { type: 'datetime-local', class: 'field', id: 'rs-date', step: 1, value: localDT(Date.now()), onchange: () => paint() });
+  let seq = 0;
+  const paint = async () => {
+    const my = ++seq; list.replaceChildren(h('p', { class: 'muted small' }, 'Looking for earlier versions…')); prev.textContent = ''; point = null; apply.disabled = true;
+    const t = Date.parse(date.value); const until = Number.isFinite(t) ? t + 999 : Date.now();
+    let pts = []; try { pts = await G.listRestorePoints(until); } catch { /* none */ } if (my !== seq) return;
+    list.replaceChildren(...(pts.length ? pts.map((p) => { const b = h('button', { class: 'btn small', style: { display: 'block', margin: '4px 0', textAlign: 'left' }, dataset: { src: p.src, id: p.id }, onclick: () => pick(p, b) }, p.label + (p.src === 'local' ? ' (this device)' : ' (Google Drive)')); return b; })
+      : [h('p', { class: 'muted small' }, 'No earlier versions before that time. Google Drive keeps earlier versions of the synced library for about 30 days (up to 100 versions).')]));
+  };
+  sheet('Restore book info', () => [h('div', { id: 'restore-sheet' },
+    h('p', null, 'Pick a time before the unwanted change. Folio lists the versions saved up to then — this device’s own history and the copies Google Drive kept — and shows what would change before anything is touched.'),
+    date, list, prev, apply,
+    h('p', { class: 'muted small' }, 'Only titles, authors, sets, order in set, descriptions, years and languages are restored, as new edits from this device. Reading progress and shelves are not touched.'))], { tall: true });
+  paint();
 }
