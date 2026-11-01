@@ -13,6 +13,7 @@ import { registerOpenCheck } from './positions.js';
 import { attachWordHold, closeBubble } from './wordbubble.js';
 import { openGlossary, openTermEditor } from './glossaryui.js';
 import * as AN from './annotui.js';
+import * as ST from './stats.js';
 
 let cur = null;
 registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
@@ -170,6 +171,7 @@ function pdfAnnotHost() {
     },
     define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, { highlight: (range) => { if (cur) AN.quickHighlight(pdfAnnotHost(), pdfAnnotHost().contents()[0], range); },  editEntry: (entry, term, _ctx, def) => openTermEditor(c.book, { entry, term, def: entry ? undefined : def }), openWords: () => openGlossary(c.glossaryCtx(), 'words'), search: (t) => openPdfSearch(t) })); },
     search: (t) => openPdfSearch(t),
+    glossary: (term, def) => openTermEditor(c.book, { term, def }),
   };
   return c.__ah;
 }
@@ -288,7 +290,7 @@ function syncUI() {
   const c = cur; if (!c) return;
   paintFooter({ page: c.page, total: c.n, left: pdfPagesLeft(c), unit: 'section' });
   c.slider.value = c.page; if (document.activeElement !== c.pageNum) c.pageNum.value = c.page;
-  c.progress = c.n > 1 ? (c.page - 1) / (c.n - 1) : 1; c.pct.textContent = ' · ' + fmtPct(c.progress);
+  c.progress = c.n > 1 ? (c.page - 1) / (c.n - 1) : 1; c.pct.textContent = ' · ' + fmtPct(c.progress); if (c.n) ST.activity(c.book, c.progress);
 }
 function onTap(e) {
   const c = cur; if (!c || Date.now() - (c.gestureAt || 0) < 450) return;
@@ -454,7 +456,7 @@ settings.onChange((p) => { const c = cur; if (!c || !c.ready) return; if (c.text
 
 /* ---------- close ---------- */
 export async function closePdf() {
-  const c = cur; if (!c) return; closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
+  const c = cur; if (!c) return; ST.endSession(); closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   try { await savePosition(); } catch { /* ignore */ }
   cur = null; c.io && c.io.disconnect(); c.pages.forEach(cancelRender); try { await withTimeout(Promise.resolve(c.pdf?.destroy()), 2000, 'closing the PDF'); } catch { /* ignore */ }

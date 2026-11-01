@@ -14,6 +14,30 @@ export const getLibrary = () => settings.get('publicLibrary');
 export const libbyShareUrl = (reserveId) => `https://share.libbyapp.com/title/${reserveId}`;
 export const librarySiteUrl = (key, reserveId) => `https://${key}.overdrive.com/media/${reserveId}`;
 export const libbyHomeUrl = (key) => `https://libbyapp.com/library/${key}`;
+/* ---------- v0.5.20: the Libby button (a link out — no scraping, no downloads, no DRM handling) ---------- */
+export const LIBBY_PKG = 'com.overdrive.mobile.android.libby';
+export const LIBBY_HOME = 'https://libbyapp.com/';
+/** libbyapp.com opens the Libby app on iPhone/Android when it is installed (universal / app link), else Libby in the browser. With a library chosen and a title, it opens Libby's own search for that title. */
+export function libbyUrl(query = '', key = (getLibrary() || {}).key) {
+  const q = String(query || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (key && q) return `https://libbyapp.com/search/${encodeURIComponent(key)}/search/scope-auto/query-${encodeURIComponent(q)}/page-1`;
+  if (key) return libbyHomeUrl(key);
+  return LIBBY_HOME;
+}
+let libbyPlug = null;
+const nativeLink = () => { try { const C = window.Capacitor; if (!(C && C.isNativePlatform && C.isNativePlatform() && C.registerPlugin)) return null; return (libbyPlug ||= C.registerPlugin('ExternalApp')); } catch { return null; } };
+export function openLibby(query = '', ev) {
+  const url = libbyUrl(query); window.__libbyOpened = url;
+  const p = nativeLink();
+  if (p) { ev?.preventDefault?.(); p.open({ package: LIBBY_PKG, url }).catch(() => { try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ } }); return url; }
+  if (!ev) { try { window.open(url, '_blank', 'noopener'); } catch { /* ignore */ } }
+  return url;
+}
+/** An <a> that opens Libby (its own navigation on the web; the native plugin in the APK). */
+export function libbyButton(query = '', { id = 'libby-open', label = 'Open Libby', cls = 'btn' } = {}) {
+  const a = h('a', { class: cls, id, href: libbyUrl(query), target: '_blank', rel: 'noopener noreferrer', onclick: (e) => { a.href = libbyUrl(query); openLibby(query, e); } }, label);
+  return a;
+}
 const ext = (href, label, cls = 'btn small') => h('a', { class: cls, href, target: '_blank', rel: 'noopener noreferrer' }, label);
 const closeAll = () => { const o = document.querySelector('#overlay'); o.replaceChildren(); o.hidden = true; };
 
@@ -26,6 +50,7 @@ export function openPublicLibraryGuide() {
       h('p', { class: 'muted' }, 'Most public libraries lend ebooks and audiobooks for free through Libby (OverDrive). Folio helps you find your library and see what is available, and then you borrow in Libby.'),
       lib ? h('div', { class: 'plib-current' }, h('span', null, 'Your library: ', h('strong', null, lib.name)),
         h('button', { class: 'btn primary', id: 'plib-search-btn', onclick: () => { close(); openLibrarySearch(); } }, 'Search ' + lib.name)) : null,
+      h('div', { class: 'row-actions' }, libbyButton('', { id: 'plib-open-libby', label: '📚 Open Libby', cls: 'btn' })),
       h('button', { class: lib ? 'btn block' : 'btn primary block', id: 'plib-find-btn', onclick: () => { close(); openFindLibrary(); } }, lib ? 'Change library' : 'Find my library'),
       h('ol', { class: 'plib-steps' },
         step(1, 'Find your library', h('p', { class: 'muted small' }, 'Tap “Find my library” and type its name, your city or your ZIP code. Pick your library system from the list; Folio remembers it. You can have only the libraries you belong to, so choose the one on your library card.')),

@@ -412,3 +412,19 @@ body.reading #update-banner { display:none; }
 .chirp-bar { height:.4rem; } a.chirp-link { text-decoration:none; text-align:center; } a.btn.chirp-link { display:block; margin:.5rem 0; }
 .top-actions a.chirp-link { color:var(--accent); font-weight:600; padding:.3rem .4rem; white-space:nowrap; }
 #chirp-pos, #chirp-d-pos { width:100%; }
+/* v0.5.20: the shelf bar stays under the top bar while the library scrolls (#view's padding already keeps both below the iPhone notch / Dynamic Island;
+   the shadow paints the safe-area strip above so scrolled covers don't show through behind the status bar) */
+.topbar { box-shadow:0 calc(-1 * var(--sat)) 0 0 var(--bg); }
+.chips.shelf-bar { position:sticky; top:var(--shelf-top, 3.3rem); z-index:4; background:var(--bg); padding-left:max(1rem, var(--sal)); padding-right:max(1rem, var(--sar)); }
+.chips.shelf-bar.stuck { border-bottom:1px solid var(--border); }
+.shelf-row .drag-handle { cursor:grab; padding:0 .5rem 0 .1rem; font-size:1.2rem; color:var(--muted); touch-action:none; user-select:none; -webkit-user-select:none; }
+/* v0.5.20 reading stats */
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(7rem,1fr)); gap:.6rem; margin:.6rem 0 1rem; }
+.stat-tile { background:var(--card); border:1px solid var(--border); border-radius:.6rem; padding:.6rem .7rem; display:flex; flex-direction:column; gap:.15rem; }
+.stat-tile strong { font-size:1.15rem; }
+.stat-fin ol { margin:.4rem 0 .8rem 1.2rem; padding:0; } .stat-fin li { margin:.2rem 0; }
+.kyb-steps li{margin:.4em 0;line-height:1.4}
+.kyb-list{max-height:40vh;overflow:auto;border:1px solid var(--line,#ddd);border-radius:10px;margin:.6em 0}
+.kyb-row{display:flex;flex-direction:column;padding:.45em .7em;border-bottom:1px solid var(--line,#eee)}
+.kyb-row.miss{opacity:.55}
+.kyb-report{white-space:pre-wrap;font-size:.8em;max-height:30vh;overflow:auto;background:var(--card,#f4f4f4);padding:.6em;border-radius:8px}

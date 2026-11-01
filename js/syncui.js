@@ -4,6 +4,7 @@ import * as G from './google.js';
 import { SETTING_GROUPS, deviceOnlyGroups, setDeviceOnlyGroups } from './settings.js';
 import { deviceName, setDeviceName, guessDeviceName } from './device.js';
 import { askAlways, setAskAlways, conflictCount, ago } from './positions.js';
+import { missingBooks, openMissing, maybeShowConflict } from './syncfetch.js';
 
 let refreshed = false, optionsOpen = false;   // the panel redraws on every sync status change: remember whether it was open
 const WHAT = { positions: 'positions', library: 'library', settings: 'settings' };
@@ -13,6 +14,7 @@ export function statusLine(st) {
     case 'offline': return st.message;
     case 'error': return 'Sync error: ' + st.message;
     case 'needs-reauth': return st.message;
+    case 'conflict': return st.message;
     case 'connected': return st.lastSync ? 'Last synced ' + new Date(st.lastSync).toLocaleString() + (G.isDirty() ? ' · changes waiting to upload' : '') : 'Connected';
     default: return '';
   }
@@ -32,7 +34,15 @@ export function syncDetails(redraw) {
   };
   paintDevices(!refreshed).catch(() => {}); refreshed = true;
   const nm = h('input', { class: 'field', id: 'device-name', value: deviceName(), placeholder: guessDeviceName(), maxlength: 40, onchange: (e) => { setDeviceName(e.target.value); G.scheduleSync(500); toast('Device name saved'); } });
+  const counts = G.syncCounts(); const miss = missingBooks();
+  const pref = G.conflictPref(); const PREF = { merge: 'Merge both', local: 'Keep this device', cloud: 'Use the other device' };
+  const skew = G.clockSkew();
   box.append(...[
+    h('p', { class: 'small', id: 'sync-counts' }, counts ? `This device: ${counts.local} book${counts.local === 1 ? '' : 's'} · Synced library: ${counts.cloud}` + (miss.count ? ` · ${miss.count} not on this device` : '') : 'Book counts appear after the first sync.'),
+    miss.count ? h('div', { class: 'row-actions wrap' }, h('button', { class: 'btn small', id: 'sync-get-missing', onclick: () => openMissing(redraw) }, `Get ${miss.count} missing book${miss.count === 1 ? '' : 's'}`)) : null,
+    G.pendingConflict() ? h('div', { class: 'plib-warn', id: 'sync-conflict-pending' }, 'Sync is paused: this device and another one disagree about many things. ', h('button', { class: 'btn small primary', id: 'sync-conflict-open', onclick: () => maybeShowConflict(true) }, 'Choose')) : null,
+    pref ? h('p', { class: 'muted small', id: 'sync-conflict-pref' }, `Big disagreements between devices: always “${PREF[pref] || pref}”. `, h('button', { class: 'btn-text', id: 'sync-conflict-ask', onclick: () => { G.setConflictPref(''); toast('Folio will ask next time'); redraw(); } }, 'Ask again')) : null,
+    Math.abs(skew) > 120000 ? h('p', { class: 'plib-warn', id: 'sync-skew' }, `This device’s clock is about ${Math.round(Math.abs(skew) / 60000)} min ${skew > 0 ? 'behind' : 'ahead'}. Turn on “Set automatically” in the system date settings so the newest change always wins.`) : null,
     lastTxt ? h('p', { class: 'muted small', id: 'sync-last' }, lastTxt) : null,
     conflictCount() ? h('p', { class: 'plib-warn', id: 'sync-conflicts' }, `${conflictCount()} book${conflictCount() > 1 ? 's were' : ' was'} read on another device too — you’ll be asked which place to continue from when you open ${conflictCount() > 1 ? 'them' : 'it'}.`) : null,
     h('details', { open: optionsOpen, id: 'sync-options', ontoggle: (e) => { optionsOpen = e.target.open; } }, h('summary', null, 'What to sync & devices'),

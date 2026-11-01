@@ -97,6 +97,7 @@ async function install(page, S) {
     if (/\/drive\/v3\/files\/IMG1\?alt=media/.test(u)) return img('cover-a.jpg');
     const cm = /\/drive\/v3\/files\/(C\d+)\?alt=media/.exec(u); if (cm) { const f = [...C.covers.values()].find((x) => x.id === cm[1]); return f ? req.respond({ status: 200, headers: CORS, contentType: 'image/jpeg', body: f.buf }) : req.respond({ status: 404, headers: CORS, body: 'nf' }); }
     if (/\/drive\/v3\/files\/C\d+$/.test(u.split('?')[0]) && req.method() === 'DELETE') { const id = u.split('?')[0].split('/').pop(); for (const [k, f] of C.covers) if (f.id === id) { C.covers.delete(k); C.deletes.push(k); } return req.respond({ status: 204, headers: CORS }); }
+    if (S.userDrive) { const um = /\/drive\/v3\/files\/(D\d+)\?alt=media/.exec(u); if (um) { const f = S.userDrive.get(um[1]); S.userDriveGets = (S.userDriveGets || 0) + 1; return f ? req.respond({ status: 200, headers: CORS, contentType: 'application/epub+zip', body: f }) : req.respond({ status: 404, headers: CORS, body: 'nf' }); } }   // v0.5.20: book files in the user's own Drive
     if (await DF.handle(req, u, C, json, CORS)) return;
     if (u.includes('/drive/v3/files?') && !u.includes('/upload/')) {
       const q = decodeURIComponent(u).replace(/\+/g, ' ');

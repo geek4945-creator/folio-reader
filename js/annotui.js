@@ -142,6 +142,7 @@ function showUi(host, contents, range, opts = {}) {
       ...A.COLORS.map((c) => tapBtn({ class: 'an-dot', 'data-color': c.id, 'aria-label': 'Highlight ' + c.name.toLowerCase(), style: { background: c.hex } }, null, () => createFrom(c.id, false))),
       tapBtn({ class: 'an-btn', id: 'an-note' }, '✎ Note', () => createFrom(A.lastColor(), true)),
       tapBtn({ class: 'an-btn', id: 'an-define' }, 'Define', () => define()),
+      host.glossary ? tapBtn({ class: 'an-btn', id: 'an-gloss', 'aria-label': 'Add the selected words to this book’s glossary' }, '＋ Glossary', () => glossSel()) : null,   // v0.5.20
       tapBtn({ class: 'an-btn', id: 'an-copy' }, 'Copy', () => copy()),
       tapBtn({ class: 'an-btn', id: 'an-x', 'aria-label': 'Close' }, '✕', () => closeSelectionUI(true)));
     menu.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the selection alive
@@ -253,6 +254,13 @@ export function extendRec(host, rec) {
 }
 function searchSel() {   // v0.5.18: search the whole book for the selected words (v0.5.19: from the text cached at selection time — the live selection may be gone)
   const u = ui; if (!u) return; const t = (u.text || lastSel.text || '').replace(/\s+/g, ' ').trim().slice(0, 120); const host = u.host; closeSelectionUI(true); if (t && host.search) host.search(t); else if (!t) toast('Select a word first');
+}
+/** v0.5.20: "＋ Glossary" on the selection bar → the term editor, pre-filled (a short selection is the term; a long one becomes the definition of its first word). */
+function glossSel() {
+  const u = ui; if (!u) return; const t = (u.text || lastSel.text || '').replace(/\s+/g, ' ').trim(); const host = u.host; closeSelectionUI(true);
+  if (!t) { toast('Select a word first'); return; }
+  const short = t.length <= 60 && t.split(' ').length <= 6; const term = short ? t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '') : t.split(' ')[0].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  host.glossary(term, short ? '' : t.slice(0, 1200));
 }
 async function copy() {
   const u = ui; if (!u) return; const t = u.text;

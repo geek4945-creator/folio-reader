@@ -56,7 +56,7 @@ const DUPE_RE = /already in your (library|audiobooks)/i;
 async function importOne(kind, f) {
   const blob = await G.downloadDriveFile(f.id, { retries: 3 });
   if (kind === 'audio') { const res = await A.importAudioFiles([new File([blob], f.name, { type: blob.type })]); if (res.drm.length) throw Object.assign(new Error(A.COPY_PROTECTED_MSG), { code: 'drm' }); if (res.errs.length) throw new Error(res.errs[0]); return; }
-  await S.addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id, filename: f.name });
+  await S.addBookFromBuffer(await blob.arrayBuffer(), { source: 'Google Drive', sourceKey: 'gdrive:' + f.id, filename: f.name, syncKey: f.syncKey || null });   // syncKey: the key another device synced this book under
 }
 async function importGroupOf(files) {
   const name = (await G.driveFolderName(files[0].parent)) || files[0].folder || 'Audiobook'; const got = [];
@@ -73,6 +73,8 @@ export async function runBatch(kind, files, { group = true, signal = { cancelled
   const grouped = new Set(); for (const [, list] of byParent) if (list.length > 1) { list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })); items.push(list); list.forEach((f) => grouped.add(f.id)); }
   for (const f of todo) if (!grouped.has(f.id)) items.push([f]);
   G.driveRate.gap = BATCH.gap;
+  let lock = null; try { lock = await navigator.wakeLock?.request('screen'); } catch { /* not supported / not allowed */ }   // a long batch must not stop when the phone dims
+  try { navigator.storage?.persist?.(); } catch { /* ignore */ }
   try {
     for (const it of items) {
       if (signal.cancelled) { res.cancelled = true; break; }
@@ -84,7 +86,7 @@ export async function runBatch(kind, files, { group = true, signal = { cancelled
       }
       res.done += it.length;
     }
-  } finally { G.driveRate.gap = 0; }
+  } finally { G.driveRate.gap = 0; try { lock?.release(); } catch { /* ignore */ } }
   onProgress({ done: res.done, total: res.total, name: '' });
   return res;
 }

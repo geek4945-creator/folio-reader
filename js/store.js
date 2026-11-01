@@ -53,7 +53,7 @@ export async function addBookFromBuffer(buffer, hints = {}) {
     language: meta.language, description: meta.description || hints.summary || '', identifier: meta.identifier, year: meta.year || null, isbn: isbnFrom(meta.identifier), coverSource,
     addedAt: Date.now(), lastOpened: 0, progress: 0, cfi: null, status: 'want', shelves: [],
     setId, seriesIndex: seriesIndex ?? null, coverBlob: cover || null, size: buffer.byteLength, format: pdfMeta ? 'pdf' : 'epub', pages: pdfMeta ? pdfMeta.pages : null,
-    syncKey: meta.identifier ? 'id:' + meta.identifier : 'ti:' + (meta.title + '|' + meta.author).toLowerCase(),
+    syncKey: uniqueSyncKey(books, meta, buffer.byteLength, hints.syncKey), filename: hints.filename || null,
     sourceKey: hints.sourceKey || null, source: hints.source || 'import', origFormat, overrides: null, locations: null,
   };
   if (hints.borrowed) Object.assign(book, { borrowed: true, dueAt: hints.dueAt || null, loanAt: Date.now(), loanSource: hints.source || '' });   // library loan: lands in the Borrowed filter
@@ -184,7 +184,11 @@ export async function pruneSets() {
 }
 
 /* ---------- shelves ---------- */
-export const getShelves = async () => (await DB.all('shelves')).sort((a, b) => a.createdAt - b.createdAt);
+export const getShelves = async () => orderShelves(await DB.all('shelves'));
+/** v0.5.20: the reader's own shelf order (settings.shelfOrder, synced); shelves not in it yet (new, or from another device) follow by creation time. */
+export function orderShelves(list) { const ord = settings.get('shelfOrder') || []; const ix = (s) => { const i = ord.indexOf(s.id); return i < 0 ? 1e9 : i; }; return [...list].sort((a, b) => ix(a) - ix(b) || (a.createdAt || 0) - (b.createdAt || 0)); }
+export async function setShelfOrder(ids) { settings.set({ shelfOrder: [...ids] }); emitChange(); }
+export async function moveShelf(id, delta) { const ids = (await getShelves()).map((s) => s.id); const i = ids.indexOf(id), j = i + delta; if (i < 0 || j < 0 || j >= ids.length) return ids; [ids[i], ids[j]] = [ids[j], ids[i]]; await setShelfOrder(ids); return ids; }
 export async function createShelf(name) { const s = { id: uid(), name, createdAt: Date.now() }; await DB.put('shelves', s); emitChange(); return s; }
 export async function renameShelf(id, name) { const s = await DB.get('shelves', id); s.name = name; await DB.put('shelves', s); emitChange(); }
 export async function deleteShelf(id) {
@@ -272,6 +276,28 @@ export async function restoreSeeds() {
 }
 
 /* ---------- sync support: state for books not (yet) on this device ---------- */
+/** v0.5.20: the key a book's state is synced under must be unique: two different books that shared one (same ID, different titles; or same
+ *  title + author without an ID) were silently merged into one entry, so other devices showed fewer books. hint = the key the other device used. */
+const baseKey = (m) => (m.identifier ? 'id:' + m.identifier : 'ti:' + (m.title + '|' + m.author).toLowerCase());
+function altKey(m, size) { return m.identifier ? 'id:' + m.identifier + '|' + String(m.title || '').toLowerCase() : baseKey(m) + '|s' + (size || 0); }
+export function uniqueSyncKey(books, meta, size, hint) {
+  const used = new Set(books.map(bookSyncKey));
+  if (hint && !used.has(hint)) return hint;
+  let k = baseKey(meta); if (!used.has(k)) return k;
+  k = altKey(meta, size); if (!used.has(k)) return k;
+  let n = 2; while (used.has(k + '#' + n)) n++; return k + '#' + n;
+}
+/** Older libraries may already hold colliding keys: the first-added book keeps the key, later ones get their own (once, saved). */
+export async function fixKeyCollisions(books) {
+  const by = new Map(); for (const b of books) { const k = bookSyncKey(b); (by.get(k) || by.set(k, []).get(k)).push(b); }
+  for (const list of by.values()) {
+    if (list.length < 2) continue; list.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0) || String(a.id).localeCompare(String(b.id)));
+    for (const b of list.slice(1)) {
+      const others = books.filter((x) => x !== b); b.syncKey = uniqueSyncKey(others, b, b.size, null);
+      const rec = await DB.get('books', b.id); if (rec) await DB.put('books', { ...rec, syncKey: b.syncKey, _noTouch: true });
+    }
+  }
+}
 export const bookSyncKey = (b) => b.syncKey || (b.identifier ? 'id:' + b.identifier : 'ti:' + (b.title + '|' + b.author).toLowerCase());
 export const getPending = () => { try { return JSON.parse(localStorage.getItem('folio.pending') || '{}'); } catch { return {}; } };
 export const setPending = (p) => localStorage.setItem('folio.pending', JSON.stringify(p));

@@ -13,6 +13,7 @@ import { attachWordHold, applyHighlights, closeBubble, wordBubbleOpen } from './
 import * as G from './glossary.js';
 import { openGlossary, openTermEditor } from './glossaryui.js';
 import * as AN from './annotui.js';
+import * as ST from './stats.js';
 
 let cur = null;   // active reading session
 registerOpenCheck((kind, id) => kind === 'book' && !!cur && cur.book.id === id);
@@ -45,6 +46,7 @@ export async function openReader(id, opts = {}) {
   el.replaceChildren(top, viewer, bottom, foot, loading.el); applyFooterSettings(); paintFooter({}); applyScrub(book);
 
   cur = { book, viewer, slider, label, ovr, el, chrome: true, top, bottom, saveTimer: null, finishedThisSession: false, bookmarks: await S.getBookmarks(id), loc: null, ready: false };
+  ST.startSession(book);
   attachPinch(viewer, pinchHost);   // spread / pinch over the margins (inside the page it is attached per EPUB frame)
   const mine = cur; import('./audiostore.js').then((A) => A.getAudiobooks()).then((l) => { mine.hasAudio = l.length > 0; }).catch(() => {});   // v0.5.19: "Audiobook sync" lives in the ☰ menu (no 🎧 in the top bar); shown once there is an audiobook to link
   const alive = () => cur === mine && !mine.closed;
@@ -172,6 +174,7 @@ function annotHost() {
     describe: (contents, range) => ({ fmt: 'epub', cfiRange: contents.cfiFromRange(range), chapter: (() => { try { const href = c.epub.spine.get(contents.sectionIndex).href; const it = c.epub.navigation.get(href); return it ? (it.label || '').trim() : chapterOf({ start: { href } }); } catch { return ''; } })(), sec: contents.sectionIndex || 0, off: secOff(contents.document, range), progress: c.loc && c.loc.start ? c.loc.start.percentage || 0 : 0 }),
     jump: (a) => c.rendition.display(a.cfiRange),
     search: (text) => openBookSearch(text),
+    glossary: (term, def) => openTermEditor(c.book, { term, def }),
     define: (word, text, rect, range) => { import('./wordbubble.js').then((m) => m.openBubble({ word, text, offset: Math.max(0, text.indexOf(word)), rect, cfi: '', page: 0, book: c.book, range }, wordActions())); },
   };
 }
@@ -303,7 +306,7 @@ function updateProgress(loc, noSave) {
   if (c.locReady) p = c.epub.locations.percentageFromCfi(loc.start.cfi) || 0;
   else { const n = c.epub.spine.length || 1; const d = loc.start.displayed; p = (loc.start.index + (d && d.total ? (d.page - 1) / d.total : 0)) / n; }
   if (loc.atEnd) p = 1;
-  c.progress = p;
+  c.progress = p; ST.activity(c.book, p);   // v0.5.20 reading stats (active time)
   c.slider.value = Math.round(p * 1000);
   const chap = chapterOf(loc);
   c.label.textContent = fmtPct(p) + (chap ? ' · ' + chap : '');
@@ -461,13 +464,15 @@ function showToc() {
 
 /* ----- appearance panel ----- */
 export function showSettings() {
-  const c = cur; let scope = S.hasOverrides(c.book) ? 'book' : 'global';
+  const c = cur; const SK = 'folio.scopeBook';   // v0.5.20: opens on "All books" unless this book was last edited in "This book only" (it used to open there whenever the book had any custom setting, so global changes seemed to revert)
+  let scope = S.hasOverrides(c.book) && localStorage.getItem(SK) === c.book.id ? 'book' : 'global';
+  const setScope = (v) => { scope = v; if (v === 'book') localStorage.setItem(SK, c.book.id); else if (localStorage.getItem(SK) === c.book.id) localStorage.removeItem(SK); };
   const ui = { clear: {}, reset: null, tab: null };
   const w = sheet('Appearance', () => build(), { noDim: true, tall: false });
   function val(k) { return S.effectiveStyle(c.book)[k]; }
   async function write(k, v) {
     if (scope === 'book') { c.book = await S.setOverride(c.book.id, { [k]: v }); if (ui.clear[k]) ui.clear[k].hidden = false; if (ui.reset) ui.reset.hidden = false; if (ui.tab) ui.tab.textContent = 'This book only •'; }
-    else settings.set({ [k]: v });
+    else { settings.set({ [k]: v }); if (c.book.overrides && c.book.overrides[k] != null) c.book = await S.setOverride(c.book.id, { [k]: null }); }   // "All books" also applies to the open book
     applyAppearance();
   }
   function build() {
@@ -476,9 +481,10 @@ export function showSettings() {
     ui.clear = {};
     const useGlobal = (k, text) => { if (scope !== 'book') return null; const b = h('button', { class: 'btn-text small', 'data-clear': k, hidden: !overridden(k), onclick: async () => { c.book = await S.setOverride(c.book.id, { [k]: null }); applyAppearance(); w.body.replaceChildren(build()); } }, text); ui.clear[k] = b; return b; };
     wrap.append(h('div', { class: 'seg wide' },
-      h('button', { class: scope === 'global' ? 'on' : '', id: 'scope-global', onclick: () => { scope = 'global'; w.body.replaceChildren(build()); } }, 'All books'),
-      (ui.tab = h('button', { class: scope === 'book' ? 'on' : '', id: 'scope-book', onclick: () => { scope = 'book'; w.body.replaceChildren(build()); } }, 'This book only' + (S.hasOverrides(c.book) ? ' •' : '')))));
+      h('button', { class: scope === 'global' ? 'on' : '', id: 'scope-global', onclick: () => { setScope('global'); w.body.replaceChildren(build()); } }, 'All books'),
+      (ui.tab = h('button', { class: scope === 'book' ? 'on' : '', id: 'scope-book', onclick: () => { setScope('book'); w.body.replaceChildren(build()); } }, 'This book only' + (S.hasOverrides(c.book) ? ' •' : '')))));
     if (c.fixed) wrap.append(h('p', { class: 'hint', id: 'fixed-note' }, 'This is a fixed-layout book: the publisher’s page design (absolute positions and sizes) is kept, so text size, font and line spacing can’t change it. Theme, margins and Pages/Scroll still work.'));
+    if (scope === 'global' && S.hasOverrides(c.book)) wrap.append(h('p', { class: 'hint', id: 'scope-hint' }, 'This book has some settings of its own (see “This book only”). Changing them here sets them for all books, this one included.'));
     if (scope === 'book') wrap.append(h('p', { class: 'hint' }, S.hasOverrides(c.book) ? 'This book has custom settings. They override the global defaults and the book’s own styling.' : 'Changes below apply only to this book and override its built-in styling. Untouched options follow your global defaults.'));
 
     // Font size: number input + −/+ + slider, all synced
@@ -509,7 +515,7 @@ export function showSettings() {
       h('div', { class: 'seg wide' }, [['on', 'Left = back'], ['inverted', 'Left = next'], ['off', 'Off']].map(([v, n]) => h('button', { class: settings.get('tapZones') === v ? 'on' : '', onclick: () => { settings.set({ tapZones: v }); w.body.replaceChildren(build()); } }, n))));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Footer')), ...footerToggles(), scrubToggle({ book: c.book, onWrite: (v) => write('hideScrub', v), useGlobal: useGlobal('hideScrub', 'Use global') }));
     wrap.append(h('div', { class: 'row-ctl' }, h('label', null, 'Word lookup')), h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'aa-wordlookup', checked: !!settings.get('wordLookup'), onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, 'Press and hold a word for its definition')), h('button', { class: 'btn block', id: 'aa-glossary', onclick: () => { w.close(); openGlossary(glossaryCtx()); } }, 'Words & glossary'));
-    ui.reset = h('button', { class: 'btn block', id: 'reset-book', hidden: !S.hasOverrides(c.book), onclick: async () => { c.book = await S.resetOverrides(c.book.id); scope = 'global'; applyAppearance(); w.body.replaceChildren(build()); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults');
+    ui.reset = h('button', { class: 'btn block', id: 'reset-book', hidden: !S.hasOverrides(c.book), onclick: async () => { c.book = await S.resetOverrides(c.book.id); setScope('global'); applyAppearance(); w.body.replaceChildren(build()); toast('This book now uses the global defaults'); } }, 'Reset this book to defaults');
     wrap.append(ui.reset);
     return wrap;
   }
@@ -519,7 +525,7 @@ export function showSettings() {
 /* ----- close ----- */
 export async function closeReader() {
   if (pdfCurrent()) return closePdf();
-  const c = cur; if (!c) return; cur = null; closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
+  const c = cur; if (!c) return; cur = null; ST.endSession(); closeBubble(); AN.closeSelectionUI(true); AN.disarm(); import('./booksearch.js').then((m) => m.resetSearch()).catch(() => {});
   window.removeEventListener('keydown', keyNav); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('resize', onResize);
   c.closed = true; c.pager && c.pager.stop(); if (c.grabResize) { window.removeEventListener('resize', c.grabResize, true); window.removeEventListener('orientationchange', c.grabResize, true); }
   cur = c; try { await savePosition(); } catch { /* ignore */ } cur = null;

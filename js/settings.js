@@ -33,6 +33,7 @@ export const DEFAULTS = {
   pinchSens: 'slow',    // reader pinch text-size sensitivity: 'slow' | 'normal' | 'fast' (device-only)
   wordLookup: true,     // press and hold a word in the reader → definition bubble (v0.5.6)
   wordHoldSec: 0.7,     // how long to hold on a word (0.3–3 s)
+  shelfOrder: [],      // v0.5.20: shelf ids in the order the reader arranged them (Manage shelves); synced as one stamped value
   glossaryHighlight: false,   // underline glossary terms of the open book in the text (needs a browser with the CSS Custom Highlight API)
   holdSec: 4,           // press-and-hold on a Library / Audiobooks tile opens its ⋯ menu after this many seconds (0.5–5; device-only)
   autoPair: true,       // link audiobooks with their ebooks automatically when the match is very confident (≥ 85%)
@@ -58,7 +59,7 @@ export const DEFAULTS = {
   proxyMode: 'fallback', // 'fallback' (direct first) | 'always' | 'never'
 };
 
-export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'setGroups', 'groupBy', 'footerPages', 'footerLeft', 'hideScrub', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'];
+export const SYNCED = ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'flow', 'tapZones', 'view', 'sort', 'lastAutoSort', 'groupSets', 'setGroups', 'groupBy', 'footerPages', 'footerLeft', 'hideScrub', 'showFinished', 'setSort', 'defaultSort', 'sorts', 'publicLibrary', 'autoEnrich', 'autoPair', 'wordLookup', 'wordHoldSec', 'glossaryHighlight', 'shelfOrder'];
 /* ---------- cross-device sync of settings (v0.5.5): every preference is synced with its own last-write-wins stamp ---------- */
 /** Never synced: they describe this device / this moment rather than a preference. */
 export const DEVICE_ONLY = ['flowChosen', 'chip', 'audioChip', 'proxyUrl', 'proxyMode', 'fullscreen'];
@@ -66,7 +67,7 @@ export const DEVICE_ONLY = ['flowChosen', 'chip', 'audioChip', 'proxyUrl', 'prox
 export const SETTING_GROUPS = [
   { id: 'appearance', name: 'Appearance', hint: 'theme, font, text size, line spacing, margins', keys: ['theme', 'fontSizePt', 'font', 'lineHeight', 'margin', 'pdfInvert'] },
   { id: 'reading', name: 'Reading behaviour', hint: 'Pages / Scroll, tap zones, footer, pinch, hold time', keys: ['flow', 'tapZones', 'footerPages', 'footerLeft', 'hideScrub', 'pinchSens', 'holdSec', 'wordLookup', 'wordHoldSec', 'glossaryHighlight'] },
-  { id: 'library', name: 'Library view & sorting', hint: 'grid / list, sort orders, group by, series sets', keys: ['view', 'sort', 'lastAutoSort', 'defaultSort', 'sorts', 'groupBy', 'groupSets', 'setGroups', 'showFinished', 'setSort'] },
+  { id: 'library', name: 'Library view & sorting', hint: 'grid / list, sort orders, group by, series sets', keys: ['view', 'sort', 'lastAutoSort', 'defaultSort', 'sorts', 'groupBy', 'groupSets', 'setGroups', 'showFinished', 'setSort', 'shelfOrder'] },
   { id: 'audio', name: 'Audiobooks', hint: 'playback speed', keys: ['audioSpeed'] },
   { id: 'other', name: 'Other', hint: 'public library, auto-link, auto-enrich', keys: ['publicLibrary', 'autoEnrich', 'autoPair'] },
 ];
@@ -85,12 +86,28 @@ export function syncedKeys() {
 let state = { ...DEFAULTS };
 try { Object.assign(state, JSON.parse(localStorage.getItem('folio.settings') || '{}')); } catch { /* ignore */ }
 const listeners = new Set();
+/* v0.5.20: another tab / window of Folio (or the same app in a second Chrome window) may have changed settings since this one loaded. Before v0.5.20 every set()
+   wrote this tab's whole in-memory copy back, which silently put old values back with fresh stamps — and sync then carried the revert to every device. Now each
+   write re-reads what is stored and changes only the keys it was given, and other tabs pick up changes live (storage event). */
+let lastRaw = null;
+function refresh() {
+  let raw = null; try { raw = localStorage.getItem('folio.settings'); } catch { return false; }
+  if (raw === lastRaw) return false; lastRaw = raw;
+  try { const saved = JSON.parse(raw || '{}'); const next = { ...DEFAULTS, ...saved }; if (!saved.defaultSort && state.defaultSort) next.defaultSort = state.defaultSort; state = next; } catch { /* ignore */ }
+  return true;
+}
+try { lastRaw = localStorage.getItem('folio.settings'); } catch { /* ignore */ }
 
 const jeq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** Per-key stamps: { key | 'sorts/<ctx>': epoch ms }. Keys that have none fall back to the legacy single stamp (folio.settings.at). */
 export const settingStamps = () => readJ(KEYAT, {});
+/** v0.5.20: stamps later than `limit` (made while this device's clock ran fast) drop to the newest believable one. */
+export function capOwnFuture(limit) {
+  const at = readJ(KEYAT, {}); const es = Object.entries(at); const bad = es.filter(([, v]) => v > limit); if (!bad.length) return 0;
+  const cred = Math.max(0, ...es.map(([, v]) => v).filter((v) => v <= limit)); for (const [k] of bad) at[k] = cred; localStorage.setItem(KEYAT, JSON.stringify(at)); return bad.length;
+}
 function stampKeys(patch, before) {
-  const at = settingStamps(), now = Date.now(); let ch = false;
+  const at = settingStamps(), now = Date.now() + (+(localStorage.getItem('folio.clockSkew') || 0) || 0); let ch = false;   // v0.5.20: Drive's clock if this one is off
   for (const [k, v] of Object.entries(patch)) {
     if (NESTED.includes(k)) { const a = before[k] || {}, b = v || {}; for (const sub of new Set([...Object.keys(a), ...Object.keys(b)])) if (!jeq(a[sub], b[sub])) { at[k + '/' + sub] = now; ch = true; } }
     else if (!jeq(before[k], v)) { at[k] = now; ch = true; }
@@ -99,14 +116,17 @@ function stampKeys(patch, before) {
 }
 export const settings = {
   get: (k) => state[k],
-  all: () => ({ ...state }),
+  all: () => { refresh(); return { ...state }; },
+  /** Re-read the stored settings (another tab may have changed them). Returns true when something changed. */
+  refresh,
   updatedAt: () => +(localStorage.getItem('folio.settings.at') || 0),
   set(patch, opts = {}) {
+    refresh();
     if (!opts.remote) stampKeys(patch, state);
     Object.assign(state, patch);
     if ('flow' in patch && !opts.remote) state.flowChosen = true;
     if (!opts.remote && Object.keys(patch).some((k) => SYNCED.includes(k) || !DEVICE_ONLY.includes(k))) localStorage.setItem('folio.settings.at', String(Date.now()));
-    try { localStorage.setItem('folio.settings', JSON.stringify(state)); } catch { /* quota */ }
+    try { lastRaw = JSON.stringify(state); localStorage.setItem('folio.settings', lastRaw); } catch { /* quota */ }
     applyUI();
     listeners.forEach((fn) => fn(patch));
   },
@@ -165,3 +185,13 @@ try {
     localStorage.setItem(KEYAT, JSON.stringify(at));
   }
 } catch { /* ignore */ }
+/* Live-follow changes made in another Folio tab / window (same browser): no stale copy here can ever be written back. */
+try {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'folio.settings' && e.key !== null) return;
+    const before = { ...state }; if (!refresh()) return;
+    const patch = {}; for (const k of new Set([...Object.keys(before), ...Object.keys(state)])) if (!jeq(before[k], state[k])) patch[k] = state[k];
+    if (!Object.keys(patch).length) return;
+    applyUI(); listeners.forEach((fn) => { try { fn(patch, { external: true }); } catch { /* ignore */ } });
+  });
+} catch { /* not in a window */ }

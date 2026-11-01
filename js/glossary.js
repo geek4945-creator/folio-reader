@@ -73,7 +73,7 @@ export async function saveWord(book, { term, def = '', pos = '', phonetic = '', 
   await DB.put(GL, rec); changed(); return rec;
 }
 export async function savedCounts() {   // for Settings: per book (key → { title, terms, words })
-  const m = new Map(); for (const x of await all()) { if (x.kind === 'meta' || x.kind === 'hl') continue; const r = m.get(x.bookKey) || { key: x.bookKey, title: x.bookTitle || x.bookKey, terms: 0, words: 0 }; r[x.kind === 'term' ? 'terms' : 'words']++; if (x.bookTitle) r.title = x.bookTitle; m.set(x.bookKey, r); }
+  const m = new Map(); for (const x of await all()) { if (x.kind !== 'term' && x.kind !== 'word') continue; const r = m.get(x.bookKey) || { key: x.bookKey, title: x.bookTitle || x.bookKey, terms: 0, words: 0 }; r[x.kind === 'term' ? 'terms' : 'words']++; if (x.bookTitle) r.title = x.bookTitle; m.set(x.bookKey, r); }
   return [...m.values()].sort((a, b) => a.title.localeCompare(b.title));
 }
 export async function wordsOfKey(key) { return (await all()).filter((x) => x.bookKey === key && (x.kind === 'term' || x.kind === 'word')); }

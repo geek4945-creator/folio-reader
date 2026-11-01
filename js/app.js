@@ -1,4 +1,5 @@
 import { syncDetails, statusLine } from './syncui.js';
+import { initConflictPrompt } from './syncfetch.js';
 import { suggestSection, initSuggest } from './suggest.js';
 import { appUpdateSection, initAppUpdate } from './appupdate.js';
 import { backupSettingsSection } from './backupui.js';
@@ -81,7 +82,7 @@ function renderSettings() {
       h('div', { class: 'row-ctl' }, h('label', null, 'Reading layout')),
       h('div', { class: 'seg wide' }, [['paginated', 'Pages'], ['scrolled', 'Scroll']].map(([v, n]) => h('button', { class: s.flow === v ? 'on' : '', onclick: () => { settings.set({ flow: v }); renderSettings(); } }, n))),
       h('div', { class: 'row-ctl' }, h('label', null, 'Pinch sensitivity ', h('small', { class: 'muted' }, 'pinch in the reader changes the text size')), h('div', { class: 'seg wide', id: 'pinch-seg' }, PINCH_LABELS.map(([v, n]) => h('button', { class: s.pinchSens === v ? 'on' : '', 'data-pinch': v, onclick: () => { settings.set({ pinchSens: v }); renderSettings(); } }, n)))),
-      sample),
+      sample, overridesLine()),
     h('section', { class: 'pad card-sec', id: 'sec-footer' }, h('h3', null, 'Reader footer'),
       h('p', { class: 'muted small' }, 'The line at the bottom of the reader. EPUB page counts follow your text size, margins and line spacing; PDFs use their real page numbers.'),
       ...footerToggles(), scrubToggle()),
@@ -97,6 +98,9 @@ function renderSettings() {
       (() => { const out = h('span', { class: 'muted', id: 'hold-sec-val' }, holdSeconds().toFixed(1) + ' s');
         const r = h('input', { type: 'range', id: 'hold-sec', min: HOLD_MIN, max: HOLD_MAX, step: 0.5, value: holdSeconds(), oninput: (e) => { out.textContent = (+e.target.value).toFixed(1) + ' s'; settings.set({ holdSec: +e.target.value }); } });
         return h('div', { class: 'row-ctl' }, h('label', { for: 'hold-sec' }, 'Hold time'), r, out); })()),
+    h('section', { class: 'pad card-sec', id: 'sec-stats' }, h('h3', null, 'Reading stats'),
+      h('p', { class: 'muted small' }, 'Active reading time, pages, books finished this year, your streak and per-book stats. Synced across your devices.'),
+      h('button', { class: 'btn', id: 'open-stats', onclick: () => import('./stats.js').then((m) => m.openStats()) }, '📊 Open reading stats')),
     h('section', { class: 'pad card-sec', id: 'sec-words' }, h('h3', null, 'Word lookup & glossary'),
       h('p', { class: 'muted small' }, 'In the reader, press and hold a word for its definition (the book’s own glossary is checked first). Save words to the book, keep a glossary per book, and look words up offline once they’ve been seen.'),
       h('label', { class: 'toggle-row' }, h('input', { type: 'checkbox', id: 'word-lookup', checked: !!s.wordLookup, onchange: (e) => settings.set({ wordLookup: e.target.checked }) }), h('span', null, 'Press and hold a word to look it up')),
@@ -131,6 +135,16 @@ function renderSettings() {
     appUpdateSection(),
     suggestSection());
 }
+/** v0.5.20: books with their own text settings ignore these global ones (one reason "my change didn't stick"): say how many, offer to reset them. */
+function overridesLine() {
+  const box = h('p', { class: 'muted small', id: 'overrides-line', hidden: true });
+  (async () => {
+    const S = await import('./store.js'); const list = (await S.getBooks()).filter((b) => S.hasOverrides(b)); if (!list.length) return;
+    box.hidden = false; box.replaceChildren(`${list.length} book${list.length === 1 ? ' has its' : 's have their'} own text settings (they ignore the ones above). `,
+      h('button', { class: 'btn-text', id: 'reset-all-overrides', onclick: async () => { if (!(await confirmDlg('Reset all books?', `${list.length} book${list.length === 1 ? '' : 's'} will use the settings above again.`, 'Reset'))) return; for (const b of list) await S.resetOverrides(b.id); box.hidden = true; toast('All books use the global settings'); } }, 'Reset them all'));
+  })().catch(() => {});
+  return box;
+}
 function slider(label, key, min, max, step, fmt) {
   const v = settings.get(key); const out = h('span', { class: 'muted' }, fmt(+v));
   const i = h('input', { type: 'range', min, max, step, value: v, id: 'g-' + key, oninput: () => { out.textContent = fmt(+i.value); settings.set({ [key]: +i.value }); } });
@@ -146,7 +160,7 @@ function accountBox() {
         h('div', { class: 'grow' }, h('strong', null, p.name), h('div', { class: 'muted small' }, p.email))),
         h('p', { class: 'muted small', id: 'sync-status' }, statusLine(st)),
         h('div', { class: 'row-actions wrap' },
-          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow({ force: true }); toast(r && r.pending ? `Synced · ${r.pending} books’ state waiting for their files` : 'Synced'); } catch (e) { toast(e.message, 5000); } } }, 'Sync now'),
+          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow({ force: true }); if (r && r.conflict) { const { maybeShowConflict } = await import('./syncfetch.js'); maybeShowConflict(true); } else toast(r && r.pending ? `Synced · ${r.pending} book${r.pending === 1 ? '' : 's'} not on this device yet` : 'Synced'); draw(); } catch (e) { toast(e.message, 5000); } } }, 'Sync now'),
           st.state === 'needs-reauth' ? h('button', { class: 'btn', onclick: () => G.signIn().then(draw).catch((e) => toast(e.message)) }, 'Reconnect') : null,
           h('button', { class: 'btn', id: 'sign-out', onclick: async () => { G.signOut(); draw(); toast('Signed out on this device'); } }, 'Sign out'),
           h('button', { class: 'btn danger', onclick: async () => { if (await confirmDlg('Disconnect Google?', 'Revokes Folio’s access to your Google account. Synced data stays in your Drive app data until you remove it in Google account settings.', 'Disconnect', true)) { await G.disconnect(); draw(); } } }, 'Disconnect')),
@@ -178,7 +192,7 @@ window.addEventListener('drop', async (e) => {
 /* ---------- boot ---------- */
 initViewport(); initHold(); setTimeout(() => import('./backup.js').then((m) => m.expireUndo()).catch(() => {}), 4000);
 window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
-G.initSync(); initSuggest(); initAppUpdate();
+G.initSync(); initSuggest(); initAppUpdate(); initConflictPrompt();
 show(tab); initNav({ getTab: () => tab, show });
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
 if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);

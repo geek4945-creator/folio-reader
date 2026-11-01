@@ -1,6 +1,6 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
-import { settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups, NESTED } from './settings.js';
+import { capOwnFuture, settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups, NESTED } from './settings.js';
 import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS } from './db.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
@@ -190,18 +190,33 @@ export const syncTuning = { minGap: 20000, foregroundGap: 15000, deviceEvery: 60
 const revOf = (f) => f && (f.md5Checksum || f.modifiedTime || f.id);
 async function listSyncFiles() {
   const q = encodeURIComponent('(' + Object.values(FILES).map((n) => `name='${n}'`).join(' or ') + ') and trashed=false');
-  const r = await drive(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&orderBy=createdTime&fields=files(id,name,md5Checksum,modifiedTime,createdTime)&pageSize=20`, { retries: 2 });
+  const r = await drive(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&orderBy=createdTime&fields=files(id,name,md5Checksum,modifiedTime,createdTime)&pageSize=100`, { retries: 2 });
   const out = new Map(); for (const f of (await r.json()).files || []) if (!out.has(f.name)) out.set(f.name, f);   // if two devices raced to create one, the oldest is the real one
   return out;
 }
 async function readFile(f) { return (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 2 })).json(); }
+/** Bodies above this go through a resumable upload (Drive's simple upload stops at 5 MB; a library of thousands of books can get there). */
+export const uploadTuning = { resumableOver: 4 * 1048576 };
+async function resumable(url, method, meta, body) {
+  const r0 = await drive(url, { method, headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/json' }, body: JSON.stringify(meta || {}), retries: 2 });
+  const loc = r0.headers.get('location') || r0.headers.get('Location'); if (!loc) throw new Error('Google Drive did not start the upload');
+  return (await drive(loc, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, retries: 3 })).json();
+}
+/** Clock check: Drive stamps each write with its own time; a device whose clock is far off is told so (its stamps would win or lose wrongly). */
+function noteClock(sent, j) { const t = Date.parse(j && j.modifiedTime); if (!t) return; const off = t - (sent + Date.now()) / 2; if (Math.abs(off) > 120000) localStorage.setItem('folio.clockSkew', String(Math.round(off))); else localStorage.removeItem('folio.clockSkew'); }
+export const clockSkew = () => +(localStorage.getItem('folio.clockSkew') || 0);
 async function writeFile(name, f, data) {
-  const body = JSON.stringify(data);
-  if (f) { const r = await drive(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id,md5Checksum,modifiedTime`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body, retries: 2 }); return { ...f, ...(await r.json()) }; }
+  const body = JSON.stringify(data); const sent = Date.now();
+  if (body.length > uploadTuning.resumableOver) {
+    const j = f ? await resumable(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=resumable&fields=id,name,md5Checksum,modifiedTime`, 'PATCH', {}, body)
+      : await resumable('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,md5Checksum,modifiedTime', 'POST', { name, parents: ['appDataFolder'] }, body);
+    noteClock(sent, j); return { ...(f || { name }), ...j };
+  }
+  if (f) { const r = await drive(`https://www.googleapis.com/upload/drive/v3/files/${f.id}?uploadType=media&fields=id,md5Checksum,modifiedTime`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body, retries: 2 }); const j = await r.json(); noteClock(sent, j); return { ...f, ...j }; }
   const boundary = 'folio' + Math.random().toString(36).slice(2);
   const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
   const r = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,md5Checksum,modifiedTime', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multipart, retries: 2 });
-  return { name, ...(await r.json()) };
+  const j = await r.json(); noteClock(sent, j); return { name, ...j };
 }
 
 /* ---------- settings: every preference carries its own last-write-wins stamp ---------- */
@@ -236,7 +251,7 @@ function applySettingsPart(part, ctx) {
   const patch = {}, newStamps = { ...stamps }; const nested = {}; let n = 0;
   for (const [k, e] of Object.entries(flat)) {
     const base = k.split('/')[0]; if (!allowed.has(base)) continue;
-    if (!ctx.force && (e.at || 0) <= (stamps[k] ?? legacy)) continue;
+    if (!ctx.force && !ctx.lose?.settings.has(k) && (e.at || 0) <= (stamps[k] ?? legacy)) continue;
     if (NESTED.includes(base) && k.includes('/')) { nested[base] = nested[base] || { ...(settings.get(base) || {}) }; const c = k.slice(base.length + 1); if (e.d || e.v == null) delete nested[base][c]; else nested[base][c] = e.v; }
     else patch[k] = e.v;
     newStamps[k] = e.at || 0; n++;
@@ -252,9 +267,10 @@ const putQuiet = (store) => (it) => DB.put(store, { ...it, _noTouch: true });
 export async function buildSnapshot() {
   const [books, sets, shelves, orders, bms, audio, links, gloss] = await Promise.all([S.getBooks(), S.getSets(), DB.all('shelves'), DB.all('orders'), DB.all('bookmarks'), A.getAudiobooks(), DB.all('links'), DB.all('glossary')]);
   await ensureCoverIds(books, putQuiet('books'), hashBlob); await ensureCoverIds(audio, putQuiet('audiobooks'), hashBlob);
+  await S.fixKeyCollisions(books);   // v0.5.20: two different books must never share one sync entry (that silently merged them and lowered counts)
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}), ...(srcOf(b) ? { src: srcOf(b) } : {}) };   // untouched imports are 0 so another device's edits win
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
   const mapOrderId = (id) => (id.startsWith('b:') ? 'b:' + (keyOf.get(id.slice(2)) || id.slice(2)) : id.startsWith('k:') ? 'b:' + id.slice(2) : id);   // k: = placeholder for a book not on this device yet
@@ -275,6 +291,11 @@ export async function buildSnapshot() {
     books: bookState, bookmarks, tombstones: S.getTombs() };
 }
 
+/** v0.5.20: where the book's file came from, so another device can fetch the same file (only Google Drive files can be fetched; others are named). */
+function srcOf(b) {
+  const m = /^gdrive:(.+)$/.exec(b.sourceKey || ''); if (m) return { kind: 'gdrive', id: m[1], name: b.filename || b.title || '', size: b.size || 0, fmt: b.format || '' };
+  return { kind: b.source === 'Google Drive' ? 'gdrive' : 'file', name: b.filename || '', size: b.size || 0, fmt: b.format || '' };
+}
 function canonicalize(snap, idmap) {   // unify duplicate sets/shelves with the same name created independently on two devices
   const m = (id) => idmap.get(id) || id;
   snap.shelves = snap.shelves.map((x) => ({ ...x, id: m(x.id) }));
@@ -298,6 +319,7 @@ function mergeState(a, b, posFields) {
   st.gAt = {};   // each group of structure (status / shelves / series / name) is last-writer-wins on its own stamp
   for (const [g, d] of Object.entries(GROUPS)) { const w = stGroupAt(b, g) > stGroupAt(a, g) ? b : a; st.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g)); for (const f of d.fields) { if (w[f] === undefined) delete st[f]; else st[f] = structuredClone(w[f]); } }
   st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0);
+  if (a.src || b.src) { const pickSrc = (x) => (x && x.src && x.src.id ? 2 : x && x.src ? 1 : 0); st.src = structuredClone(pickSrc(b) > pickSrc(a) ? b.src : a.src || b.src); }   // a Drive file id beats "imported from a file"
   if (a.addedAt || b.addedAt) st.addedAt = Math.min(...[a.addedAt, b.addedAt].filter(Boolean));   // the same book imported on two devices: one agreed date, so neither device keeps rewriting the file
   const posA = posAtOfState(a), posB = posAtOfState(b);
   const pw = posB > posA ? b : a; if (pw !== ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a)) for (const f of posFields) { if (pw[f] === undefined) delete st[f]; else st[f] = structuredClone(pw[f]); }
@@ -378,21 +400,33 @@ export async function applySnapshot(m, ctx = {}) {
   const doms = { library: true, positions: true, settings: true, glossary: true, ...(ctx.domains || {}) };
   if (doms.settings) applySettingsPart(m.settings, ctx);
   const keyToId = new Map(); const pending = {}; let appliedBooks = 0, deletedBooks = 0, posApplied = 0, posConflicts = 0;
-  for (const b of books) {
+  for (const b0 of books) {
+    const b = (await DB.get('books', b0.id)) || b0;   // v0.5.20: re-read right before writing, so an edit made while a long sync runs is never overwritten by the copy read at the start
     const key = S.bookSyncKey(b); keyToId.set(key, b.id); const st = m.books[key];
     if (!st) { if ((m.tombstones || []).some((t) => t.t === 'book' && t.id === key && t.at >= Math.max(structAtOf(b), b.addedAt || 0))) { await S.deleteBooks([b.id], { tomb: false, emit: false }); keyToId.delete(key); deletedBooks++; } continue; }   // deleted on another device
     const localAt = structAtOf(b); let dirty = false;
-    if (doms.library && (ctx.force || (st.updatedAt || 0) > localAt || Object.keys(GROUPS).some((g) => stGroupAt(st, g) > gAtOf(b, g)))) {
+    const lg = ctx.lose?.books.get(key), lo = ctx.lose?.ov.get(key);   // v0.5.20: "Use the other device" — contested fields take the cloud value
+    if (doms.library && (ctx.force || lg || (st.updatedAt || 0) > localAt || Object.keys(GROUPS).some((g) => stGroupAt(st, g) > gAtOf(b, g)))) {
       let did = false; b.gAt = { ...(b.gAt || {}) };
       for (const [g, d] of Object.entries(GROUPS)) {
-        if (!(ctx.force || stGroupAt(st, g) > gAtOf(b, g))) continue; did = true;
+        if (!(ctx.force || lg?.has(g) || stGroupAt(st, g) > gAtOf(b, g))) continue; did = true;
         for (const f of d.fields) { if (f === 'title' || f === 'author') { if (st[f]) b[f] = st[f]; } else if (st[f] === undefined) delete b[f]; else b[f] = st[f]; }
         b.gAt[g] = stGroupAt(st, g);
       }
       for (const g of Object.keys(GROUPS)) b.gAt[g] ??= gAtOf(b, g);
       if (did) { b.structAt = Math.max(structAtOf(b), st.updatedAt || 0); b.updatedAt = b.structAt; dirty = true; appliedBooks++; }
     } else if (idmap.size) { b.setId = idmap.get(b.setId) || b.setId; b.shelves = (b.shelves || []).map((x) => idmap.get(x) || x); dirty = true; }
-    if (doms.library && (ctx.force || !jeq(b.overrides || null, st.overrides || null))) { b.overrides = st.overrides || null; if (st.ovAt) b.ovAt = st.ovAt; dirty = true; }
+    if (doms.library && (ctx.force || lo || !jeq(b.overrides || null, st.overrides || null))) {   // per-book reading settings: key by key, the newer stamp wins (a local change made after this sync started stays)
+      if (ctx.force && !ctx.sync) { b.overrides = st.overrides || null; if (st.ovAt) b.ovAt = st.ovAt; dirty = true; }
+      else {
+        const at = (x, k) => x.ovAt?.[k] ?? (x.overrides && x.overrides[k] != null ? x.updatedAt ?? 0 : 0); const ov = { ...(b.overrides || {}) }, ovAt = { ...(b.ovAt || {}) }; let ch = false;
+        for (const k of new Set([...Object.keys(st.overrides || {}), ...Object.keys(st.ovAt || {}), ...(lo || [])])) {
+          if (!lo?.has(k) && at(st, k) <= at(b, k) && !(at(st, k) === 0 && at(b, k) === 0 && st.overrides?.[k] != null && b.overrides?.[k] == null)) continue;
+          const v = st.overrides?.[k]; if (v == null) delete ov[k]; else ov[k] = v; ovAt[k] = at(st, k); ch = true;
+        }
+        if (ch) { b.overrides = Object.keys(ov).length ? ov : null; b.ovAt = ovAt; dirty = true; }
+      }
+    }
     if (doms.positions && (st.posAt !== undefined || st.progress !== undefined)) { const r = applyPosition('book', b, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }
     if (dirty) await DB.put('books', { ...b, _noTouch: true });
   }
@@ -531,7 +565,7 @@ export const COVER_GC_AGE = 3600e3;
 /* ---------- splitting a snapshot into the per-domain files, and joining them again ---------- */
 const stable = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((y) => [y, x[y]])) : x));
 const hashStr = (str) => { let h1 = 0x811c9dc5, h2 = 5381; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 16777619); h2 = (Math.imul(h2, 33) + c) | 0; } return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + str.length.toString(36); };
-const bare = (p) => { const { savedAt, ...rest } = p || {}; return rest; };
+const bare = (p) => { const { savedAt, by, ...rest } = p || {}; return rest; };   // who wrote it / when is not content (else two devices would rewrite the file in turn forever)
 export const hashPart = (p) => hashStr(stable(bare(p)));
 const pick = (o, keys) => { const r = {}; for (const k of keys) if (o[k] !== undefined) r[k] = o[k]; return r; };
 const omit = (o, keys) => { const r = { ...o }; for (const k of keys) delete r[k]; return r; };
@@ -539,11 +573,11 @@ export function splitSnapshot(snap) {
   const books = {}, bpos = {}, audio = {}, apos = {};
   for (const [k, st] of Object.entries(snap.books)) { if (st.title !== undefined) books[k] = omit(st, POS_STATE); bpos[k] = pick(st, POS_STATE); }
   for (const [k, st] of Object.entries(snap.audioState || {})) { if (st.title !== undefined) audio[k] = omit(st, AUDIO_POS_STATE); apos[k] = pick(st, AUDIO_POS_STATE); }
-  const { settings: _s, glossary: gl, ...lib } = snap;
+  const { settings: _s, glossary: gl, ...lib } = snap; const by = { id: deviceId(), name: deviceName() };
   return {
-    library: { ...lib, books, audioState: audio, domain: 'library' },
+    library: { ...lib, books, audioState: audio, domain: 'library', by },
     positions: { v: 1, domain: 'positions', savedAt: snap.savedAt, books: bpos, audio: apos },
-    settings: { v: 1, domain: 'settings', savedAt: snap.savedAt, flat: snap.settings.flat, updatedAt: snap.settings.updatedAt },
+    settings: { v: 1, domain: 'settings', savedAt: snap.savedAt, flat: snap.settings.flat, updatedAt: snap.settings.updatedAt, by },
     glossary: { v: 1, domain: 'glossary', savedAt: snap.savedAt, glossary: gl || [] },
   };
 }
@@ -565,10 +599,11 @@ export const markDirty = () => localStorage.setItem('folio.sync.dirty', '1');
 export const isDirty = () => localStorage.getItem('folio.sync.dirty') === '1';
 /** Runs one sync. If one is already running, waits for it and then runs again so changes made meanwhile are never lost.
  *  opts.only limits it to some domains (e.g. ['positions'] when a book is opened). */
-export async function syncNow({ quiet = false, only = null, force = false } = {}) {
+export async function syncNow({ quiet = false, only = null, force = false, resolve = null, remember = false } = {}) {
   if (!isSignedIn()) return null;
   while (inflight) { try { await inflight; } catch { /* previous failure is reported by its own caller */ } }
-  inflight = doSync(quiet, only, force);
+  if (resolve) { if (remember) localStorage.setItem(CONFLICT_PREF, resolve); force = true; }
+  inflight = doSync(quiet, only, force, resolve);
   try { return await inflight; } finally { inflight = null; }
 }
 const DEVICE_NAME_KEY = 'folio.sync.devName';
@@ -591,41 +626,125 @@ export async function forgetDevice(id) {
   const d = await readFile(f); delete (d.devices || {})[id]; await writeFile(FILES.devices, f, d); localStorage.setItem('folio.sync.devices', JSON.stringify(d.devices || {}));
 }
 
-async function doSync(quiet, only, force) {
+/* ---------- v0.5.20: big disagreements between this device and the cloud copy ----------
+   A "major conflict" = since this device last synced, BOTH sides changed the same things to different values: at least conflictTuning.books books (status,
+   shelves, series, name, per-book reading settings) or conflictTuning.settings settings. Then nothing is applied or uploaded until the reader picks Keep this
+   device / Use the other device / Merge both (shown on the library screen, never inside a book). No choice deletes anything: Keep / Use only decide which side
+   wins the fields that differ (its stamps move to "now" so every device follows); Merge keeps the newest change of each field. */
+export const conflictTuning = { books: 10, settings: 5 };
+const CONFLICT_KEY = 'folio.sync.conflict', CONFLICT_PREF = 'folio.sync.conflictPref';
+export const pendingConflict = () => lsj(CONFLICT_KEY, null);
+export const conflictPref = () => localStorage.getItem(CONFLICT_PREF) || '';
+export const setConflictPref = (v) => (v ? localStorage.setItem(CONFLICT_PREF, v) : localStorage.removeItem(CONFLICT_PREF));
+export const dismissConflict = () => localStorage.removeItem(CONFLICT_KEY);
+const realBooks = (snap) => Object.entries(snap.books || {}).filter(([, st]) => st && st.title !== undefined);
+function groupDiffers(a, b, g) { return GROUPS[g].fields.some((f) => (f === 'title' || f === 'author') ? (a[f] && b[f] && a[f] !== b[f]) : !jeq(a[f] ?? null, b[f] ?? null)); }
+const ovAtOf = (x, k) => x.ovAt?.[k] ?? (x.overrides && x.overrides[k] != null ? x.updatedAt ?? 0 : 0);
+export function detectConflict(local, remote, base, mode = { library: 'merge', settings: 'merge' }) {
+  const out = { books: 0, settings: 0, sample: [], keys: [] };
+  if (mode.library === 'merge') for (const [k, a] of realBooks(local)) {
+    const b = remote.books?.[k]; if (!b || b.title === undefined) continue;
+    let hit = Object.keys(GROUPS).some((g) => g !== 'now' && stGroupAt(a, g) > base && stGroupAt(b, g) > base && groupDiffers(a, b, g));
+    if (!hit) for (const ok of new Set([...Object.keys(a.ovAt || {}), ...Object.keys(b.ovAt || {})])) if (ovAtOf(a, ok) > base && ovAtOf(b, ok) > base && !jeq(a.overrides?.[ok] ?? null, b.overrides?.[ok] ?? null)) { hit = true; break; }
+    if (hit) { out.books++; if (out.sample.length < 4) out.sample.push(a.title); }
+  }
+  if (mode.settings === 'merge') { const fa = settingsFlat(local.settings), fb = settingsFlat(remote.settings); for (const [k, e] of Object.entries(fa)) { const r = fb[k]; if (r && (e.at || 0) > base && (r.at || 0) > base && !jeq(e.v ?? null, r.v ?? null)) { out.settings++; out.keys.push(k); } } }
+  out.major = out.books >= conflictTuning.books || out.settings >= conflictTuning.settings;
+  return out;
+}
+/** Make W win every field where it differs from O (W is changed in place): its stamps move just past both sides'. */
+function favor(W, O) {
+  for (const [k, a] of realBooks(W)) {
+    const b = O.books?.[k]; if (!b || b.title === undefined) continue; a.gAt = { ...(a.gAt || {}) };
+    for (const g of Object.keys(GROUPS)) if (groupDiffers(a, b, g)) { a.gAt[g] = Math.max(stGroupAt(a, g), stGroupAt(b, g), Date.now()) + 1; a.updatedAt = Math.max(a.updatedAt || 0, a.gAt[g]); }
+    for (const ok of new Set([...Object.keys(a.overrides || {}), ...Object.keys(b.overrides || {})])) if (!jeq(a.overrides?.[ok] ?? null, b.overrides?.[ok] ?? null)) { a.ovAt = { ...(a.ovAt || {}) }; a.ovAt[ok] = Math.max(ovAtOf(a, ok), ovAtOf(b, ok), Date.now()) + 1; }
+  }
+  const fa = { ...settingsFlat(W.settings) }, fb = settingsFlat(O.settings);
+  for (const [k, e] of Object.entries(fa)) { const r = fb[k]; if (r && !jeq(e.v ?? null, r.v ?? null)) fa[k] = { ...e, at: Math.max(e.at || 0, r.at || 0, Date.now()) + 1 }; }
+  W.settings = { flat: fa, updatedAt: Math.max(W.settings?.updatedAt || 0, Date.now()) };
+}
+/** "Use the other device": W (this device) loses every contested field to O WITHOUT re-stamping O, so no other device sees a fake new change.
+ *  Returns what was contested, so applySnapshot takes O's value there even though this device's own stamp is newer. */
+function demote(W, O) {
+  const lose = { books: new Map(), ov: new Map(), settings: new Set() };
+  for (const [k, a] of realBooks(W)) {
+    const b = O.books?.[k]; if (!b || b.title === undefined) continue; a.gAt = { ...(a.gAt || {}) };
+    for (const g of Object.keys(GROUPS)) if (groupDiffers(a, b, g)) { a.gAt[g] = Math.max(0, stGroupAt(b, g) - 1); if (!lose.books.has(k)) lose.books.set(k, new Set()); lose.books.get(k).add(g); }
+    for (const ok of new Set([...Object.keys(a.overrides || {}), ...Object.keys(b.overrides || {})])) if (!jeq(a.overrides?.[ok] ?? null, b.overrides?.[ok] ?? null)) { a.ovAt = { ...(a.ovAt || {}) }; a.ovAt[ok] = Math.max(0, ovAtOf(b, ok) - 1); if (!lose.ov.has(k)) lose.ov.set(k, new Set()); lose.ov.get(k).add(ok); }
+  }
+  const fa = { ...settingsFlat(W.settings) }, fb = settingsFlat(O.settings);
+  for (const [k, e] of Object.entries(fa)) { const r = fb[k]; if (r && !jeq(e.v ?? null, r.v ?? null)) { fa[k] = { ...e, at: Math.max(0, (r.at || 0) - 1) }; lose.settings.add(k); } }
+  W.settings = { ...(W.settings || {}), flat: fa };
+  return lose;
+}
+/** Stamps from a device with a fast clock can't be later than the moment Drive saved the file: cap them there (else they would beat every newer change). */
+function capFuture(part, f) {   // v0.5.20: a future stamp counts as no newer than the newest believable stamp in the same file (so it can't revert newer real changes)
+  const t = Date.parse(f && f.modifiedTime); if (!t || !part) return; const lim = t + 120000; const es = Object.values(part.flat || {}).filter(Boolean);
+  const cred = Math.min(t, Math.max(0, ...es.map((e) => e.at || 0).filter((a) => a <= lim)));
+  for (const e of es) if ((e.at || 0) > lim) e.at = cred;
+}
+const deviceNameOf = (id) => { const d = lsj('folio.sync.devices', {}); return (id && d[id] && d[id].name) || ''; };
+/** Book counts for Settings → Sync: this device, the synced library, and how many synced books have no file here yet. */
+export function syncCounts() { return lsj('folio.sync.counts', null); }
+
+async function doSync(quiet, only, force, resolve = null) {
   syncing = true; lastStart = Date.now(); setStatus('syncing', 'Syncing…');
   try {
     const doms = SYNC_DOMAINS.map((d) => d.id).filter((d) => domainEnabled(d) && (!only || only.includes(d)));
     const st = syncState(); const files = await listSyncFiles();
+    capOwnFuture(Date.now() + clockSkew() + 120000);   // this device's clock was found fast: its old stamps must not beat real newer changes
     const local = await buildSnapshot(); const lp = splitSnapshot(local);
     const mode = {};   // per domain: skip (nothing changed anywhere) | push (only this device changed) | merge (the file changed on Drive)
     for (const d of doms) { const f = files.get(FILES[d]); mode[d] = !f ? 'push' : force || revOf(f) !== st.rev[d] ? 'merge' : hashPart(lp[d]) !== st.hash[d] ? 'push' : 'skip'; }
     const res = { domains: mode, uploaded: [], downloaded: [] };
     if (doms.every((d) => mode[d] === 'skip')) { finishOk(st, res, files, only); return res; }
     const read = {}; await Promise.all(doms.filter((d) => mode[d] === 'merge' && files.get(FILES[d])).map(async (d) => { read[d] = await readFile(files.get(FILES[d])); res.downloaded.push(d); }));
+    if (read.settings) capFuture(read.settings, files.get(FILES.settings));
     const remote = joinParts({ library: read.library, positions: read.positions, settings: read.settings, glossary: read.glossary });
-    const merged = mergeSnapshots(local, remote);
+    if (!resolve && status.lastSync && (mode.library === 'merge' || mode.settings === 'merge')) {   // a device that never synced has nothing to conflict with: it just merges
+      const c = detectConflict(local, remote, status.lastSync || 0, mode);
+      if (c.major) {
+        if (conflictPref()) resolve = conflictPref();
+        else {
+          const by = read.library?.by || read.settings?.by || null; const f = files.get(FILES.library) || files.get(FILES.settings);
+          const info = { at: Date.now(), books: c.books, settings: c.settings, sample: c.sample, keys: c.keys.slice(0, 12), me: { name: deviceName(), lastSync: status.lastSync || 0, books: realBooks(local).length },
+            other: { id: by?.id || '', name: (by && (deviceNameOf(by.id) || by.name)) || 'your other device', at: Date.parse(f?.modifiedTime || '') || read.library?.savedAt || read.settings?.savedAt || 0, books: realBooks(remote).length } };
+          localStorage.setItem(CONFLICT_KEY, JSON.stringify(info));
+          setStatus('conflict', 'Waiting for you to choose how to combine this device with ' + info.other.name);
+          window.dispatchEvent(new CustomEvent('folio-sync-conflict', { detail: info }));
+          return { ...res, conflict: info };
+        }
+      }
+    }
+    let L0 = local, R0 = remote;
+    let lose = null;
+    if (resolve === 'local') { L0 = structuredClone(local); favor(L0, remote); } else if (resolve === 'cloud') { L0 = structuredClone(local); lose = demote(L0, remote); }
+    if (resolve) localStorage.removeItem(CONFLICT_KEY);
+    const merged = mergeSnapshots(L0, R0);
     let covers = null; if (doms.includes('library') && mode.library !== 'skip') { try { covers = await listCoverFiles(); } catch { /* covers are best-effort: metadata still syncs */ } }
     const getCover = async (cid) => { const f = covers?.get(`cover-${cid}.jpg`); if (!f) return null; try { return await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 1 })).blob(); } catch { return null; } };
-    Object.assign(res, await applySnapshot(merged, { getCover, sync: true, domains: { glossary: mode.glossary === 'merge', library: mode.library === 'merge', positions: mode.positions === 'merge' || (mode.library === 'merge' && domainEnabled('positions') && !files.get(FILES.positions)), settings: mode.settings === 'merge' || (mode.library === 'merge' && domainEnabled('settings') && !files.get(FILES.settings) && !!read.library?.settings) } }));   // a v0.5.4 library file still holds positions + settings
+    Object.assign(res, await applySnapshot(merged, { getCover, sync: true, lose, domains: { glossary: mode.glossary === 'merge', library: mode.library === 'merge', positions: mode.positions === 'merge' || (mode.library === 'merge' && domainEnabled('positions') && !files.get(FILES.positions)), settings: mode.settings === 'merge' || (mode.library === 'merge' && domainEnabled('settings') && !files.get(FILES.settings) && !!read.library?.settings) } }));   // a v0.5.4 library file still holds positions + settings
     const finalSnap = await buildSnapshot();   // re-read so ids/timestamps are consistent
     const toPush = mergeSnapshots(finalSnap, merged); const pp = splitSnapshot(toPush), fp = splitSnapshot(finalSnap);
+    for (const d of doms) {   // v0.5.20: the small state files first (they are what other devices wait for); covers after
+      if (mode[d] === 'skip') continue;
+      const f = files.get(FILES[d]); const same = read[d] && stable(bare(pp[d])) === stable(bare(read[d]));
+      if (same) st.rev[d] = revOf(f); else { const nf = await writeFile(FILES[d], f, pp[d]); st.rev[d] = revOf(nf); files.set(FILES[d], nf); res.uploaded.push(d); }
+      st.hash[d] = hashPart(fp[d]);
+    }
+    saveSyncState(st);
     if (covers) {
       const blobs = await localCoverBlobs(); let up = 0, failed = 0;
       for (const cid of coverIdsIn(toPush)) { const name = `cover-${cid}.jpg`; if (covers.has(name) || !blobs.has(cid)) continue; try { covers.set(name, await uploadCover(cid, blobs.get(cid))); up++; } catch { failed++; /* retried next sync */ } }
-      res.coversUploaded = up; if (failed) res.coverRetry = true;
-    }
-    for (const d of doms) {
-      if (mode[d] === 'skip') continue;
-      const f = files.get(FILES[d]); const same = read[d] && stable(bare(pp[d])) === stable(bare(read[d]));
-      if (same) st.rev[d] = revOf(f); else { const nf = await writeFile(FILES[d], f, pp[d]); st.rev[d] = revOf(nf); res.uploaded.push(d); }
-      st.hash[d] = (d === 'library' && res.coverRetry) ? 'retry-covers' : hashPart(fp[d]);
+      res.coversUploaded = up; if (failed) { res.coverRetry = true; st.hash.library = 'retry-covers'; }
     }
     if (covers) {   // garbage-collect covers nothing references any more (never ones younger than an hour: another device may be mid-sync)
       const keep = coverIdsIn(toPush); let gc = 0;
       for (const [name, f] of covers) { const m = /^cover-([0-9a-f]+)\.jpg$/.exec(name); if (!m || keep.has(m[1])) continue; if (Date.now() - Date.parse(f.createdTime || 0) < COVER_GC_AGE) continue; try { await drive(`https://www.googleapis.com/drive/v3/files/${f.id}`, { method: 'DELETE' }); gc++; } catch { /* ignore */ } }
       res.coversDeleted = gc;
     }
-    markSynced('book', await S.getBooks()); markSynced('audio', await A.getAudiobooks());
+    const nowBooks = await S.getBooks(); markSynced('book', nowBooks); markSynced('audio', await A.getAudiobooks());
+    if (doms.includes('library')) { const cloud = Object.values(toPush.books || {}).filter((x) => x && x.title !== undefined).length; localStorage.setItem('folio.sync.counts', JSON.stringify({ at: Date.now(), local: nowBooks.length, cloud, missing: Object.keys(S.getPending()).filter((k) => S.getPending()[k]?.title !== undefined).length })); }
     try { await touchDevices(files, st, force); } catch { /* the devices list is a nicety */ }
     finishOk(st, res, files, only);
     internalEmit = true; try { S.emitChange(); } finally { internalEmit = false; }   // refresh UI without re-triggering sync
@@ -662,7 +781,7 @@ export function initSync() {
   if (hookInstalled) return; hookInstalled = true;
   if (isSignedIn()) { setStatus('connected', status.lastSync ? 'Last synced ' + new Date(status.lastSync).toLocaleString() : ''); const a = load(); if (a.exp > Date.now()) scheduleRenew(a.exp); }
   onLibraryChange(() => { if (!internalEmit) scheduleSync(); });
-  settings.onChange((p) => { if (Object.keys(p).some((k) => !['chip', 'audioChip', 'flowChosen'].includes(k))) scheduleSync(); });
+  settings.onChange((p, o) => { if (o && o.external) return; if (Object.keys(p).some((k) => !['chip', 'audioChip', 'flowChosen'].includes(k))) scheduleSync(); });   // a change made in another tab is synced by that tab
   window.addEventListener('folio-position', () => scheduleSync(8000));
   document.addEventListener('visibilitychange', () => {
     if (!isSignedIn()) return;

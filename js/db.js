@@ -15,6 +15,8 @@ import { deviceId, deviceName } from './device.js';
 const STAMPED = new Set(['books', 'audiobooks']);
 const J = JSON.stringify;
 /** Structure is stamped in independent groups so e.g. an automatic "Reading" status on one device can't undo a shelf change made on another. */
+/** v0.5.20: change stamps use Drive's clock when this device's clock is known to be off by more than 2 minutes (else a fast clock's changes would beat newer ones). */
+export const trueNow = () => { let o = 0; try { o = +(localStorage.getItem('folio.clockSkew') || 0) || 0; } catch {} return Date.now() + o; };
 export const GROUPS = {
   status: { fields: ['status', 'finishedAt'], sig: (b) => J([b.status, b.finishedAt || 0]) },
   shelves: { fields: ['shelves'], sig: (b) => J([...(b.shelves || [])].sort()) },
@@ -28,7 +30,7 @@ export const gAtOf = (b, g) => b.gAt?.[g] ?? (GROUPS[g] && GROUPS[g].noLegacy ? 
 export const posAtOf = (b) => b.posAt ?? Math.max(b.lastOpened || 0, b.updatedAt || 0);   // legacy records: their last touch
 export const posAtOfState = (st) => st.posAt ?? Math.max(st.lastOpened || 0, st.updatedAt || 0);
 function stamp(val, old) {
-  const now = Date.now();
+  const now = trueNow();
   if (!old) { val.structAt = 0; val.gAt = {}; val.posAt = (val.progress || val.position) ? now : 0; val.posDev = deviceId(); val.posDevName = deviceName(); return; }
   const g = {}; let top = 0;
   for (const [n, d] of Object.entries(GROUPS)) { g[n] = d.sig(old) === d.sig(val) ? gAtOf(old, n) : now; top = Math.max(top, g[n]); }
@@ -84,7 +86,7 @@ export const DB = {
   // Records in synced stores get an updatedAt stamp (used for last-writer-wins sync) unless _noTouch is set.
   async put(s, val) {
     if (val && STAMPED.has(s) && !val._noTouch) stamp(val, await wrap((await store(s)).get(val.id)));
-    if (val && TRACKED.has(s)) { if (val._noTouch) delete val._noTouch; else val.updatedAt = Date.now(); }
+    if (val && TRACKED.has(s)) { if (val._noTouch) delete val._noTouch; else val.updatedAt = trueNow(); }
     else if (val && val._noTouch) delete val._noTouch;
     return wrap((await store(s, 'readwrite')).put(val));
   },

@@ -6,11 +6,12 @@ import { enableDragSort } from './dragsort.js';
 import { registerBack } from './nav.js';
 import { openReader } from './reader.js';
 import { openDriveBrowser } from './drive.js';
-import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
+import { openPublicLibraryGuide, openDrmFreeHelp, openLibby } from './publib.js';
 import { markEdits } from './metasync.js';
 import { openCoverEditor, hasCustomCover } from './covers.js';
 import { openFixMissing } from './enrich.js';
 import * as Loans from './loans.js';
+import { missingBanner } from './syncfetch.js';
 import { installMode, installLabel, startInstall } from './install.js';
 
 let view; const covers = new Map();
@@ -38,7 +39,15 @@ async function drawLibrary() {
   view.classList.toggle('selecting', !!local.sel);
   if (local.sel) for (const id of [...local.sel]) if (!ctx.books.some((b) => b.id === id)) local.sel.delete(id);
   if (local.setId && ctx.setMap.has(local.setId)) await renderSetPage(ctx); else { local.setId = null; await renderMain(ctx); }
-  view.scrollTop = scroll;
+  view.scrollTop = scroll; stickShelfBar();
+}
+/** v0.5.20: the shelf bar sticks right under the (sticky) top bar; its offset follows the top bar's real height (bigger text, wrapped title). */
+let shelfObs = null, shelfScroll = null;
+function stickShelfBar() {
+  const bar = view.querySelector('#shelf-bar'), top = view.querySelector('.topbar'); if (!bar || !top) return;
+  const fit = () => { bar.style.setProperty('--shelf-top', top.offsetHeight + 'px'); bar.classList.toggle('stuck', bar.getBoundingClientRect().top <= top.getBoundingClientRect().bottom + 1 && view.scrollTop > 0); };
+  fit(); shelfObs?.disconnect(); if (window.ResizeObserver) { shelfObs = new ResizeObserver(fit); shelfObs.observe(top); }
+  if (shelfScroll) view.removeEventListener('scroll', shelfScroll); shelfScroll = () => requestAnimationFrame(fit); view.addEventListener('scroll', shelfScroll, { passive: true });
 }
 const rerender = () => renderLibrary();
 
@@ -61,8 +70,8 @@ async function renderMain(ctx) {
         allBooks.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'btn-select', 'aria-label': local.sel ? 'Done selecting' : 'Select books', onclick: toggleSelect }, local.sel ? 'Done' : 'Select') : null,
         h('button', { class: 'btn-icon', 'aria-label': 'Import books', title: 'Import books (EPUB, MOBI, AZW3, PDF)', onclick: pickFiles }, '＋'),
         h('button', { class: 'btn-icon', 'aria-label': 'Library menu', id: 'lib-menu', onclick: () => libMenu(ctx) }, '⋯'))),
-    h('div', { class: 'pad' }, search), banner,
-    h('div', { class: 'chips', role: 'tablist' }, chips.map((c) => h('button', { class: 'chip' + (chip === c.id ? ' on' : ''), role: 'tab', 'data-chip': c.id, onclick: () => { settings.set({ chip: c.id }); rerender(); } }, c.name,
+    h('div', { class: 'pad' }, search), banner, missingBanner(rerender),
+    h('div', { class: 'chips shelf-bar', id: 'shelf-bar', role: 'tablist' }, chips.map((c) => h('button', { class: 'chip' + (chip === c.id ? ' on' : ''), role: 'tab', 'data-chip': c.id, onclick: () => { settings.set({ chip: c.id }); rerender(); } }, c.name,
       c.borrowed ? h('small', null, ' ' + borrowedBooks.length) : c.id !== 'all' && !c.custom ? h('small', null, ' ' + books.filter((b) => b.status === c.id).length) : (c.custom ? h('small', null, ' ' + books.filter((b) => b.shelves?.includes(c.id)).length) : null))),
       h('button', { class: 'chip add', onclick: newShelf, 'aria-label': 'New shelf' }, '＋ Shelf')),
     h('div', { class: 'toolbar pad' },
@@ -365,6 +374,7 @@ function addBooksToSet(set, ctx) {
 function libMenu(ctx) {
   const sheetObj = actionSheet('Library', [
     { label: '🏛️  Public library (borrow with Libby)…', onClick: () => openPublicLibraryGuide(), primary: true, id: 'menu-public-library' },
+    { label: '📊  Reading stats…', id: 'menu-stats', onClick: () => import('./stats.js').then((m) => m.openStats()) },
     { label: 'Import EPUB / MOBI / AZW3 / PDF files (Files app)…', onClick: pickFiles },
     { label: '🎧  Audiobook ↔ ebook pairs…', id: 'menu-pairs', onClick: () => import('./findplace.js').then((m) => m.openPairs()) },
     { label: 'Import from Google Drive…', onClick: openDriveBrowser },
@@ -374,7 +384,7 @@ function libMenu(ctx) {
     ctx.books.length ? { label: '✨  Fix missing info…', id: 'menu-fix-missing', onClick: () => openFixMissing({ kind: 'book' }) } : null,
     { label: 'Where to get DRM-free books…', onClick: () => openDrmFreeHelp() },
     installMode() ? { label: (installMode() === 'ios' ? '📲  ' : '⬇️  ') + installLabel() + '…', onClick: startInstall, id: 'menu-install' } : null,
-    { label: 'Manage shelves…', onClick: () => manageShelves(ctx) },
+    { label: 'Manage shelves…', onClick: () => manageShelves(ctx), id: 'menu-shelves' },
     { label: 'Manage sets…', onClick: () => manageSets(ctx) },
     ctx.books.length ? { label: 'Select books…', id: 'menu-select', onClick: () => { local.sel = new Set(); rerender(); } } : null,
     ctx.books.length ? { label: 'Delete all books…', id: 'menu-delete-all', danger: true, onClick: () => deleteAllBooksFlow() } : null,
@@ -388,10 +398,15 @@ function groupSheet() {
 async function newShelf() { const n = await promptDlg('New shelf', '', 'e.g. Favorites'); if (n) { const s = await S.createShelf(n); settings.set({ chip: s.id }); rerender(); } }
 
 function manageShelves(ctx) {
-  sheet('Shelves', (close) => [h('div', { class: 'list' }, ctx.shelves.length ? ctx.shelves.map((s) => h('div', { class: 'list-item' }, h('span', { class: 'grow' }, s.name),
+  sheet('Shelves', (close) => { const list = h('div', { class: 'list', id: 'shelf-order' }); const paint = async () => { const shelves = await S.getShelves(); list.replaceChildren(...(shelves.length ? shelves.map((s, i) => h('div', { class: 'list-item shelf-row', dataset: { key: s.id, shelf: s.id } },
+    h('span', { class: 'drag-handle', 'aria-hidden': 'true', title: 'Drag to reorder' }, '⠿'), h('span', { class: 'grow' }, s.name),
+    h('button', { class: 'btn small', 'aria-label': 'Move ' + s.name + ' up', 'data-up': s.id, disabled: i === 0, onclick: async () => { await S.moveShelf(s.id, -1); paint(); rerender(); } }, '↑'),
+    h('button', { class: 'btn small', 'aria-label': 'Move ' + s.name + ' down', 'data-down': s.id, disabled: i === shelves.length - 1, onclick: async () => { await S.moveShelf(s.id, 1); paint(); rerender(); } }, '↓'),
     h('button', { class: 'btn small', onclick: async () => { const n = await promptDlg('Rename shelf', s.name); if (n) { await S.renameShelf(s.id, n); close(); rerender(); } } }, 'Rename'),
-    h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete shelf?', 'Books stay in your library.', 'Delete', true)) { await S.deleteShelf(s.id); if (settings.get('chip') === s.id) settings.set({ chip: 'all' }); close(); rerender(); } } }, 'Delete'))) : h('p', { class: 'muted' }, 'No custom shelves yet.')),
-    h('button', { class: 'btn primary block', onclick: async () => { close(); newShelf(); } }, 'New shelf')]);
+    h('button', { class: 'btn small danger', onclick: async () => { if (await confirmDlg('Delete shelf?', 'Books stay in your library.', 'Delete', true)) { await S.deleteShelf(s.id); if (settings.get('chip') === s.id) settings.set({ chip: 'all' }); close(); rerender(); } } }, 'Delete'))) : [h('p', { class: 'muted' }, 'No custom shelves yet.')])); };
+    paint(); enableDragSort(list, { itemSel: '.shelf-row', vertical: true, holdMs: 250, onDrop: async (keys) => { await S.setShelfOrder(keys); paint(); rerender(); } });
+    return [h('p', { class: 'muted small' }, 'Drag ⠿ or use ↑ ↓ to set the order of your shelves. The order syncs to your other devices.'), list,
+      h('button', { class: 'btn primary block', onclick: async () => { close(); newShelf(); } }, 'New shelf')]; });
 }
 function manageSets(ctx) {
   sheet('Sets (series)', (close) => [h('div', { class: 'list' }, ctx.sets.length ? sortedSets(ctx.sets, ctx.books).map((s) => h('div', { class: 'list-item' },
@@ -407,6 +422,9 @@ export function bookMenu(b, ctx) {
     { label: 'Edit details & set…', onClick: () => editBook(b, ctx) },
     { label: 'Change cover…', id: 'menu-change-cover', onClick: () => openCoverEditor('book', b.id, { onDone: rerender }) },
     { label: 'Move to shelf…', onClick: () => shelfSheet(b, ctx) },
+    { label: '📖  Glossary & saved words…', id: 'menu-glossary', onClick: () => import('./glossaryui.js').then((m) => m.openGlossary({ book: b })) },
+    { label: '📊  Reading stats…', id: 'menu-book-stats', onClick: () => import('./stats.js').then((m) => m.openBookStats(b)) },
+    { label: '🏛️  Find in Libby', id: 'menu-libby', onClick: () => openLibby([b.title, b.author].filter(Boolean).join(' ')) },
     b.format !== 'pdf' ? { label: '🎧  Find my place (audiobook)…', id: 'menu-findplace', onClick: () => import('./findplace.js').then((m) => m.openFindPlace({ bookId: b.id })) } : null,
     ...Loans.loanMenuItems('book', b, rerender),
     b.format !== 'pdf' && S.hasOverrides(b) ? { label: 'Reset this book’s reading settings', onClick: async () => { await S.resetOverrides(b.id); toast('Using global reading settings'); rerender(); } } : null,

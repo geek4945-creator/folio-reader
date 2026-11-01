@@ -27,6 +27,17 @@ async function handle(req, u, C, json, CORS) {
   }
   const media = /\/drive\/v3\/files\/(F\d+)\?alt=media/.exec(u);
   if (m === 'GET' && media) { const f = [...C.files.values()].find((x) => x.id === media[1]); if (injected()) return true; if (!f) { req.respond({ status: 404, headers: CORS, body: 'nf' }); return true; } C.calls.push('get ' + f.name); req.respond({ status: 200, headers: CORS, contentType: 'application/json', body: f.buf }); return true; }
+  if (u.includes('/upload/drive/v3/files') && (/uploadType=resumable/.test(u) || /\/files\/session\//.test(u))) {   // v0.5.20: resumable uploads (big library files)
+    C.sessions = C.sessions || new Map(); C.resumable = C.resumable || 0;
+    const sess = /\/files\/session\/(S\d+)/.exec(u);
+    if (sess && m === 'PUT') { const ss = C.sessions.get(sess[1]); if (!ss) return false; if (injected()) return true; const buf = C.lastBody || Buffer.from(req.postData() || '');
+      const name = ss.name || [...C.files.values()].find((x) => x.id === ss.id)?.name; const f = C.put(name, Buffer.from(buf.toString('latin1'), 'latin1')); C.writes++; C.resumable++; C.calls.push('resumable ' + f.name); json(meta(f)); return true; }
+    if (injected()) return true;
+    const body = JSON.parse((C.lastBody || Buffer.from(req.postData() || '{}')).toString('utf8') || '{}'); const id = /\/upload\/drive\/v3\/files\/(F\d+)/.exec(u);
+    if (m === 'POST' && /^cover-/.test(body.name || '')) return false;
+    const sid = 'S' + (C.sessions.size + 1); C.sessions.set(sid, id ? { id: id[1] } : { name: body.name });
+    req.respond({ status: 200, headers: { ...CORS, 'Access-Control-Expose-Headers': 'Location', Location: 'https://www.googleapis.com/upload/drive/v3/files/session/' + sid }, contentType: 'application/json', body: '' }); return true;
+  }
   if (u.includes('/upload/drive/v3/files')) {
     const buf = C.lastBody || Buffer.from(req.postData() || ''); const s = buf.toString('latin1'); if (m === 'POST' && s.includes('appDataFolder')) C.parents = true;
     if (m === 'POST') { const nm = /"name":"([^"]+)"/.exec(s); if (!nm || /^cover-/.test(nm[1])) return false; if (injected()) return true; const mark = 'Content-Type: application/json\r\n\r\n'; const rest = s.slice(s.lastIndexOf(mark) + mark.length); const f = C.put(nm[1], Buffer.from(rest.slice(0, rest.lastIndexOf('\r\n--')), 'latin1')); C.writes++; C.calls.push('post ' + f.name); json(meta(f)); return true; }

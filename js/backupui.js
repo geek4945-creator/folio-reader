@@ -36,7 +36,7 @@ export function backupSettingsSection(rerender) {
     if (!file) return; let P;
     try { P = await B.readBackup(file); } catch (e) { sheet('Can’t import this file', () => [h('p', { id: 'bk-error', class: 'muted' }, e.message || String(e))], { closeLabel: 'OK' }); return; }
     const m = P.summary; let mode = 'merge';
-    const rows = [['Books', m.books], ['…with files in the backup', m.files], ['Audiobooks', m.audiobooks], ['Shelves', m.shelves], ['Series sets', m.sets], ['Bookmarks', m.bookmarks], ['Audiobook ↔ ebook links', m.links], ['Glossary entries & saved words', m.glossary], ['Highlights & notes', m.highlights], ['Catalog sources', m.sources], ['Settings', m.settings]];
+    const rows = [['Books', m.books], ['…with files in the backup', m.files], ['Audiobooks', m.audiobooks], ['Shelves', m.shelves], ['Series sets', m.sets], ['Bookmarks', m.bookmarks], ['Audiobook ↔ ebook links', m.links], ['Glossary entries & saved words', m.glossary], ['Highlights & notes', m.highlights], ['Reading-stats days', m.statDays], ['Catalog sources', m.sources], ['Settings', m.settings]];
     const s = sheet('Import backup', (close) => [
       h('p', { class: 'muted small', id: 'bk-from' }, `Made by ${m.app} on ${when(m.createdAt)} · ${mb(P.size)}` + (m.fromOtherApp ? ' — from the other app; it can be imported here.' : '')),
       h('div', { class: 'list', id: 'bk-summary' }, rows.map(([k, v]) => h('div', { class: 'list-item' }, h('span', { class: 'grow' }, k), h('strong', null, String(v))))),
@@ -64,5 +64,5 @@ export function backupSettingsSection(rerender) {
     h('p', { class: 'muted small' }, 'One .zip with your settings, per-book text styles, reading positions, shelves, sets, custom order, metadata and covers, links, borrowed dates and catalog sources. Google sign-in tokens are never included. A backup from Folio Reader can be imported into Flimsy Read and the other way round.'),
     h('label', { class: 'row-ctl' }, h('span', null, 'Include book files'), h('input', { type: 'checkbox', id: 'bk-include', onchange: (e) => { include = e.target.checked; refreshEstimate(); } })), est,
     h('p', { class: 'muted small' }, 'Off by default: the backup stays small and books can be added again from their own files. Audiobook audio is never included (positions and links are).'),
-    h('div', { class: 'row-actions' }, h('button', { class: 'btn primary', id: 'bk-export', onclick: doExport }, 'Export backup'), h('button', { class: 'btn', id: 'bk-import', onclick: () => input.click() }, 'Import backup…')), input, undoRow);
+    h('div', { class: 'row-actions' }, h('button', { class: 'btn primary', id: 'bk-export', onclick: doExport }, 'Export backup'), h('button', { class: 'btn', id: 'bk-import', onclick: () => input.click() }, 'Import backup…'), h('button', { class: 'btn', id: 'kyb-import', onclick: () => import('./kybook.js').then((m) => m.openKyBookImport()) }, 'Import from KyBook 3…')), input, undoRow);
 }
