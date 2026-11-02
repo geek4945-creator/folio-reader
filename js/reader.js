@@ -23,7 +23,8 @@ const root = () => $('#reader');
 export async function openReader(id, opts = {}) {
   if (cur || pdfCurrent()) await closeReader();
   await beforeOpen('book', id);   // v0.5.5: pull the latest position from other devices ("Continue from <device>?") before anything reads it
-  const book = await S.getBook(id); const blob = await S.getFile(id);
+  const book = await S.getBook(id); let blob = await S.getFile(id);
+  if (book && !blob && book.sourceKey?.startsWith('gdrive:')) { toast('Downloading from Google Drive…'); try { blob = await S.fetchDriveFile(book); } catch (e) { toast('Couldn’t download this book from Drive: ' + (e.message || e), 5000); return; } }   // v0.5.22: book kept in Drive
   if (!book || !blob) { toast('Book file not found'); return; }
   if (book.format === 'pdf') return openPdf(book, blob, opts);
   const el = root(); el.hidden = false; document.body.classList.add('reading'); window.dispatchEvent(new Event('reader-opened'));

@@ -1,7 +1,7 @@
 // Google sign-in (Google Identity Services token flow) + Drive appDataFolder sync.
 // No backend: access tokens last ~1h; the app silently re-requests them (prompt:'' + login_hint) and remembers the profile.
 import { capOwnFuture, settings, SYNCED, syncedKeys, settingStamps, deviceOnlyGroups, NESTED } from './settings.js';
-import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS, trueNow } from './db.js';
+import { DB, structAtOf, posAtOf, posAtOfState, gAtOf, GROUPS, trueNow, isQuota, storageFull, FULL_MSG } from './db.js';
 import { UO_FIELDS, UO_GROUP, uoBeats, mergeUo, pushHist, sameV } from './bookinfo.js';
 import { deviceId, deviceName, devicePlatform } from './device.js';
 import { applyPosition, markSynced } from './positions.js';
@@ -913,7 +913,7 @@ async function doSync(quiet, only, force, resolve = null) {
     return res;
   } catch (e) {
     retryAfterError(e);
-    if (!quiet) throw e; return null;
+    if (!quiet && !isQuota(e)) throw e; return null;
   } finally { syncing = false; }
 }
 function finishOk(st, res, files, only) {
@@ -925,6 +925,7 @@ function finishOk(st, res, files, only) {
 /** Offline / rate-limited / server trouble: keep the changes (they are in the local database and the dirty flag), and try again later with backoff. */
 function retryAfterError(e) {
   if (status.state === 'needs-reauth') return;
+  if (isQuota(e)) { storageFull.on = true; setStatus('connected', FULL_MSG); return; }   // v0.5.22: never a raw "quota has been exceeded" error
   const offline = !navigator.onLine || e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || '');
   if (offline || isTransient(e)) {
     markDirty(); const wait = e.retryAfter ? Math.min(e.retryAfter * 1000, 600000) : Math.min(600000, 15000 * 2 ** retryN); retryN++;

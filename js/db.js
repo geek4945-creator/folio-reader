@@ -88,6 +88,10 @@ async function store(name, mode = 'readonly') {
   return db.transaction(name, mode).objectStore(name);
 }
 
+export const isQuota = (e) => !!e && (e.name === 'QuotaExceededError' || e.code === 22 || /quota/i.test(e.message || ''));
+/** v0.5.22: set once a write hit the storage quota this session (books then stay "in Drive" and download when opened). */
+export const storageFull = { on: false };
+export const FULL_MSG = 'Phone storage for Folio is full; books will download when you open them.';
 export const uid = () =>
   (self.crypto && crypto.randomUUID) ? crypto.randomUUID()
     : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -101,7 +105,13 @@ export const DB = {
     if (val && '_auto' in val) delete val._auto;
     if (val && TRACKED.has(s)) { if (val._noTouch) delete val._noTouch; else val.updatedAt = trueNow(); }
     else if (val && val._noTouch) delete val._noTouch;
-    return wrap((await store(s, 'readwrite')).put(val));
+    try { return await wrap((await store(s, 'readwrite')).put(val)); }
+    catch (e) {
+      if (!isQuota(e)) throw e; storageFull.on = true;
+      // v0.5.22: storage full: a book's info/progress/edits must still save. Drop only the cover image (it re-downloads later).
+      if (val && (s === 'books' || s === 'audiobooks') && val.coverBlob) { const v2 = { ...val, coverBlob: null, coverMissing: true }; await wrap((await store(s, 'readwrite')).put(v2)); return val.id; }
+      throw Object.assign(e, { quota: true });
+    }
   },
   async del(s, key) { return wrap((await store(s, 'readwrite')).delete(key)); },
   async byIndex(s, index, key) { return wrap((await store(s)).index(index).getAll(key)); },

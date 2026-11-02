@@ -78,6 +78,10 @@ export async function runBatch(kind, files, { group = true, signal = { cancelled
   try {
     for (const it of items) {
       if (signal.cancelled) { res.cancelled = true; break; }
+      if (kind === 'book' && (await import('./db.js')).storageFull.on) {   // v0.5.22: storage full: stop downloading; the rest join the library as "in Drive" (download when opened)
+        for (const f of it) { try { await S.addDriveStub(f); res.imported.push(f); markImported([f.id]); } catch { res.skipped.push({ f, why: 'already in your library' }); } }
+        res.done += it.length; res.storageFull = true; continue;
+      }
       onProgress({ done: res.done, total: res.total, name: it.length > 1 ? `${it.length} files from one folder` : it[0].name });
       try { if (it.length > 1) await importGroupOf(it); else await importOne(kind, it[0]); res.imported.push(...it); markImported(it.map((f) => f.id)); }
       catch (e) {

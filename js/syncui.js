@@ -6,6 +6,8 @@ import { SETTING_GROUPS, deviceOnlyGroups, setDeviceOnlyGroups } from './setting
 import { deviceName, setDeviceName, guessDeviceName } from './device.js';
 import { askAlways, setAskAlways, conflictCount, ago } from './positions.js';
 import { missingBooks, openMissing, maybeShowConflict } from './syncfetch.js';
+import { storageFull, FULL_MSG } from './db.js';
+import { freeUpSpace } from './store.js';
 
 let refreshed = false, optionsOpen = false;   // the panel redraws on every sync status change: remember whether it was open
 const WHAT = { positions: 'positions', library: 'library', settings: 'settings' };
@@ -13,10 +15,10 @@ export function statusLine(st) {
   switch (st.state) {
     case 'syncing': return 'Syncing…';
     case 'offline': return st.message;
-    case 'error': return 'Sync error: ' + st.message;
+    case 'error': return /quota/i.test(st.message || '') ? FULL_MSG : 'Sync error: ' + st.message;
     case 'needs-reauth': return st.message;
     case 'conflict': return st.message;
-    case 'connected': return st.lastSync ? 'Last synced ' + new Date(st.lastSync).toLocaleString() + (G.isDirty() ? ' · changes waiting to upload' : '') : 'Connected';
+    case 'connected': return st.lastSync ? 'Last synced ' + new Date(st.lastSync).toLocaleString() + (G.isDirty() ? ' · changes waiting to upload' : '') + (storageFull.on ? ' · ' + FULL_MSG : '') : (storageFull.on ? FULL_MSG : 'Connected');
     default: return '';
   }
 }
@@ -41,6 +43,10 @@ export function syncDetails(redraw) {
   box.append(...[
     h('p', { class: 'small', id: 'sync-counts' }, counts ? `This device: ${counts.local} book${counts.local === 1 ? '' : 's'} · Synced library: ${counts.cloud}` + (miss.count ? ` · ${miss.count} not on this device` : '') : 'Book counts appear after the first sync.'),
     coverLine(),
+    h('div', { class: 'row-actions wrap' }, h('button', { class: 'btn small', id: 'sync-free-space', onclick: async () => {
+      if (!(await confirmDlg('Free up space?', 'Removes the downloaded files of Google Drive books you haven’t opened in 30 days. Their info, progress and covers stay; each one downloads again when you open it.', 'Free up space'))) return;
+      const cr = (await import('./reader.js')).currentReader(); const r = await freeUpSpace(cr?.book?.id || cr?.bookId || cr?.id); toast(r.n ? `Freed ${Math.round(r.bytes / 1048576)} MB (${r.n} book${r.n === 1 ? '' : 's'} now in Drive)` : 'Nothing to free: no Drive books unopened for 30 days'); redraw();
+    } }, 'Free up space')),
     miss.count ? h('div', { class: 'row-actions wrap' }, h('button', { class: 'btn small', id: 'sync-get-missing', onclick: () => openMissing(redraw) }, `Get ${miss.count} missing book${miss.count === 1 ? '' : 's'}`)) : null,
     G.pendingConflict() ? h('div', { class: 'plib-warn', id: 'sync-conflict-pending' }, 'Sync is paused: this device and another one disagree about many things. ', h('button', { class: 'btn small primary', id: 'sync-conflict-open', onclick: () => maybeShowConflict(true) }, 'Choose')) : null,
     pref ? h('p', { class: 'muted small', id: 'sync-conflict-pref' }, `Big disagreements between devices: always “${PREF[pref] || pref}”. `, h('button', { class: 'btn-text', id: 'sync-conflict-ask', onclick: () => { G.setConflictPref(''); toast('Folio will ask next time'); redraw(); } }, 'Ask again')) : null,

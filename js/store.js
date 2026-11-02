@@ -1,5 +1,5 @@
 // Library data layer: books, sets (series), shelves, manual orders, per-book style overrides.
-import { DB, uid, GROUPS } from './db.js';
+import { DB, uid, GROUPS, isQuota, storageFull } from './db.js';
 import { forceUo } from './bookinfo.js';
 import { parseEpub, shrinkCover } from './epubmeta.js';
 import { settings, clampPt, clearSort } from './settings.js';
@@ -60,7 +60,9 @@ export async function addBookFromBuffer(buffer, hints = {}) {
   const dec = applyPending(book); book.posAt ??= 0;
   if (series && !dec.series) book.setId = (await ensureSet(series, true)).id;
   if (dec.series && book.setId && !(await DB.get('sets', book.setId))) { book.setId = null; book.seriesIndex = null; }   // a fresh import has no position of its own (never outranks another device's)
-  await DB.put('files', { id: book.id, blob: new Blob([buffer], { type: pdfMeta ? 'application/pdf' : 'application/epub+zip' }) });
+  if (hints.noFile || storageFull.on && hints.sourceKey?.startsWith('gdrive:')) book.inDrive = true;
+  else try { await DB.put('files', { id: book.id, blob: new Blob([buffer], { type: pdfMeta ? 'application/pdf' : 'application/epub+zip' }) }); }
+  catch (e) { if (!isQuota(e) || !hints.sourceKey?.startsWith('gdrive:')) throw e; book.inDrive = true; }   // v0.5.22: storage full: keep the book (info, edits, progress), file stays in Drive
   // A fresh import is not a user edit (keeps cross-device merge fair), unless the book was deleted before: then it must outrank the deletion tombstone.
   const tombed = getTombs().some((t) => t.t === 'book' && t.id === book.syncKey);
   if (tombed) { localStorage.setItem('folio.tombs', JSON.stringify(getTombs().filter((t) => !(t.t === 'book' && t.id === book.syncKey)))); book.updatedAt = Date.now(); book._noTouch = true; }
@@ -140,6 +142,31 @@ export async function getPageCache(key) { return (await DB.get('pagecache', key)
 export async function putPageCache(bookId, key, v) { await DB.put('pagecache', { key, bookId, v }); }
 
 export async function getFile(id) { return (await DB.get('files', id))?.blob; }
+/** v0.5.22: a Drive book whose file isn't stored on this device (storage was full / freed): metadata-only record from the synced info. */
+export async function addDriveStub(f) {
+  const books = await getBooks(); if (books.some((b) => b.sourceKey === 'gdrive:' + f.id)) throw new Error('Already in your library');
+  const book = { id: uid(), title: f.title || String(f.name || 'Untitled').replace(/\.[a-z0-9]+$/i, ''), author: '', description: '', addedAt: Date.now(), lastOpened: 0, progress: 0, cfi: null, status: 'want', shelves: [],
+    setId: null, seriesIndex: null, coverBlob: null, size: f.size || 0, format: /\.pdf$/i.test(f.name || '') ? 'pdf' : 'epub', syncKey: f.syncKey || ('gdrive:' + f.id), filename: f.name || null,
+    sourceKey: 'gdrive:' + f.id, source: 'Google Drive', overrides: null, locations: null, inDrive: true, stub: true };
+  applyPending(book); book.posAt ??= 0; if (book.setId && !(await DB.get('sets', book.setId))) { book.setId = null; book.seriesIndex = null; }
+  book._noTouch = true; book.updatedAt = 0; await DB.put('books', book); emitChange(); return book;
+}
+/** v0.5.22: the file for a book that lives in Drive: downloaded when opened, stored if there is room. */
+export async function fetchDriveFile(book) {
+  const G = await import('./google.js'); const blob = await G.downloadDriveFile(book.sourceKey.slice(7), { retries: 2 });
+  try { await DB.put('files', { id: book.id, blob }); const b = await getBook(book.id); if (b) { delete b.inDrive; b._noTouch = true; await DB.put('books', b); } } catch { /* still full: read from memory this time */ }
+  return blob;
+}
+/** v0.5.22 Settings → Sync → Free up space: drop downloaded files of Drive books not opened in 30 days (never the open one). Info, progress, covers stay. */
+export async function freeUpSpace(keepId) {
+  const cut = Date.now() - 30 * 86400e3; let n = 0, bytes = 0;
+  for (const b of await getBooks()) {
+    if (b.id === keepId || b.inDrive || !b.sourceKey?.startsWith('gdrive:') || (b.lastOpened || 0) > cut) continue;
+    const f = await DB.get('files', b.id); if (!f) continue; bytes += f.blob?.size || 0;
+    await DB.del('files', b.id); b.inDrive = true; b._noTouch = true; await DB.put('books', b); n++;
+  }
+  storageFull.on = false; emitChange(); return { n, bytes };
+}
 
 /* ---------- sets (series) ---------- */
 export const getSets = () => DB.all('sets');
