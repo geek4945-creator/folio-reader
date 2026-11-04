@@ -588,7 +588,7 @@ export const COVER_GC_AGE = 7 * 864e5;   // v0.5.21: an unreferenced cover stays
 
 /* v0.5.21: covers waiting to go up (this device has the image, Drive doesn't yet) or come down (the synced info names a cover this device couldn't fetch yet).
    Both are retried on every sync — even when nothing else changed — and shown in Settings → Sync. */
-const COVERQ = 'folio.coverQ', COVERSESS = 'folio.coverSess';
+const COVERQ = 'folio.coverQ', COVERSESS = 'folio.coverSess'; export const COVER_PASS_MAX = 25;
 export const coverQueue = {
   get: () => { const q = lsj(COVERQ, {}); q.up = Array.isArray(q.up) ? q.up : []; q.down = q.down || {}; return q; },
   save(q) { localStorage.setItem(COVERQ, JSON.stringify(q)); try { window.dispatchEvent(new Event('folio-covers')); } catch { /* not in a window */ } },
@@ -625,22 +625,30 @@ async function uploadCoverResumable(cid, blob) {
 }
 /** Upload what Drive lacks and fetch what this device lacks. covers = Map(name → file) from listCoverFiles. */
 async function coverPass(covers, refIds, res) {
+  if (window.FOLIO_SAFE) return { up: 0, fetched: 0, failedUp: [] };   // v0.5.23 safe mode: no cover work
   const blobs = await localCoverBlobs(); const failedUp = []; let up = 0, fetched = 0;
   for (const cid of refIds) { const name = `cover-${cid}.jpg`; if (covers.has(name) || !blobs.has(cid)) continue; try { covers.set(name, await uploadCoverResumable(cid, blobs.get(cid))); up++; } catch { failedUp.push(cid); } }
   coverQueue.setUp(failedUp);
-  const q = coverQueue.get();
+  blobs.clear();
+  // v0.5.23: the library is read ONCE (it used to be re-read, with every cover image, for each queued cover: 400 covers x 400 books crashed iPhone Safari),
+  // and at most COVER_PASS_MAX covers come down per sync, so memory stays small; the rest follow on the next syncs.
+  const q = coverQueue.get(); const keyOf = { book: (x) => S.bookSyncKey(x), audio: (x) => x.syncKey || x.id }; const idx = {}; let tried = 0;
+  const findIt = async (kind) => { if (!idx[kind]) { idx[kind] = new Map(); for (const x of (kind === 'book' ? await S.getBooks() : await A.getAudiobooks())) idx[kind].set((keyOf[kind] || keyOf.audio)(x), x.id); } return idx[kind]; };
+  const gone = [];
   for (const [qk, c] of Object.entries(q.down)) {
     const i = qk.indexOf(':'), kind = qk.slice(0, i), key = qk.slice(i + 1);
-    const items = kind === 'book' ? await S.getBooks() : await A.getAudiobooks(); const it = items.find((x) => (kind === 'book' ? S.bookSyncKey(x) : (x.syncKey || x.id)) === key);
-    if (!it || !remoteCoverWins(it, c)) { coverQueue.got(kind, key); continue; }
+    const iid = (await findIt(kind)).get(key); const it = iid ? await DB.get(kind === 'book' ? 'books' : 'audiobooks', iid) : null;
+    if (!it || !remoteCoverWins(it, c)) { gone.push(qk); continue; }
     const f = covers.get(`cover-${c.id}.jpg`); if (!f) continue;
+    if (++tried > COVER_PASS_MAX) { res.coverRetry = true; break; }
     try {
       const blob = await (await drive(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, { retries: 2 })).blob();
       const cur = (await DB.get(kind === 'book' ? 'books' : 'audiobooks', it.id)) || it; cur.metaAt = cur.metaAt || {}; cur.userSet = cur.userSet || {};
       Object.assign(cur, { coverBlob: blob, coverId: c.id, coverSource: c.u ? 'user' : 'enrich' }); cur.metaAt.cover = c.at; if (c.u) cur.userSet.cover = true; else delete cur.userSet.cover; cur.revertedAt = Math.max(cur.revertedAt || 0, c.rv || 0);
-      await DB.put(kind === 'book' ? 'books' : 'audiobooks', { ...cur, _noTouch: true }); coverQueue.got(kind, key); fetched++;
+      await DB.put(kind === 'book' ? 'books' : 'audiobooks', { ...cur, _noTouch: true }); gone.push(qk); fetched++;
     } catch { /* next sync */ }
   }
+  if (gone.length) { const q2 = coverQueue.get(); for (const k of gone) delete q2.down[k]; coverQueue.save(q2); }   // one write, not one per cover
   res.coversUploaded = (res.coversUploaded || 0) + up; res.coversFetched = (res.coversFetched || 0) + fetched; if (failedUp.length) res.coverRetry = true;
   return { up, fetched, failedUp };
 }
@@ -686,6 +694,7 @@ export const isDirty = () => localStorage.getItem('folio.sync.dirty') === '1';
  *  opts.only limits it to some domains (e.g. ['positions'] when a book is opened). */
 export async function syncNow({ quiet = false, only = null, force = false, resolve = null, remember = false } = {}) {
   if (!isSignedIn()) return null;
+  if (window.FOLIO_SAFE && quiet) { markDirty(); return null; }   // v0.5.23 safe mode: only a tap on Sync now syncs
   while (inflight) { try { await inflight; } catch { /* previous failure is reported by its own caller */ } }
   if (resolve) { if (remember) localStorage.setItem(CONFLICT_PREF, resolve); force = true; }
   inflight = doSync(quiet, only, force, resolve);
@@ -935,7 +944,7 @@ function retryAfterError(e) {
 }
 /** Debounced + throttled: a burst of changes becomes one sync; continuous reading syncs at most every syncTuning.minGap. */
 export function scheduleSync(ms = 5000) {
-  if (!isSignedIn()) return; markDirty();
+  if (!isSignedIn()) return; markDirty(); if (window.FOLIO_SAFE) return;   // v0.5.23 safe mode: changes wait (saved here) for a tap on Sync now / the next normal launch
   const at = Date.now() + Math.max(ms, lastStart + syncTuning.minGap - Date.now());
   if (dirtyTimer && dueAt <= at) return;   // already waiting for an earlier slot: don't push it back (that would starve a long reading session)
   clearTimeout(dirtyTimer); dueAt = at; dirtyTimer = setTimeout(() => { dirtyTimer = null; dueAt = 0; syncNow({ quiet: true }); }, at - Date.now());
@@ -953,6 +962,7 @@ export function initSync() {
   });
   window.addEventListener('online', () => { if (isSignedIn()) { retryN = 0; syncNow({ quiet: true }); } });
   window.addEventListener('offline', () => { if (isSignedIn() && isDirty()) setStatus('offline', 'Offline — your changes are saved here and will sync when you’re back online'); });
+  if (window.FOLIO_SAFE) { setStatus('connected', 'Safe mode: automatic sync is paused. Tap Sync now when you’re ready.'); return; }   // v0.5.23: after a crash, nothing heavy runs by itself
   if (isSignedIn() && navigator.onLine) setTimeout(() => syncNow({ quiet: true }), 1500);
 }
 

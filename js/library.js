@@ -280,7 +280,7 @@ function coverEl(b, extra) {
   const u = coverUrl(b); const hue = hashHue(b.title);
   return h('div', { class: 'cover' },
     h('div', { class: 'cover-ph', style: { background: `linear-gradient(135deg,hsl(${hue} 45% 38%),hsl(${(hue + 40) % 360} 45% 28%))` } }, h('span', null, b.title), h('small', null, b.author)),
-    u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false' }) : null, extra);
+    u ? h('img', { class: 'cover-img', src: u, alt: '', draggable: 'false', loading: 'lazy', decoding: 'async' }) : null, extra);
 }
 function tileEl(t, ctx, mode) {
   if (t.type === 'set') return setTile(t, ctx, mode);

@@ -38,7 +38,7 @@ function found(w) { waiting = w; showBanner(); }
 export function initUpdates(h2) {
   hooks = { ...hooks, ...h2 };
   // a book that was open when the page was refreshed for an update comes back at its saved position
-  const pend = ss.get(REOPEN); if (pend) { ss.del(REOPEN); try { const o = JSON.parse(pend); if (o && o.id && Date.now() - o.at < 60000) setTimeout(() => hooks.reopen(o.id), 300); } catch { /* ignore */ } }
+  const pend = ss.get(REOPEN); if (pend && window.FOLIO_SAFE) ss.del(REOPEN); else if (pend) { ss.del(REOPEN); try { const o = JSON.parse(pend); if (o && o.id && Date.now() - o.at < 60000) setTimeout(() => hooks.reopen(o.id), 300); } catch { /* ignore */ } }
   window.addEventListener('reader-closed', () => { if (waiting && !audioBusy()) setTimeout(() => { if (waiting && !hooks.readerOpen() && !audioBusy()) applyUpdate('closed'); }, 500); else showBanner(); });
   window.addEventListener('reader-opened', hideBanner);
   // lazy modules that fail to load (half-published deploy / flaky network): say so, never reload by ourselves
@@ -55,6 +55,7 @@ export function initUpdates(h2) {
     const watch = (w) => { if (!w) return; w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) found(w); }); };
     if (reg.waiting && navigator.serviceWorker.controller) {
       found(reg.waiting);
+      if (window.FOLIO_SAFE && !hooks.readerOpen() && Date.now() - (+ss.get(TRIED) || 0) > 60000) { applyUpdate('safe'); return; }   // v0.5.23: the last launch crashed: take the fix now
       // launched with an update already downloaded (and nothing started yet): take it now, once, instead of waiting for the next session
       const last = +ss.get(TRIED) || 0;
       if (!hooks.readerOpen() && Date.now() - last > 60000) setTimeout(() => { if (waiting && !hooks.readerOpen() && !audioBusy()) applyUpdate('launch'); }, 1200);
