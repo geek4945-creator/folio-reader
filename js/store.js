@@ -34,7 +34,8 @@ export async function addBookFromBuffer(buffer, hints = {}) {
   try { meta = pdfMeta || await parseEpub(buffer); }
   catch (e) { if (/container\.xml/.test(e.message) && await looksLikeKfxZip(buffer)) throw kfxError(); throw e; }
   const books = await getBooks();
-  if (hints.sourceKey && books.some((b) => b.sourceKey === hints.sourceKey)) throw new Error('Already in your library');
+  if (hints.sourceKey && claimsSource(books, hints.sourceKey)) throw new Error('Already in your library');
+  if (hints.syncKey && claimsSyncKey(books, hints.syncKey)) throw new Error('Already in your library');
   const dupe = books.find((b) => meta.identifier && b.identifier === meta.identifier && b.title === meta.title);
   if (dupe) throw new Error('"' + meta.title + '" is already in your library');
 
@@ -144,7 +145,7 @@ export async function putPageCache(bookId, key, v) { await DB.put('pagecache', {
 export async function getFile(id) { return (await DB.get('files', id))?.blob; }
 /** v0.5.22: a Drive book whose file isn't stored on this device (storage was full / freed): metadata-only record from the synced info. */
 export async function addDriveStub(f) {
-  const books = await getBooks(); if (books.some((b) => b.sourceKey === 'gdrive:' + f.id)) throw new Error('Already in your library');
+  const books = await getBooks(); if (claimsSource(books, 'gdrive:' + f.id) || (f.syncKey && claimsSyncKey(books, f.syncKey))) throw new Error('Already in your library');
   const book = { id: uid(), title: f.title || String(f.name || 'Untitled').replace(/\.[a-z0-9]+$/i, ''), author: '', description: '', addedAt: Date.now(), lastOpened: 0, progress: 0, cfi: null, status: 'want', shelves: [],
     setId: null, seriesIndex: null, coverBlob: null, size: f.size || 0, format: /\.pdf$/i.test(f.name || '') ? 'pdf' : 'epub', syncKey: f.syncKey || ('gdrive:' + f.id), filename: f.name || null,
     sourceKey: 'gdrive:' + f.id, source: 'Google Drive', overrides: null, locations: null, inDrive: true, stub: true };
@@ -330,6 +331,11 @@ export async function fixKeyCollisions(books) {
   }
 }
 export const bookSyncKey = (b) => b.syncKey || (b.identifier ? 'id:' + b.identifier : 'ti:' + (b.title + '|' + b.author).toLowerCase());
+/** v0.5.24: a book that absorbed a removed duplicate also "owns" that copy's Drive file / sync key, so it is not re-imported. */
+export const sourceKeysOf = (b) => [b.sourceKey, ...(b.mergedSources || [])].filter(Boolean);
+export const syncKeysOf = (b) => [bookSyncKey(b), ...(b.mergedSyncKeys || [])].filter(Boolean);
+export const claimsSource = (books, key) => !!key && books.some((b) => sourceKeysOf(b).includes(key));
+export const claimsSyncKey = (books, key) => !!key && books.some((b) => syncKeysOf(b).includes(key));
 export const getPending = () => { try { return JSON.parse(localStorage.getItem('folio.pending') || '{}'); } catch { return {}; } };
 export const setPending = (p) => localStorage.setItem('folio.pending', JSON.stringify(p));
 /** Apply the state another device synced for a book that wasn't here yet. Returns {series: true} when that state decided the book's set (so the file's series is not used).

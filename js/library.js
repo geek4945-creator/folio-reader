@@ -12,6 +12,7 @@ import { openCoverEditor, hasCustomCover } from './covers.js';
 import { openFixMissing } from './enrich.js';
 import * as Loans from './loans.js';
 import { missingBanner } from './syncfetch.js';
+import { dupeBanner, openDupeReview } from './dupes.js';
 import { installMode, installLabel, startInstall } from './install.js';
 
 let view; const covers = new Map();
@@ -70,7 +71,7 @@ async function renderMain(ctx) {
         allBooks.length ? h('button', { class: 'btn-text' + (local.sel ? ' on' : ''), id: 'btn-select', 'aria-label': local.sel ? 'Done selecting' : 'Select books', onclick: toggleSelect }, local.sel ? 'Done' : 'Select') : null,
         h('button', { class: 'btn-icon', 'aria-label': 'Import books', title: 'Import books (EPUB, MOBI, AZW3, PDF)', onclick: pickFiles }, '＋'),
         h('button', { class: 'btn-icon', 'aria-label': 'Library menu', id: 'lib-menu', onclick: () => libMenu(ctx) }, '⋯'))),
-    h('div', { class: 'pad' }, search), banner, missingBanner(rerender),
+    h('div', { class: 'pad' }, search), banner, missingBanner(rerender), dupeBanner(allBooks, () => openDupeReview()),
     h('div', { class: 'chips shelf-bar', id: 'shelf-bar', role: 'tablist' }, chips.map((c) => h('button', { class: 'chip' + (chip === c.id ? ' on' : ''), role: 'tab', 'data-chip': c.id, onclick: () => { settings.set({ chip: c.id }); rerender(); } }, c.name,
       c.borrowed ? h('small', null, ' ' + borrowedBooks.length) : c.id !== 'all' && !c.custom ? h('small', null, ' ' + books.filter((b) => b.status === c.id).length) : (c.custom ? h('small', null, ' ' + books.filter((b) => b.shelves?.includes(c.id)).length) : null))),
       h('button', { class: 'chip add', onclick: newShelf, 'aria-label': 'New shelf' }, '＋ Shelf')),

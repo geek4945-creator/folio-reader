@@ -271,7 +271,7 @@ export async function buildSnapshot() {
   await S.fixKeyCollisions(books);   // v0.5.20: two different books must never share one sync entry (that silently merged them and lowered counts)
   const keyOf = new Map(books.map((b) => [b.id, S.bookSyncKey(b)]));
   const bookState = {};
-  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}), ...(srcOf(b) ? { src: srcOf(b) } : {}), ...(b.uo ? { uo: b.uo } : {}) };   // untouched imports are 0 so another device's edits win
+  for (const b of books) bookState[keyOf.get(b.id)] = { title: b.title, addedAt: b.addedAt || 0, author: b.author, status: b.status, shelves: b.shelves || [], setId: b.setId || null, seriesIndex: b.seriesIndex ?? null, overrides: b.overrides || null, ...(b.ovAt ? { ovAt: b.ovAt } : {}), progress: b.progress || 0, cfi: b.cfi || null, lastOpened: b.lastOpened || 0, updatedAt: structAtOf(b), gAt: gAtsOf(b), posAt: posAtOf(b), dev: b.posDev || '', devName: b.posDevName || '', ...(b.pdfPage ? { pdfPage: b.pdfPage, pdfZoom: b.pdfZoom || 1, pdfText: !!b.pdfText } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}), ...(b.nowHiddenAt ? { nowHiddenAt: b.nowHiddenAt } : {}), ...(b.loanAt ? { loan: { b: b.borrowed ? 1 : 0, due: b.dueAt || null, src: b.loanSource || '', at: b.loanAt } } : {}), ...(srcOf(b) ? { src: srcOf(b) } : {}), ...(b.uo ? { uo: b.uo } : {}), ...(b.mergedSources?.length ? { mergedSources: b.mergedSources } : {}), ...(b.mergedSyncKeys?.length ? { mergedSyncKeys: b.mergedSyncKeys } : {}), ...(b.notDupeOf?.length ? { notDupeOf: b.notDupeOf } : {}) };   // untouched imports are 0 so another device's edits win
   for (const [k, st] of Object.entries(S.getPending())) if (st && !bookState[k]) bookState[k] = st;   // v0.5.21: books not downloaded here yet keep their synced state (a push must never drop them from the cloud)
   const bookmarks = {};
   for (const bm of bms) { const k = keyOf.get(bm.bookId); if (k) (bookmarks[k] ||= []).push({ id: bm.id, cfi: bm.cfi, label: bm.label, progress: bm.progress, createdAt: bm.createdAt, updatedAt: bm.updatedAt || bm.createdAt }); }
@@ -330,6 +330,10 @@ function mergeState(a, b, posFields) {
   }
   st.updatedAt = Math.max(a.updatedAt || 0, b.updatedAt || 0, ...Object.values(st.gAt || {}));
   if (a.src || b.src) { const pickSrc = (x) => (x && x.src && x.src.id ? 2 : x && x.src ? 1 : 0); st.src = structuredClone(pickSrc(b) > pickSrc(a) ? b.src : a.src || b.src); }   // a Drive file id beats "imported from a file"
+  const uni = (k) => [...new Set([...(a[k] || []), ...(b[k] || [])])];   // v0.5.24: absorbed duplicate keys and "not duplicates" marks are a union (nothing is dropped in a merge)
+  if (a.mergedSources || b.mergedSources) st.mergedSources = uni('mergedSources');
+  if (a.mergedSyncKeys || b.mergedSyncKeys) st.mergedSyncKeys = uni('mergedSyncKeys');
+  if (a.notDupeOf || b.notDupeOf) st.notDupeOf = uni('notDupeOf');
   if (a.addedAt || b.addedAt) st.addedAt = Math.min(...[a.addedAt, b.addedAt].filter(Boolean));   // the same book imported on two devices: one agreed date, so neither device keeps rewriting the file
   const posA = posAtOfState(a), posB = posAtOfState(b);
   const pw = posB > posA ? b : a; if (pw !== ((b.updatedAt || 0) > (a.updatedAt || 0) ? b : a)) for (const f of posFields) { if (pw[f] === undefined) delete st[f]; else st[f] = structuredClone(pw[f]); }
@@ -449,10 +453,21 @@ export async function applySnapshot(m, ctx = {}) {
       }
     }
     if (doms.positions && (st.posAt !== undefined || st.progress !== undefined)) { const r = applyPosition('book', b, st, ctx); if (r === 'applied' || r === 'same') { dirty = true; posApplied++; } else if (r === 'conflict') posConflicts++; }
+    if (doms.library) {   // v0.5.24: absorbed Drive files / sync keys and "not duplicates" marks come in as a union
+      const uni = (k) => { const n = [...new Set([...(b[k] || []), ...(st[k] || [])])]; if (n.length !== (b[k] || []).length) { b[k] = n; dirty = true; } };
+      if (st.mergedSources) uni('mergedSources'); if (st.mergedSyncKeys) uni('mergedSyncKeys'); if (st.notDupeOf) uni('notDupeOf');
+    }
     if (dirty) await DB.put('books', { ...b, _noTouch: true });
   }
   const audioRes = await applyAudioState(m, doms, ctx);
-  for (const [k, st] of Object.entries(m.books)) if (!keyToId.has(k)) pending[k] = st;
+  const liveBooks = []; for (const id of keyToId.values()) { const b = await DB.get('books', id); if (b) liveBooks.push(b); }
+  const absorbed = new Set(); for (const b of liveBooks) for (const k of S.syncKeysOf(b)) absorbed.add(k);
+  const absorbedSrc = new Set(); for (const b of liveBooks) for (const k of S.sourceKeysOf(b)) if (k.startsWith('gdrive:')) absorbedSrc.add(k.slice(7));
+  for (const [k, st] of Object.entries(m.books)) {
+    if (keyToId.has(k) || absorbed.has(k)) continue;
+    if (st.src && st.src.kind === 'gdrive' && st.src.id && absorbedSrc.has(st.src.id)) continue;
+    pending[k] = st;
+  }
   S.setPending(pending);
   const metaRes = await applyMeta(m, keyToId, ctx);
   for (const x of m.links || []) { const cur = await DB.get('links', x.id); if (!cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) await DB.put('links', { ...x, _noTouch: true }); }

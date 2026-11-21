@@ -7,6 +7,7 @@ import { h, $, $$, toast, sheet, confirmDlg, initClearButtons } from './util.js'
 import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
 import { KINDLE_TYPE_RE } from './kindle.js';
 import { renderLibrary, importFiles, deleteAllBooksFlow } from './library.js';
+import { openDupeReview } from './dupes.js';
 import { renderCatalogs, resetCatalogs } from './catalogs.js';
 import { renderAudiobooks, handleAudioFiles, collectDropped, dropLooksAudio } from './audiobooks.js';
 import { onAudioChange } from './audiostore.js';
@@ -122,6 +123,8 @@ function renderSettings() {
     pairSettingsSection(),
     backupSettingsSection(() => renderSettings()),
     h('section', { class: 'pad card-sec', id: 'sec-library' }, h('h3', null, 'Library'),
+      h('p', { class: 'muted small' }, 'Find books that look like the same file or the same title, review them, and remove the extras from Folio. Files in Google Drive are never deleted. Your edits, highlights and progress stay on the copy you keep.'),
+      h('button', { class: 'btn', id: 'settings-find-dupes', onclick: () => openDupeReview() }, 'Find duplicate books'),
       h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
       h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Network (CORS proxy)'),
@@ -200,4 +203,4 @@ navigator.storage?.persist?.();
 initUpdates({ readerOpen: () => { const r = currentReader(); return r && r.book ? r.book.id : null; }, flush: flushPosition, reopen: (id) => openReader(id) });   // v0.5.16: non-disruptive updates (update.js)
 // Test hook
 initClearButtons();
-window.__folio = { show, settings, G };
+window.__folio = { show, settings, G, openDupeReview };

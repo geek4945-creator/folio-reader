@@ -15,7 +15,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Files already imported from Drive (by Drive id, or an existing book with this source key). */
 export async function knownIds(kind) {
-  const ids = imported(); if (kind !== 'audio') for (const b of await S.getBooks()) if (b.sourceKey?.startsWith('gdrive:')) ids.add(b.sourceKey.slice(7));
+  const ids = imported(); if (kind !== 'audio') for (const b of await S.getBooks()) for (const k of S.sourceKeysOf(b)) if (k.startsWith('gdrive:')) ids.add(k.slice(7));
   return ids;
 }
 

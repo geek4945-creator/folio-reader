@@ -428,3 +428,15 @@ body.reading #update-banner { display:none; }
 .kyb-row{display:flex;flex-direction:column;padding:.45em .7em;border-bottom:1px solid var(--line,#eee)}
 .kyb-row.miss{opacity:.55}
 .kyb-report{white-space:pre-wrap;font-size:.8em;max-height:30vh;overflow:auto;background:var(--card,#f4f4f4);padding:.6em;border-radius:8px}
+
+/* v0.5.24 duplicate review */
+.dupe-group { border:1px solid var(--border); border-radius:.8rem; padding:.6rem .7rem; margin:.7rem 0; background:var(--card); }
+.dupe-group.off { opacity:.55; }
+.dupe-group.skipped { opacity:.7; }
+.dupe-row { display:flex; align-items:flex-start; gap:.7rem; padding:.45rem 0; border-top:1px solid var(--border); }
+.dupe-group .dupe-inc { border-top:0; margin:.1rem 0 .3rem; }
+.dupe-cover { width:2.6rem; height:3.8rem; object-fit:cover; border-radius:.3rem; flex:none; background:var(--border); }
+.dupe-cover.ph { display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; }
+.dupe-meta { min-width:0; flex:1; }
+.dupe-title { font-weight:600; }
+.dupe-sug { color:var(--accent); }

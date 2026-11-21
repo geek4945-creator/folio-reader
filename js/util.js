@@ -76,8 +76,8 @@ export function confirmDlg(title, message, okLabel = 'OK', danger = false) {
     const s = sheet(title, (close) => [
       h('p', { class: 'muted' }, message),
       h('div', { class: 'row-actions' },
-        h('button', { class: 'btn', onclick: () => { done = true; close(); resolve(false); } }, 'Cancel'),
-        h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), onclick: () => { done = true; close(); resolve(true); } }, okLabel)),
+        h('button', { class: 'btn', id: 'dlg-cancel', onclick: () => { done = true; close(); resolve(false); } }, 'Cancel'),
+        h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), id: 'dlg-ok', onclick: () => { done = true; close(); resolve(true); } }, okLabel)),
     ], { closeLabel: 'Cancel', noFooter: true, onClose: () => { if (!done) resolve(false); } });
     return s;
   });
