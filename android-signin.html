@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Folio · Sign in with Google</title>
+<style>
+  body { font: 17px/1.45 system-ui, -apple-system, Roboto, sans-serif; margin: 0; padding: 32px 22px; background: #faf7f2; color: #2a2620; text-align: center; }
+  h1 { font-size: 22px; margin: 8px 0 6px; } p { color: #6b6358; margin: 8px 0 22px; }
+  .btn { display: inline-block; font: inherit; font-weight: 600; padding: 14px 22px; border-radius: 12px; border: 0; background: #7a4e2d; color: #fff; text-decoration: none; min-width: 240px; }
+  .btn[hidden] { display: none; } .err { color: #a33; }
+</style>
+</head>
+<body>
+  <h1>Folio Reader</h1>
+  <p id="msg">Sign in with Google to sync your library to the Folio app.</p>
+  <button class="btn" id="go">Continue with Google</button>
+  <a class="btn" id="back" hidden href="#">Return to Folio</a>
+<script>
+// v0.5.25: the Android app opens this page in the phone's browser (Google blocks sign-in inside app WebViews). It runs the
+// normal Google token sign-in with the web client ID, then hands the access token back to the app through a
+// com.folio.reader://oauth link. Nothing is stored here; the token only goes to the Folio app on this phone.
+(function () {
+  var q = new URLSearchParams(location.hash.slice(1));
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  var cid = q.get('cid') || '', scope = q.get('scope') || '', state = q.get('state') || '', prompt = q.get('prompt') || '', hint = q.get('hint') || '';
+  var msg = document.getElementById('msg'), go = document.getElementById('go'), back = document.getElementById('back');
+  function appLink(params) {
+    params.state = state;
+    var qs = new URLSearchParams(params).toString();
+    return { intent: 'intent://oauth?' + qs + '#Intent;scheme=com.folio.reader;package=com.folio.reader;end', plain: 'com.folio.reader://oauth?' + qs };
+  }
+  function finish(params, text) {
+    var l = appLink(params);
+    back.href = /Android/i.test(navigator.userAgent) ? l.intent : l.plain;
+    back.hidden = false; go.hidden = true; msg.textContent = text;
+    window.__folioReturn = back.href;
+    try { location.href = back.href; } catch (e) {}   // usually opens the app straight away; the button is there if the browser waits for a tap
+  }
+  if (!cid || !state || !/drive\.appdata/.test(scope)) { go.hidden = true; msg.className = 'err'; msg.textContent = 'Open this from the Folio app: Settings → Sync → Sign in with Google.'; return; }
+  var gis = new Promise(function (res, rej) {
+    if (window.google && google.accounts && google.accounts.oauth2) return res();
+    var s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = res; s.onerror = function () { rej(new Error('Could not load Google sign-in. Check your internet connection.')); };
+    document.head.appendChild(s);
+  });
+  var client = null;
+  gis.then(function () {
+    client = google.accounts.oauth2.initTokenClient({
+      client_id: cid, scope: scope, prompt: prompt, login_hint: hint || undefined,
+      callback: function (r) {
+        if (r.error) return finish({ error: r.error, error_description: r.error_description || '' }, 'Sign-in didn’t finish. Tap below to go back to Folio.');
+        finish({ access_token: r.access_token, expires_in: String(r.expires_in || 3599), scope: r.scope || scope }, 'Signed in. Tap below if Folio didn’t open by itself.');
+      },
+      error_callback: function (e) { msg.className = 'err'; msg.textContent = e && e.type === 'popup_failed_to_open' ? 'The Google window was blocked. Allow pop-ups for this site and tap Continue again.' : 'The Google window closed. Tap Continue to try again.'; }
+    });
+  }).catch(function (e) { msg.className = 'err'; msg.textContent = e.message; });
+  go.addEventListener('click', function () {
+    if (!client) { msg.textContent = 'Loading Google sign-in… tap again in a moment.'; return; }
+    msg.className = ''; client.requestAccessToken();
+  });
+})();
+</script>
+</body>
+</html>

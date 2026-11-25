@@ -1,5 +1,5 @@
 // Offline shell + runtime caching of same-origin assets. Bump VERSION to refresh.
-const VERSION = 'folio-v33';
+const VERSION = 'folio-v34';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app.css', 'vendor/jszip.min.js', 'vendor/epub.min.js',
   'js/boot.js', 'js/lsx.js', 'js/app.js', 'js/covers.js', 'js/openguard.js', 'js/coversearch.js', 'js/viewport.js', 'js/hold.js', 'js/dict.js', 'js/glossary.js', 'js/glossaryui.js', 'js/wordbubble.js', 'js/booksearch.js', 'js/chirp.js', 'js/readingnow.js', 'js/suggest.js', 'js/update.js', 'js/appupdate.js', 'js/annots.js', 'js/annotui.js', 'js/nav.js', 'js/pinch.js', 'js/pdftext.js', 'js/zip.js', 'js/device.js', 'js/positions.js', 'js/syncui.js', 'js/syncfetch.js', 'js/stats.js', 'js/kybook.js', 'js/backup.js', 'js/backupui.js', 'js/drivebatch.js', 'js/pairing.js', 'js/links.js', 'js/align.js', 'js/loans.js', 'js/findplace.js', 'js/enrich.js', 'js/metasync.js', 'js/bookinfo.js', 'js/util.js', 'js/db.js', 'js/settings.js', 'js/store.js', 'js/epubmeta.js', 'js/net.js', 'js/opds.js', 'js/catalogs.js',
   'js/dupes.js', 'js/library.js', 'js/reader.js', 'js/dragsort.js', 'js/google.js', 'js/drive.js', 'js/kindle.js', 'js/pdf.js', 'js/pdfreader.js', 'js/publib.js', 'js/env.js', 'js/install.js', 'js/fullscreen.js', 'js/pages.js', 'js/audiotags.js', 'js/audiostore.js', 'js/audioplayer.js', 'js/audiobooks.js', 'js/audiosources.js',
@@ -11,7 +11,7 @@ const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'css/app
 //  * the new worker then WAITS. It never takes over by itself (no skipWaiting on install): the page shows "Update ready — tap to refresh" and asks it to take over
 //    ({type:'SKIP_WAITING'}) when the reader is closed / the user taps — so code is never swapped under a book that is being read.
 //  * fetch: cache-first from this version's cache only, so every module a page loads (including lazy import()s) comes from the same build the page started with.
-const BUILD = '0.5.24';
+const BUILD = '0.5.25';
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const cache = await caches.open(VERSION);
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (e) => {
     const cache = await caches.open(VERSION);
     const hit = await cache.match(req, { ignoreSearch: true });
     if (hit) return hit;
-    if (req.mode === 'navigate') { const idx = await cache.match('index.html'); if (idx) return idx; }
+    if (req.mode === 'navigate' && !/android-signin\.html$/.test(url.pathname)) { const idx = await cache.match('index.html'); if (idx) return idx; }
     try { return await fetch(req); } catch { return Response.error(); }   // not part of the shell (e.g. the shared-cover cache keys are handled above): plain network, never stored, so versions can't mix
   })());
 });

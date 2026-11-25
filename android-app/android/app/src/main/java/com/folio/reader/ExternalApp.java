@@ -57,4 +57,32 @@ public class ExternalApp extends Plugin {
             call.reject("No app can open this link");
         }
     }
+    /**
+     * v0.5.25: Google sign-in for the Android app. Google blocks OAuth inside WebViews, so Folio opens its own sign-in page
+     * (GitHub Pages) in the phone's browser; that page sends the token back through com.folio.reader://oauth (MainActivity).
+     * Only Folio's own web address is allowed. The browser package is set explicitly so an installed Folio web app (WebAPK)
+     * can't catch the link instead of the browser.
+     */
+    private static final String SIGNIN_PREFIX = "https://geek4945-creator.github.io/folio-reader/";
+
+    @PluginMethod
+    public void openBrowser(PluginCall call) {
+        String url = call.getString("url", "");
+        if (url == null || !url.startsWith(SIGNIN_PREFIX)) { call.reject("Only Folio sign-in links"); return; }
+        Uri uri = Uri.parse(url);
+        PackageManager pm = getContext().getPackageManager();
+        Intent web = new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            android.content.pm.ResolveInfo ri = pm.resolveActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/")).addCategory(Intent.CATEGORY_BROWSABLE), PackageManager.MATCH_DEFAULT_ONLY);
+            String pkg = ri != null && ri.activityInfo != null ? ri.activityInfo.packageName : null;
+            if (pkg != null && !"android".equals(pkg)) web.setPackage(pkg);
+        } catch (Exception ignored) { }
+        try {
+            getContext().startActivity(web);
+        } catch (ActivityNotFoundException e) {
+            try { web.setPackage(null); getContext().startActivity(web); }
+            catch (ActivityNotFoundException e2) { call.reject("No browser found"); return; }
+        }
+        JSObject r = new JSObject(); r.put("opened", "browser"); call.resolve(r);
+    }
 }

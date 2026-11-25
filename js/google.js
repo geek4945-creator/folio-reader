@@ -23,9 +23,9 @@ export const getStatus = () => ({ ...status });
 
 export const getClientId = () => (localStorage.getItem('folio.gClientId') || (window.FOLIO_CONFIG && window.FOLIO_CONFIG.googleClientId) || '').trim();
 export const webAppUrl = () => (window.FOLIO_CONFIG && window.FOLIO_CONFIG.webAppUrl) || 'https://geek4945-creator.github.io/folio-reader/';
-/** Google blocks OAuth inside embedded WebViews (and the GIS popup can't open there), so the Android app can't sign in itself. */
-export const signInUnavailableHere = () => isCapacitor();
-export const ANDROID_SIGNIN_MSG = 'Google sign-in doesn’t work inside the Android app (Google blocks it in app WebViews). Open Folio in your browser to sign in and sync: ' ;
+/** v0.5.25: the Android app signs in through the phone's browser (Google blocks OAuth inside app WebViews), so sign-in is available everywhere now. */
+export const signInUnavailableHere = () => false;
+export const ANDROID_SIGNIN_MSG = 'Google sign-in opens in your browser. ';
 export const setClientId = (id) => localStorage.setItem('folio.gClientId', id.trim());
 const load = () => { try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch { return null; } };
 const save = (a) => localStorage.setItem(AUTH_KEY, JSON.stringify(a));
@@ -45,9 +45,67 @@ function loadGis() {
   return gisP;
 }
 
-function requestToken(prompt, hint, scope = SCOPES) {
+/* ---------- Android app (v0.5.25): browser hand-off ----------
+ * Google blocks OAuth in WebViews, so the app opens android-signin.html (the same GitHub Pages origin and web client ID as the
+ * web app, so the same Drive app-data folder) in the phone's browser. That page runs the normal Google sign-in and hands the
+ * access token back through a com.folio.reader://oauth link, which Android routes to this app (Capacitor App 'appUrlOpen'). */
+const PENDING = 'folio.gPending';
+const waiters = new Map();
+const nativePlug = () => { try { const C = window.Capacitor; return C && C.registerPlugin ? C.registerPlugin('ExternalApp') : null; } catch { return null; } };
+export const bridgeUrl = () => webAppUrl().replace(/\/?$/, '/') + 'android-signin.html';
+function requestTokenViaBrowser(prompt, hint, scope) {
+  const cid = getClientId(); if (!cid) return Promise.reject(new Error('Add your Google OAuth Client ID in Settings first.'));
+  const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(PENDING, JSON.stringify({ state, scope, at: Date.now() }));
+  const q = new URLSearchParams({ cid, scope, state, prompt: prompt || '', hint: hint || '' });
+  const url = bridgeUrl() + '#' + q.toString();
   return new Promise((resolve, reject) => {
-    if (isCapacitor()) return reject(new Error(ANDROID_SIGNIN_MSG + webAppUrl()));
+    const t = setTimeout(() => { waiters.delete(state); reject(new Error('Sign-in wasn’t finished. Tap “Return to Folio” in the browser after choosing your account.')); }, 10 * 60000);
+    waiters.set(state, { resolve: (r) => { clearTimeout(t); resolve(r); }, reject: (e) => { clearTimeout(t); reject(e); } });
+    const P = nativePlug();
+    const opened = P && P.openBrowser ? P.openBrowser({ url }) : Promise.resolve(window.open(url, '_blank'));
+    Promise.resolve(opened).catch((e) => { waiters.delete(state); clearTimeout(t); reject(new Error('Couldn’t open the browser for sign-in: ' + (e && e.message || e))); });
+  });
+}
+/** Handles com.folio.reader://oauth?state=…&access_token=…&expires_in=…&scope=… (or ?error=…). Works after a cold start too. */
+export async function handleAuthLink(link) {
+  let u; try { u = new URL(link); } catch { return false; }
+  if (!/^com\.folio\.reader:$/.test(u.protocol) || !/oauth/.test(u.host + u.pathname)) return false;
+  const p = u.searchParams, state = p.get('state') || '';
+  let pend = null; try { pend = JSON.parse(localStorage.getItem(PENDING) || 'null'); } catch {}
+  if (!pend || pend.state !== state || Date.now() - pend.at > 30 * 60000) return false;   // only the request this device started
+  localStorage.removeItem(PENDING);
+  const w = waiters.get(state); waiters.delete(state);
+  if (p.get('error')) { const e = new Error(p.get('error') === 'popup_closed' ? 'Sign-in window closed' : (p.get('error_description') || p.get('error'))); if (w) w.reject(e); return true; }
+  const r = { access_token: p.get('access_token'), expires_in: +(p.get('expires_in') || 3599), scope: p.get('scope') || pend.scope };
+  if (!r.access_token) { if (w) w.reject(new Error('Sign-in failed')); return true; }
+  if (w) { w.resolve(r); return true; }
+  // cold start (Android closed the app while the browser was open): finish here
+  try { await acceptToken(r, pend.scope); if (isSignedIn()) syncNow({ quiet: true }).catch(() => {}); } catch (e) { setStatus('error', e.message); }
+  return true;
+}
+export function initAndroidAuth() {
+  if (!isCapacitor()) return;
+  const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (!App) return;
+  try { App.addListener('appUrlOpen', (ev) => { handleAuthLink(ev && ev.url).catch(() => {}); }); } catch {}
+  try { Promise.resolve(App.getLaunchUrl && App.getLaunchUrl()).then((r) => r && r.url && handleAuthLink(r.url)).catch(() => {}); } catch {}
+}
+async function acceptToken(r, scope) {
+  const scopes = r.scope || '';
+  if (!scopes.includes('drive.appdata')) throw new Error('Drive app-data permission was not granted.');
+  const prev = load();
+  let profile = prev && prev.profile;
+  if (!profile) { const ui = await (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + r.access_token } })).json(); profile = { name: ui.name || ui.email, email: ui.email, picture: ui.picture || '' }; }
+  const sc = scopes.includes('drive.readonly') ? SCOPES + ' ' + DRIVE_READ : (prev && prev.scope) || scope || SCOPES;
+  const a = { ...(prev || {}), token: r.access_token, exp: Date.now() + (r.expires_in - 30) * 1000, scope: sc, profile };
+  save(a); scheduleRenew(a.exp); setStatus('connected');
+  return a;
+}
+
+function requestToken(prompt, hint, scope = SCOPES) {
+  if (isCapacitor()) return requestTokenViaBrowser(prompt, hint, scope);
+  return new Promise((resolve, reject) => {
     const cid = getClientId(); if (!cid) return reject(new Error('Add your Google OAuth Client ID in Settings first.'));
     const client = google.accounts.oauth2.initTokenClient({
       client_id: cid, scope, prompt, login_hint: hint || undefined,
@@ -68,6 +126,10 @@ function scheduleRenew(exp) {
 export async function getToken() {
   const a = load(); if (!a) throw new Error('Not signed in');
   if (a.token && a.exp - Date.now() > 60000) return a.token;
+  if (isCapacitor()) {   // never pop the browser open on its own (she may be reading); a tap on Reconnect / Sync now renews
+    setStatus('needs-reauth', 'Google sign-in expired (it lasts an hour in the Android app). Tap “Reconnect” to sync.');
+    throw new Error('Google sign-in expired. Tap “Reconnect” in Settings → Sync.');
+  }
   await loadGis();
   try {
     const r = await requestToken('', a.profile?.email, a.scope || SCOPES);           // silent renewal; no UI if the Google session is alive
@@ -81,7 +143,10 @@ export async function getToken() {
 }
 
 export async function signIn() {
-  if (isCapacitor()) throw new Error(ANDROID_SIGNIN_MSG + webAppUrl());
+  if (isCapacitor()) {
+    const r = await requestToken(isSignedIn() ? '' : 'consent', getProfile()?.email, load()?.scope || SCOPES);
+    return (await acceptToken(r, SCOPES)).profile;
+  }
   await loadGis();
   const r = await requestToken(isSignedIn() ? '' : 'consent', getProfile()?.email);
   const scopes = r.scope || '';
@@ -98,7 +163,7 @@ export const canBrowseDrive = () => !!(load()?.scope || '').includes('drive.read
 /** Ask for read-only Drive access (needs a user tap: Google shows a consent popup). */
 export async function enableDriveBrowse() {
   const a = load(); if (!a) throw new Error('Sign in with Google first (Settings).');
-  await loadGis();
+  if (!isCapacitor()) await loadGis();
   const scope = SCOPES + ' ' + DRIVE_READ;
   const r = await requestToken('consent', a.profile?.email, scope);
   if (!(r.scope || '').includes('drive.readonly')) throw new Error('Drive read access was not granted.');

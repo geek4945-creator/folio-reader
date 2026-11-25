@@ -19,7 +19,7 @@ import { initUpdates } from './update.js';
 import { openPublicLibraryGuide, openDrmFreeHelp } from './publib.js';
 import { initInstall, installMode, installLabel, startInstall } from './install.js';
 import { initFullscreen, fsButton } from './fullscreen.js';
-import { isInstalledApp } from './env.js';
+import { isInstalledApp, isCapacitor } from './env.js';
 import { normalizeUrl } from './net.js';
 import { enrichSettingsSection, openFixMissing } from './enrich.js';
 import { footerToggles, scrubToggle } from './pages.js';
@@ -163,7 +163,7 @@ function accountBox() {
         h('div', { class: 'grow' }, h('strong', null, p.name), h('div', { class: 'muted small' }, p.email))),
         h('p', { class: 'muted small', id: 'sync-status' }, statusLine(st)),
         h('div', { class: 'row-actions wrap' },
-          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow({ force: true }); if (r && r.conflict) { const { maybeShowConflict } = await import('./syncfetch.js'); maybeShowConflict(true); } else toast(r && r.pending ? `Synced · ${r.pending} book${r.pending === 1 ? '' : 's'} not on this device yet` : 'Synced'); draw(); } catch (e) { toast(e.message, 5000); } } }, 'Sync now'),
+          h('button', { class: 'btn primary', id: 'sync-now', onclick: async () => { try { const r = await G.syncNow({ force: true }); if (r && r.conflict) { const { maybeShowConflict } = await import('./syncfetch.js'); maybeShowConflict(true); } else toast(r && r.pending ? `Synced · ${r.pending} book${r.pending === 1 ? '' : 's'} not on this device yet` : 'Synced'); draw(); } catch (e) { toast(e.message, 5000); draw(); } } }, 'Sync now'),
           st.state === 'needs-reauth' ? h('button', { class: 'btn', onclick: () => G.signIn().then(draw).catch((e) => toast(e.message)) }, 'Reconnect') : null,
           h('button', { class: 'btn', id: 'sign-out', onclick: async () => { G.signOut(); draw(); toast('Signed out on this device'); } }, 'Sign out'),
           h('button', { class: 'btn danger', onclick: async () => { if (await confirmDlg('Disconnect Google?', 'Revokes Folio’s access to your Google account. Synced data stays in your Drive app data until you remove it in Google account settings.', 'Disconnect', true)) { await G.disconnect(); draw(); } } }, 'Disconnect')),
@@ -172,7 +172,7 @@ function accountBox() {
         h('p', { class: 'muted small' }, 'Syncs settings, shelves, sets, custom order, per-book reading settings, positions and bookmarks to a private app-data folder in your Drive. Book files are not uploaded.'));
     } else {
       box.append(h('p', { class: 'muted small' }, 'Sign in with Google to back up and sync your shelves, sets, reading positions and settings across devices (stored privately in your Drive’s hidden app-data folder).'),
-        G.signInUnavailableHere() ? h('div', { class: 'plib-warn', id: 'android-signin-note' }, h('strong', null, 'Sign in from your browser. '), 'Google doesn’t allow sign-in inside the Android app. Open Folio in Chrome to sign in and sync: ', h('a', { href: G.webAppUrl(), target: '_blank', rel: 'noopener' }, G.webAppUrl().replace(/^https:\/\//, ''))) : null,
+        isCapacitor() ? h('p', { class: 'muted small', id: 'android-signin-note' }, 'Sign-in opens your browser. Choose your Google account, then tap “Return to Folio”.') : null,
         h('button', { class: 'btn primary', id: 'sign-in', disabled: !cid, onclick: () => G.signIn().then(() => { draw(); G.syncNow({ quiet: true }); }).catch((e) => toast(e.message, 5000)) }, 'Sign in with Google'),
         h('details', { open: !cid }, h('summary', null, 'Google OAuth Client ID'), h('p', { class: 'muted small' }, 'Create a Web OAuth client (see README → Google sign-in) and paste its Client ID. Add this site’s origin as an authorized JavaScript origin.'),
           h('input', { class: 'field', id: 'gcid', placeholder: 'xxxxxxxx.apps.googleusercontent.com', value: cid, autocapitalize: 'none', onchange: (e) => { G.setClientId(e.target.value); draw(); } })));
@@ -195,7 +195,7 @@ window.addEventListener('drop', async (e) => {
 /* ---------- boot ---------- */
 initViewport(); initHold(); setTimeout(() => import('./backup.js').then((m) => m.expireUndo()).catch(() => {}), 4000);
 window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
-G.initSync(); initSuggest(); initAppUpdate(); initConflictPrompt();
+G.initAndroidAuth(); G.initSync(); initSuggest(); initAppUpdate(); initConflictPrompt();
 show(tab); initNav({ getTab: () => tab, show });
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
 if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);
