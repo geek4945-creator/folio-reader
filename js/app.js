@@ -2,6 +2,7 @@ import { syncDetails, statusLine } from './syncui.js';
 import { initConflictPrompt } from './syncfetch.js';
 import { suggestSection, initSuggest } from './suggest.js';
 import { appUpdateSection, initAppUpdate } from './appupdate.js';
+import { otherAppsSection, importAny, initIncoming } from './otherapps.js';
 import { backupSettingsSection } from './backupui.js';
 import { h, $, $$, toast, sheet, confirmDlg, initClearButtons } from './util.js';
 import { settings, applyUI, THEMES, FONTS, FONT_MIN, FONT_MAX, FONT_STEP, clampPt, SORT_FIELDS, setDefaultSort, resetAllSorts, dirWord } from './settings.js';
@@ -51,7 +52,7 @@ async function show(t) {
 }
 $$('.tab').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab === 'catalogs' && tab === 'catalogs') resetCatalogs(); show(b.dataset.tab); }));
 
-$('#file-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await importFiles(files); });
+$('#file-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await importAny(files); });
 $('#audio-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await handleAudioFiles(files); });
 $('#audio-folder-input').addEventListener('change', async (e) => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await handleAudioFiles(files, { ask: false }); });
 onAudioChange(() => { if (tab === 'audiobooks' && !$('#overlay').children.length) renderAudiobooks(view); });
@@ -73,6 +74,7 @@ function renderSettings() {
 
   view.append(
     h('header', { class: 'topbar' }, h('h1', null, 'Settings')),
+    appUpdateSection(),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Account & sync'), accountBox()),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Appearance'),
       h('p', { class: 'muted small' }, 'Global defaults for all books. You can override size, font, spacing and margins per book from the reader’s Aa menu.'),
@@ -127,6 +129,7 @@ function renderSettings() {
       h('button', { class: 'btn', id: 'settings-find-dupes', onclick: () => openDupeReview() }, 'Find duplicate books'),
       h('p', { class: 'muted small' }, 'Remove every book from Folio on this device. Your original files on the device or in Google Drive are never touched. To delete a few books, use Select in the Library.'),
       h('button', { class: 'btn danger', id: 'settings-delete-all', onclick: () => deleteAllBooksFlow() }, 'Delete all books…')),
+    otherAppsSection(),
     h('section', { class: 'pad card-sec' }, h('h3', null, 'Network (CORS proxy)'),
       h('p', { class: 'muted small' }, 'Some catalogs (notably Project Gutenberg downloads) don’t allow browser downloads. Deploy the tiny proxy from /proxy and paste its URL here. Leave empty to connect directly.'),
       h('input', { class: 'field', id: 'proxy-url', type: 'text', inputmode: 'url', spellcheck: 'false', placeholder: 'https://your-proxy.workers.dev/', value: s.proxyUrl, autocapitalize: 'none', onchange: (e) => { const v = e.target.value.trim(); if (!v) { settings.set({ proxyUrl: '' }); toast('Proxy cleared'); return; } try { const u = normalizeUrl(v); e.target.value = u; settings.set({ proxyUrl: u }); toast('Proxy saved'); } catch (err) { toast(err.message, 4500); } } }),
@@ -135,7 +138,6 @@ function renderSettings() {
       h('p', { class: 'muted small' }, 'Folio Reader — your books stay on this device (IndexedDB). Only reading state syncs if you sign in with Google. Legal sources only.'),
       h('button', { class: 'btn', onclick: async () => { const books = await getBooks(); toast(`${books.length} books · ${(books.reduce((a, b) => a + (b.size || 0), 0) / 1048576).toFixed(1)} MB stored`); } }, 'Storage usage'),
       ' ', h('button', { class: 'btn', onclick: () => navigator.storage?.persist?.().then((ok) => toast(ok ? 'Persistent storage granted' : 'Browser declined persistent storage')) }, 'Request persistent storage')),
-    appUpdateSection(),
     suggestSection());
 }
 /** v0.5.20: books with their own text settings ignore these global ones (one reason "my change didn't stick"): say how many, offer to reset them. */
@@ -188,14 +190,14 @@ window.addEventListener('drop', async (e) => {
   const dt = e.dataTransfer; if (!dt) return;
   const hasDir = [...(dt.items || [])].some((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()?.isDirectory);
   if (hasDir || dropLooksAudio(dt)) { e.preventDefault(); const files = await collectDropped(dt); show('audiobooks'); await handleAudioFiles(files, { ask: !hasDir }); return; }
-  const files = [...(dt.files || [])].filter((f) => /\.(epub|pdf|mobi|azw3?|kf8)$/i.test(f.name) || f.type === 'application/epub+zip' || f.type === 'application/pdf' || KINDLE_TYPE_RE.test(f.type));
-  if (!files.length) return; e.preventDefault(); await importFiles(files); show('library');
+  const files = [...(dt.files || [])].filter((f) => /\.(epub|pdf|mobi|azw3?|kf8|fb2|fbz|cbz|txt|csv|tsv|json|html?|kb|kba|zip)$/i.test(f.name) || f.type === 'application/epub+zip' || f.type === 'application/pdf' || KINDLE_TYPE_RE.test(f.type));
+  if (!files.length) return; e.preventDefault(); await importAny(files, { goLibrary: () => show('library') });   // v0.5.26: books, Kindle highlights, KyBook / Goodreads lists
 });
 
 /* ---------- boot ---------- */
 initViewport(); initHold(); setTimeout(() => import('./backup.js').then((m) => m.expireUndo()).catch(() => {}), 4000);
 window.addEventListener('db-blocked', () => toast('Folio is finishing an update. Close any other Folio tab or window and reopen the app.', 8000));
-G.initAndroidAuth(); G.initSync(); initSuggest(); initAppUpdate(); initConflictPrompt();
+G.initAndroidAuth(); G.initSync(); initSuggest(); initAppUpdate(); initConflictPrompt(); initIncoming(() => show('library'));
 show(tab); initNav({ getTab: () => tab, show });
 initInstall(); initFullscreen(); initPlayerUI(); startAutoPair(pairNotify);
 if (new URLSearchParams(location.search).get('share') === 'cover') setTimeout(() => handleSharedCover(), 400);

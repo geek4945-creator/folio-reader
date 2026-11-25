@@ -9,6 +9,7 @@ import { APP_VERSION } from './device.js';
 import * as S from './store.js';
 import { onLibraryChange } from './store.js';
 import { isCapacitor } from './env.js';
+import { nativePlugin } from './native.js';
 import * as A from './audiostore.js';
 import { hashBlob } from './covers.js';
 import { localMeta, mergeMetaMaps, applyTextFields, remoteCoverWins, setPendingMeta, getPendingMeta, ensureCoverIds, lastAtOf } from './metasync.js';
@@ -51,7 +52,7 @@ function loadGis() {
  * access token back through a com.folio.reader://oauth link, which Android routes to this app (Capacitor App 'appUrlOpen'). */
 const PENDING = 'folio.gPending';
 const waiters = new Map();
-const nativePlug = () => { try { const C = window.Capacitor; return C && C.registerPlugin ? C.registerPlugin('ExternalApp') : null; } catch { return null; } };
+const nativePlug = () => nativePlugin('ExternalApp');
 export const bridgeUrl = () => webAppUrl().replace(/\/?$/, '/') + 'android-signin.html';
 function requestTokenViaBrowser(prompt, hint, scope) {
   const cid = getClientId(); if (!cid) return Promise.reject(new Error('Add your Google OAuth Client ID in Settings first.'));

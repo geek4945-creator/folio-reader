@@ -5,6 +5,7 @@ import { h, sheet, toast, put } from './util.js';
 import { fetchSmart } from './net.js';
 import { settings } from './settings.js';
 import { SEED_SOURCES, getSources, restoreSeeds } from './store.js';
+import { nativePlugin } from './native.js';
 
 const LOCATE = 'https://locate.libbyapp.com/autocomplete/';
 const THUNDER = 'https://thunder.api.overdrive.com/v2/libraries';
@@ -25,7 +26,7 @@ export function libbyUrl(query = '', key = (getLibrary() || {}).key) {
   return LIBBY_HOME;
 }
 let libbyPlug = null;
-const nativeLink = () => { try { const C = window.Capacitor; if (!(C && C.isNativePlatform && C.isNativePlatform() && C.registerPlugin)) return null; return (libbyPlug ||= C.registerPlugin('ExternalApp')); } catch { return null; } };
+const nativeLink = () => (libbyPlug ||= nativePlugin('ExternalApp'));
 export function openLibby(query = '', ev) {
   const url = libbyUrl(query); window.__libbyOpened = url;
   const p = nativeLink();

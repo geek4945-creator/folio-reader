@@ -1,4 +1,5 @@
 // Library tab: shelves, sets (series), grid/list, sort incl. custom drag order, search, import.
+import { CONVERT_RE, convertToEpub } from './convert.js';
 import { h, toast, sheet, actionSheet, confirmDlg, promptDlg, fmtPct, hashHue, $, put } from './util.js';
 import { settings, GROUP_OPTIONS, SORT_FIELDS, SET_SORT_FIELDS, getSort, setSort, clearSort, dirWord, DEFAULT_DIR, setsGrouped, setSetsGrouped } from './settings.js';
 import * as S from './store.js';
@@ -468,7 +469,11 @@ export function pickFiles() { $('#file-input').click(); }
 export async function importFiles(files) {
   let ok = 0; const errs = []; const drm = [];
   for (const f of files) {
-    try { await S.addBookFromBuffer(await f.arrayBuffer(), { source: 'import', filename: f.name }); ok++; }
+    try {
+      let buf = await f.arrayBuffer(), name = f.name;
+      if (CONVERT_RE.test(name)) { const c = await convertToEpub(buf, name); buf = c.buffer; name = name.replace(/\.(fb2\.zip|[^.]+)$/i, '.epub'); }   // v0.5.26: FB2 / CBZ / TXT
+      await S.addBookFromBuffer(buf, { source: 'import', filename: name }); ok++;
+    }
     catch (e) { if (e.code === 'drm') drm.push(f.name); else errs.push(f.name + ': ' + (e.message || e)); }
   }
   if (drm.length) sheet('Copy-protected book' + (drm.length > 1 ? 's' : ''), () => [

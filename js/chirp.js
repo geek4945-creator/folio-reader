@@ -7,16 +7,17 @@
 import { h, toast, sheet } from './util.js';
 import * as A from './audiostore.js';
 import { fmtLong } from './audioplayer.js';
+import { nativePlugin } from './native.js';
 
 export const CHIRP_PKG = 'com.chirpbooks.chirp';
 let plug = null;
-function nativePlugin() {
-  try { const C = window.Capacitor; if (!(C && C.isNativePlatform && C.isNativePlatform() && C.registerPlugin)) return null; return (plug ||= C.registerPlugin('ExternalApp')); } catch { return null; }
+function chirpPlugin() {
+  return (plug ||= nativePlugin('ExternalApp'));
 }
 /** Open Chirp at url (a chirpbooks.com link). ev: the click on an <a href target=_blank>, whose own navigation is used on the web. */
 export function openChirp(url, ev) {
   url = A.cleanChirpUrl(url) || A.CHIRP_HOME; window.__chirpOpened = url;
-  const p = nativePlugin();
+  const p = chirpPlugin();
   if (p) {
     ev?.preventDefault?.();
     p.open({ package: CHIRP_PKG, url }).then((r) => { if (r && r.opened === 'browser') toast('Chirp isn’t installed here, so chirpbooks.com opened in the browser'); })

@@ -18,7 +18,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  */
 @CapacitorPlugin(name = "ExternalApp")
 public class ExternalApp extends Plugin {
-    private static final String[] ALLOWED = { "com.chirpbooks.chirp" };
+    // v0.5.26: other reading apps she may use (open only — Folio never reads their books or accounts)
+    private static final String[] ALLOWED = { "com.chirpbooks.chirp", "com.amazon.kindle", "com.google.android.apps.books",
+        "com.flyersoft.moonreader", "com.flyersoft.moonreaderp", "org.readera", "org.readera.premium", "com.overdrive.mobile.android.libby" };
 
     private static boolean allowed(String pkg) {
         for (String p : ALLOWED) if (p.equals(pkg)) return true;

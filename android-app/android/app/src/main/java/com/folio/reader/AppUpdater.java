@@ -171,6 +171,9 @@ public class AppUpdater extends Plugin {
                     if (!part.renameTo(target)) { part.delete(); call.reject("Couldn't save the update."); return; }
                     if (!valid(target, size, pi)) { target.delete(); call.reject("The downloaded file isn't a valid update for this app."); return; }
                 }
+                if (call.getBoolean("downloadOnly", false)) {   // v0.5.26: quiet background download; a later tap opens the installer at once
+                    JSObject d = new JSObject(); d.put("downloaded", true); call.resolve(d); return;
+                }
                 if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
                     Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
                     s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

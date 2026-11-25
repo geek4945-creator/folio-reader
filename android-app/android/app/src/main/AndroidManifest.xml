@@ -30,6 +30,47 @@
                 <data android:scheme="com.folio.reader" android:host="oauth" />
             </intent-filter>
 
+
+            <!-- v0.5.26: "Open with" / Share → Folio for DRM-free book files and Kindle highlight / reading-list exports -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/x-mobipocket-ebook" />
+                <data android:mimeType="application/vnd.amazon.ebook" />
+                <data android:mimeType="application/x-mobi8-ebook" />
+                <data android:mimeType="application/x-fictionbook+xml" />
+                <data android:mimeType="application/x-fb2" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/x-mobipocket-ebook" />
+                <data android:mimeType="application/vnd.amazon.ebook" />
+                <data android:mimeType="application/x-mobi8-ebook" />
+                <data android:mimeType="application/x-fictionbook+xml" />
+                <data android:mimeType="application/x-fb2" />
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+            </intent-filter>
         </activity>
 
         <provider
@@ -46,6 +87,13 @@
     <!-- v0.5.18: "Open in Chirp" checks whether the Chirp app is installed (Android 11+ package visibility) -->
     <queries>
         <package android:name="com.chirpbooks.chirp" />
+        <package android:name="com.amazon.kindle" />
+        <package android:name="com.google.android.apps.books" />
+        <package android:name="com.flyersoft.moonreader" />
+        <package android:name="com.flyersoft.moonreaderp" />
+        <package android:name="org.readera" />
+        <package android:name="org.readera.premium" />
+        <package android:name="com.overdrive.mobile.android.libby" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
